@@ -108,6 +108,26 @@ edges:
 		expect(definition.edges[0]?.condition?.source).toBe("state.score >= 0.8 && exists(outputs.review.verdict)");
 	});
 
+	it("preserves node state read and write scopes", () => {
+		const source = `
+name: scoped-state
+version: 1
+nodes:
+  review:
+    type: review
+    reads:
+      - /draft
+    writes:
+      - /review
+edges: []
+`;
+
+		const definition = parseWorkflowDefinition(source, { sourcePath: "state.yml" });
+
+		expect(definition.nodes[0]?.reads).toEqual(["/draft"]);
+		expect(definition.nodes[0]?.writes).toEqual(["/review"]);
+	});
+
 	it("rejects duplicate node ids in list-form definitions", () => {
 		const source = `
 name: duplicate-nodes

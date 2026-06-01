@@ -1,5 +1,6 @@
 import type { WorkflowModelContext, WorkflowNode } from "./definition";
-import type { WorkflowActivation, WorkflowActivationOutput } from "./scheduler";
+import type { WorkflowActivation } from "./scheduler";
+import type { WorkflowActivationOutput } from "./state";
 
 export interface WorkflowNodeRuntimeInput {
 	node: WorkflowNode;

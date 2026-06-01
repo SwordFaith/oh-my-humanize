@@ -1,5 +1,6 @@
 import { evaluateWorkflowCondition } from "./condition";
 import type { WorkflowDefinition, WorkflowNode } from "./definition";
+import { applyWorkflowStatePatch, validateWorkflowActivationOutput, type WorkflowActivationOutput } from "./state";
 
 export type WorkflowActivationStatus = "queued" | "running" | "completed" | "failed";
 
@@ -10,18 +11,6 @@ export interface WorkflowActivation {
 	parentActivationIds: string[];
 	output?: WorkflowActivationOutput;
 	error?: string;
-}
-
-export interface WorkflowActivationOutput {
-	summary?: string;
-	statePatch?: WorkflowActivationStatePatchOperation[];
-	artifacts?: string[];
-}
-
-export interface WorkflowActivationStatePatchOperation {
-	op: "set";
-	path: string;
-	value: unknown;
 }
 
 export interface WorkflowSchedulerOptions {
@@ -80,9 +69,11 @@ export async function runWorkflowScheduler(
 		activation.status = "running";
 		activations.push(activation);
 		try {
-			activation.output = await options.executeNode(activation, node);
+			activation.output = validateWorkflowActivationOutput(await options.executeNode(activation, node), {
+				allowedWritePaths: node.writes,
+			});
 			if (activation.output.statePatch) {
-				applyStatePatch(state, activation.output.statePatch);
+				applyWorkflowStatePatch(state, activation.output.statePatch, { allowedWritePaths: node.writes });
 			}
 			activation.status = "completed";
 			const completed = completedByNode.get(activation.nodeId) ?? [];
@@ -128,44 +119,4 @@ function collectJoinParentIds(
 		parentIds.push(latest.id);
 	}
 	return parentIds;
-}
-
-function applyStatePatch(state: Record<string, unknown>, patch: WorkflowActivationStatePatchOperation[]): void {
-	for (const operation of patch) {
-		setStatePath(state, operation.path, operation.value);
-	}
-}
-
-function setStatePath(state: Record<string, unknown>, pointer: string, value: unknown): void {
-	const segments = parseJsonPointer(pointer);
-	let current: Record<string, unknown> = state;
-	for (const segment of segments.slice(0, -1)) {
-		const existing = current[segment];
-		if (isRecord(existing)) {
-			current = existing;
-			continue;
-		}
-		const next: Record<string, unknown> = {};
-		current[segment] = next;
-		current = next;
-	}
-	const leaf = segments.at(-1);
-	if (leaf === undefined) {
-		throw new Error("workflow scheduler state patch cannot replace the state root");
-	}
-	current[leaf] = value;
-}
-
-function parseJsonPointer(pointer: string): string[] {
-	if (!pointer.startsWith("/")) {
-		throw new Error(`workflow scheduler state patch path must be a JSON pointer: ${pointer}`);
-	}
-	return pointer
-		.slice(1)
-		.split("/")
-		.map(segment => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }

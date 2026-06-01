@@ -21,6 +21,8 @@ version: 1
 nodes:
   review:
     type: review
+    writes:
+      - /verdict
   build:
     type: agent
   finish:
@@ -122,6 +124,24 @@ describe("workflow activation scheduler", () => {
 
 		expect(result.activations.map(activation => activation.nodeId)).toEqual(["review", "build"]);
 		expect(result.state).toEqual({ verdict: "continue" });
+	});
+
+	it("fails activations that write outside declared state scopes", async () => {
+		const definition = parseWorkflowDefinition(conditionalWorkflow, { sourcePath: "workflow.yml" });
+
+		const result = await runWorkflowScheduler(definition, {
+			startNodeId: "review",
+			executeNode: async () => ({
+				summary: "attempted private write",
+				statePatch: [{ op: "set", path: "/private/token", value: "secret" }],
+			}),
+		});
+
+		expect(result.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["review", "failed"],
+		]);
+		expect(result.activations[0]?.error).toBe('workflow state write to "/private/token" is not allowed');
+		expect(result.state).toEqual({});
 	});
 
 	it("creates separate activations for loops and stops at the activation limit", async () => {

@@ -1,5 +1,6 @@
 import type { CustomEntry, SessionEntry } from "../session/session-manager";
 import type { WorkflowDefinition } from "./definition";
+import { applyWorkflowStatePatch, type WorkflowStatePatchOperation } from "./state";
 
 export const WORKFLOW_RUN_EVENT_TYPE = "workflow-run-event";
 
@@ -37,12 +38,6 @@ export interface AppendWorkflowGraphRevisionOptions {
 export interface AppendWorkflowStatePatchOptions {
 	patch: WorkflowStatePatchOperation[];
 	reason?: string;
-}
-
-export interface WorkflowStatePatchOperation {
-	op: "set";
-	path: string;
-	value: unknown;
 }
 
 export type WorkflowRunEvent =
@@ -152,7 +147,7 @@ export function reconstructWorkflowRuns(
 		const run = runs.get(event.runId);
 		if (!run) continue;
 		if (event.event === "state_patch_applied") {
-			applyStatePatch(run.state, event.patch);
+			applyWorkflowStatePatch(run.state, event.patch);
 			continue;
 		}
 		run.currentGraphRevisionId = event.graphRevisionId;
@@ -165,45 +160,6 @@ export function reconstructWorkflowRuns(
 		});
 	}
 	return [...runs.values()];
-}
-
-function applyStatePatch(state: Record<string, unknown>, patch: WorkflowStatePatchOperation[]): void {
-	for (const operation of patch) {
-		setStatePath(state, operation.path, operation.value);
-	}
-}
-
-function setStatePath(state: Record<string, unknown>, pointer: string, value: unknown): void {
-	const segments = parseJsonPointer(pointer);
-	if (segments.length === 0) {
-		throw new Error("workflow state patch cannot replace the state root");
-	}
-	let current: Record<string, unknown> = state;
-	for (const segment of segments.slice(0, -1)) {
-		const existing = current[segment];
-		if (isRecord(existing)) {
-			current = existing;
-			continue;
-		}
-		const next: Record<string, unknown> = {};
-		current[segment] = next;
-		current = next;
-	}
-	const leaf = segments.at(-1);
-	if (leaf === undefined) {
-		throw new Error("workflow state patch cannot replace the state root");
-	}
-	current[leaf] = value;
-}
-
-function parseJsonPointer(pointer: string): string[] {
-	if (!pointer.startsWith("/")) {
-		throw new Error(`workflow state patch path must be a JSON pointer: ${pointer}`);
-	}
-	return pointer
-		.slice(1)
-		.split("/")
-		.map(segment => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
 }
 
 function workflowEventFromEntry(entry: unknown): WorkflowRunEvent | undefined {

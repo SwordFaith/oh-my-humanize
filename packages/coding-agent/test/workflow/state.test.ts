@@ -1,0 +1,71 @@
+import { describe, expect, it } from "bun:test";
+import { applyWorkflowStatePatch, readWorkflowState, validateWorkflowActivationOutput } from "../../src/workflow/state";
+
+describe("workflow structured state and artifacts", () => {
+	it("applies writes inside allowed scopes and rejects writes outside them", () => {
+		const state: Record<string, unknown> = {};
+
+		applyWorkflowStatePatch(state, [{ op: "set", path: "/review/verdict", value: "continue" }], {
+			allowedWritePaths: ["/review"],
+		});
+
+		expect(state).toEqual({ review: { verdict: "continue" } });
+		expect(() =>
+			applyWorkflowStatePatch(state, [{ op: "set", path: "/private/token", value: "secret" }], {
+				allowedWritePaths: ["/review"],
+			}),
+		).toThrow('workflow state write to "/private/token" is not allowed');
+	});
+
+	it("reads state inside allowed scopes and rejects reads outside them", () => {
+		const state = {
+			review: { verdict: "continue" },
+			private: { token: "secret" },
+		};
+
+		expect(readWorkflowState(state, "/review/verdict", { allowedReadPaths: ["/review"] })).toBe("continue");
+		expect(() => readWorkflowState(state, "/private/token", { allowedReadPaths: ["/review"] })).toThrow(
+			'workflow state read from "/private/token" is not allowed',
+		);
+	});
+
+	it("rejects large inline state values before they enter workflow state", () => {
+		expect(() =>
+			validateWorkflowActivationOutput(
+				{
+					summary: "short summary",
+					statePatch: [{ op: "set", path: "/review/body", value: "x".repeat(65) }],
+				},
+				{
+					allowedWritePaths: ["/review"],
+					maxInlineValueBytes: 64,
+				},
+			),
+		).toThrow('workflow state value at "/review/body" exceeds the inline size limit');
+	});
+
+	it("accepts compact artifact references and rejects raw transcript fields", () => {
+		expect(
+			validateWorkflowActivationOutput(
+				{
+					summary: "full output stored separately",
+					artifacts: ["artifact://workflow/run-1/review.txt", "agent-output://activation-1/output"],
+				},
+				{ allowedWritePaths: [] },
+			),
+		).toEqual({
+			summary: "full output stored separately",
+			artifacts: ["artifact://workflow/run-1/review.txt", "agent-output://activation-1/output"],
+		});
+
+		expect(() =>
+			validateWorkflowActivationOutput(
+				{
+					summary: "full transcript follows",
+					transcript: "raw transcript body",
+				},
+				{ allowedWritePaths: [] },
+			),
+		).toThrow("workflow activation output must store transcripts as artifact references");
+	});
+});
