@@ -1,5 +1,5 @@
 import { type BashResult, executeBash } from "../exec/bash-executor";
-import type { WorkflowNodeRuntimeHost } from "./node-runtime";
+import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput } from "./node-runtime";
 import { WorkflowNodeRuntimeError } from "./node-runtime";
 import type { WorkflowActivationOutput } from "./state";
 
@@ -88,9 +88,26 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			throw new WorkflowNodeRuntimeError(`workflow human node "${input.node.id}" requires a human input adapter`);
 		},
 		runReviewNode: async input => {
-			throw new WorkflowNodeRuntimeError(
-				`workflow review node "${input.node.id}" requires a review runtime adapter`,
-			);
+			if (!options.runAgentTask) {
+				throw new WorkflowNodeRuntimeError(
+					`workflow review node "${input.node.id}" requires a review runtime adapter`,
+				);
+			}
+			const assignment = input.prompt?.trim();
+			if (!assignment) {
+				throw new WorkflowNodeRuntimeError(`workflow review node "${input.node.id}" must define a review prompt`);
+			}
+			const result = await options.runAgentTask({
+				agent: input.agent ?? "reviewer",
+				activationId: input.activation.id,
+				nodeId: input.node.id,
+				task: {
+					id: taskIdForNode(input.node.id),
+					description: input.node.id,
+					assignment,
+				},
+			});
+			return reviewOutputFromTaskResult(input.node.id, result, input.gates);
 		},
 	};
 }
@@ -113,4 +130,56 @@ function activationOutputFromTaskResult(nodeId: string, result: WorkflowAgentTas
 		output.artifacts = [`local://${result.outputPath}`];
 	}
 	return output;
+}
+
+function reviewOutputFromTaskResult(
+	nodeId: string,
+	result: WorkflowAgentTaskResult,
+	gates: string[] | undefined,
+): WorkflowReviewNodeOutput {
+	if (result.exitCode !== 0) {
+		const reason = result.error || result.stderr || `exit code ${result.exitCode}`;
+		throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" failed: ${reason}`);
+	}
+	const parsed = parseReviewTaskOutput(nodeId, result.output, gates);
+	const output: WorkflowReviewNodeOutput = {
+		summary: parsed.summary,
+		verdict: parsed.verdict,
+	};
+	if (result.outputPath) {
+		output.artifacts = [`local://${result.outputPath}`];
+	}
+	return output;
+}
+
+function parseReviewTaskOutput(
+	nodeId: string,
+	output: string,
+	gates: string[] | undefined,
+): { verdict: string; summary: string } {
+	const trimmed = output.trim();
+	const parsed = parseJsonObject(trimmed);
+	if (parsed) {
+		const verdict = parsed.verdict;
+		if (typeof verdict !== "string" || verdict.length === 0) {
+			throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a string verdict`);
+		}
+		const summary = typeof parsed.summary === "string" && parsed.summary.length > 0 ? parsed.summary : trimmed;
+		return { verdict, summary };
+	}
+	if (gates?.includes(trimmed)) {
+		return { verdict: trimmed, summary: trimmed };
+	}
+	throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a verdict`);
+}
+
+function parseJsonObject(source: string): Record<string, unknown> | undefined {
+	try {
+		const parsed: unknown = JSON.parse(source);
+		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: undefined;
+	} catch {
+		return undefined;
+	}
 }

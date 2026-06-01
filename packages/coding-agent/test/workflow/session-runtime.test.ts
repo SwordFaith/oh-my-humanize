@@ -14,6 +14,13 @@ nodes:
     type: agent
     agent: task
     prompt: Implement the workflow feature.
+  review:
+    type: review
+    agent: reviewer
+    prompt: Review the workflow result.
+    gates:
+      - continue
+      - finish
 edges: []
 `;
 
@@ -100,6 +107,47 @@ describe("session workflow runtime host", () => {
 		expect(output).toEqual({
 			summary: "agent completed",
 			data: { exitCode: 0 },
+		});
+	});
+
+	it("maps review nodes to a reviewer task and extracts a structured verdict", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		let capturedRequest: WorkflowAgentTaskRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: JSON.stringify({ verdict: "continue", summary: "review passed" }),
+				};
+			},
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: node.gates,
+		});
+
+		expect(capturedRequest).toEqual({
+			agent: "reviewer",
+			activationId: "activation-review",
+			nodeId: "review",
+			task: {
+				id: "review",
+				description: "review",
+				assignment: "Review the workflow result.",
+			},
+		});
+		expect(output).toEqual({
+			summary: "review passed",
+			verdict: "continue",
 		});
 	});
 });
