@@ -1,10 +1,11 @@
 import * as path from "node:path";
 import { Snowflake } from "@oh-my-pi/pi-utils";
+import { formatModelString } from "../../config/model-resolver";
 import { parseCommandArgs } from "../../utils/command-args";
 import { buildWorkflowInspection, type WorkflowInspection } from "../../workflow/inspection";
 import { loadWorkflowPackage } from "../../workflow/package-loader";
 import { reconstructWorkflowRuns } from "../../workflow/run-store";
-import { runWorkflow } from "../../workflow/runner";
+import { runWorkflow, type WorkflowRunnerModelResolutionOptions } from "../../workflow/runner";
 import type { ParsedSlashCommand, SlashCommandResult, SlashCommandRuntime } from "../types";
 import { commandConsumed, parseSubcommand, usage } from "./parse";
 
@@ -60,6 +61,7 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 		startNodeId,
 		runtimeHost: await runtime.createWorkflowRuntimeHost(),
 		packageRoot: pkg.rootPath,
+		modelResolution: createWorkflowModelResolution(runtime),
 	});
 	const run = reconstructWorkflowRuns(runtime.sessionManager.getBranch()).find(candidate => candidate.id === runId);
 	if (!run) {
@@ -108,6 +110,18 @@ function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: stri
 
 function resolveWorkflowPath(workflowPath: string, cwd: string): string {
 	return path.isAbsolute(workflowPath) ? workflowPath : path.resolve(cwd, workflowPath);
+}
+
+function createWorkflowModelResolution(runtime: SlashCommandRuntime): WorkflowRunnerModelResolutionOptions | undefined {
+	const availableModels =
+		runtime.session.getAvailableModels?.() ?? runtime.session.modelRegistry?.getAvailable?.() ?? [];
+	if (availableModels.length === 0) return undefined;
+	return {
+		availableModels,
+		settings: runtime.settings,
+		modelRegistry: runtime.session.modelRegistry,
+		parentActiveModelPattern: runtime.session.model ? formatModelString(runtime.session.model) : undefined,
+	};
 }
 
 function workflowUsage(): string {

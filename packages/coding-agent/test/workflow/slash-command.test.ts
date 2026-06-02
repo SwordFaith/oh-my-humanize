@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Api, Model } from "@oh-my-pi/pi-ai";
 import { Settings } from "../../src/config/settings";
 import type { InteractiveModeContext } from "../../src/modes/types";
 import type { AgentSession } from "../../src/session/agent-session";
@@ -26,6 +27,19 @@ interface CapturedEntry {
 	customType: string;
 	data?: unknown;
 }
+
+const openAiModel: Model<Api> = {
+	id: "gpt-4o",
+	name: "GPT-4o",
+	api: "openai-completions",
+	provider: "openai",
+	baseUrl: "https://openai.example.test",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128000,
+	maxTokens: 8192,
+};
 
 const tempDirs: string[] = [];
 
@@ -84,6 +98,11 @@ function createTuiRuntime(entries: CapturedEntry[], cwd: string, runner: Workflo
 		getWorkflowAgentTaskRunner: () => runner,
 		getWorkflowScriptEvalRunner: () => undefined,
 		getWorkflowHumanInputRunner: () => undefined,
+		getAvailableModels: () => [openAiModel],
+		modelRegistry: {
+			getAvailable: () => [openAiModel],
+		},
+		model: openAiModel,
 	} as unknown as AgentSession;
 	const sessionManager = {
 		appendCustomEntry: (customType: string, data?: unknown) => {
@@ -301,6 +320,11 @@ edges:
 			`
 name: slash-agent-demo
 version: 1
+models:
+  roles:
+    builder: openai/gpt-4o
+  defaults:
+    agent: builder
 nodes:
   build:
     type: agent
@@ -327,10 +351,12 @@ edges: []
 		});
 		expect(output[0]).toContain("Workflow run: run-1");
 		expect(output[0]).toContain("Activations: 1 completed");
+		expect(output[0]).toContain("activation-1 build openai/gpt-4o (workflow-default)");
 		const runs = reconstructWorkflowRuns(entries);
 		expect(runs[0]?.activations[0]?.output).toEqual({
 			summary: "agent completed",
 			data: { exitCode: 0 },
 		});
+		expect(runs[0]?.activations[0]?.modelAudit?.resolvedModel).toBe("openai/gpt-4o");
 	});
 });
