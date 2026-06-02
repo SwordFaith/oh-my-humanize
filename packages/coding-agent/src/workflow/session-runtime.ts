@@ -1,18 +1,12 @@
-import { type BashResult, executeBash } from "../exec/bash-executor";
 import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput } from "./node-runtime";
 import { WorkflowNodeRuntimeError } from "./node-runtime";
 import type { WorkflowActivationOutput } from "./state";
 
 export interface WorkflowSessionRuntimeOptions {
 	cwd: string;
-	runShellCommand?: (command: string, options: WorkflowShellCommandOptions) => Promise<BashResult>;
+	runEvalScript?: WorkflowScriptEvalRunner;
 	runAgentTask?: WorkflowAgentTaskRunner;
 	runHumanInput?: WorkflowHumanInputRunner;
-}
-
-export interface WorkflowShellCommandOptions {
-	cwd: string;
-	timeout: number;
 }
 
 export interface WorkflowAgentTaskRequest {
@@ -38,6 +32,26 @@ export interface WorkflowAgentTaskResult {
 
 export type WorkflowAgentTaskRunner = (request: WorkflowAgentTaskRequest) => Promise<WorkflowAgentTaskResult>;
 
+export type WorkflowScriptEvalLanguage = "js" | "py";
+
+export interface WorkflowScriptEvalRequest {
+	activationId: string;
+	nodeId: string;
+	code: string;
+	language: WorkflowScriptEvalLanguage;
+	title: string;
+}
+
+export interface WorkflowScriptEvalResult {
+	exitCode: number;
+	output: string;
+	error?: string;
+	artifactId?: string;
+	language?: WorkflowScriptEvalLanguage;
+}
+
+export type WorkflowScriptEvalRunner = (request: WorkflowScriptEvalRequest) => Promise<WorkflowScriptEvalResult>;
+
 export interface WorkflowHumanInputRequest {
 	activationId: string;
 	nodeId: string;
@@ -52,10 +66,7 @@ export interface WorkflowHumanInputResult {
 
 export type WorkflowHumanInputRunner = (request: WorkflowHumanInputRequest) => Promise<WorkflowHumanInputResult>;
 
-const DEFAULT_WORKFLOW_SCRIPT_TIMEOUT_MS = 300_000;
-
 export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntimeOptions): WorkflowNodeRuntimeHost {
-	const runShellCommand = options.runShellCommand ?? executeBash;
 	return {
 		runAgentNode: async input => {
 			if (!options.runAgentTask) {
@@ -77,27 +88,35 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			return activationOutputFromTaskResult(input.node.id, result);
 		},
 		runScriptNode: async input => {
-			const command = input.script?.trim();
-			if (!command) {
-				throw new WorkflowNodeRuntimeError(`workflow script node "${input.node.id}" must define a script command`);
-			}
-			const result = await runShellCommand(command, {
-				cwd: options.cwd,
-				timeout: DEFAULT_WORKFLOW_SCRIPT_TIMEOUT_MS,
-			});
-			if (result.cancelled) {
-				throw new WorkflowNodeRuntimeError(`workflow script node "${input.node.id}" was cancelled`);
-			}
-			if (result.exitCode !== 0) {
+			if (!options.runEvalScript) {
 				throw new WorkflowNodeRuntimeError(
-					`workflow script node "${input.node.id}" exited with code ${result.exitCode ?? "unknown"}`,
+					`workflow script node "${input.node.id}" requires an eval runtime adapter`,
 				);
 			}
+			const code = input.script?.trim();
+			if (!code) {
+				throw new WorkflowNodeRuntimeError(`workflow script node "${input.node.id}" must define script code`);
+			}
+			const result = await options.runEvalScript({
+				activationId: input.activation.id,
+				nodeId: input.node.id,
+				code,
+				language: "js",
+				title: input.node.id,
+			});
+			if (result.exitCode !== 0) {
+				const reason = result.error || `exit code ${result.exitCode}`;
+				throw new WorkflowNodeRuntimeError(`workflow script node "${input.node.id}" failed: ${reason}`);
+			}
 			const summary = result.output.trim() || `script node "${input.node.id}" completed`;
-			return {
+			const output: WorkflowActivationOutput = {
 				summary,
 				data: { exitCode: result.exitCode },
 			};
+			if (result.artifactId) {
+				output.artifacts = [`artifact://${result.artifactId}`];
+			}
+			return output;
 		},
 		runHumanNode: async input => {
 			if (!options.runHumanInput) {

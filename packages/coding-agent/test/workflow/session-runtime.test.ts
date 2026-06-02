@@ -5,6 +5,7 @@ import {
 	createSessionWorkflowRuntimeHost,
 	type WorkflowAgentTaskRequest,
 	type WorkflowHumanInputRequest,
+	type WorkflowScriptEvalRequest,
 } from "../../src/workflow/session-runtime";
 
 const scriptWorkflow = `
@@ -13,7 +14,7 @@ version: 1
 nodes:
   shell:
     type: script
-    prompt: printf workflow-ok
+    prompt: return "workflow-ok";
   build:
     type: agent
     agent: task
@@ -41,11 +42,22 @@ function activation(nodeId: string): WorkflowActivation {
 }
 
 describe("session workflow runtime host", () => {
-	it("executes script nodes through the shell executor", async () => {
+	it("maps script nodes to an eval runner when configured", async () => {
 		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
 		const node = definition.nodes.find(candidate => candidate.id === "shell");
 		if (!node) throw new Error("expected shell node");
-		const host = createSessionWorkflowRuntimeHost({ cwd: process.cwd() });
+		let capturedRequest: WorkflowScriptEvalRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: "workflow-ok",
+					artifactId: "eval-output",
+				};
+			},
+		});
 
 		const output = await host.runScriptNode?.({
 			node,
@@ -54,9 +66,17 @@ describe("session workflow runtime host", () => {
 			model: node.model,
 		});
 
+		expect(capturedRequest).toEqual({
+			activationId: "activation-shell",
+			nodeId: "shell",
+			code: 'return "workflow-ok";',
+			language: "js",
+			title: "shell",
+		});
 		expect(output).toEqual({
 			summary: "workflow-ok",
 			data: { exitCode: 0 },
+			artifacts: ["artifact://eval-output"],
 		});
 	});
 

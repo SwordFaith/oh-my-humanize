@@ -162,6 +162,7 @@ import { queueResolveHandler } from "./tools/resolve";
 import { ttsTool } from "./tools/tts";
 import { EventBus } from "./utils/event-bus";
 import { buildNamedToolChoice } from "./utils/tool-choice";
+import { createEvalToolScriptRunner } from "./workflow/eval-tool-runtime";
 import { createAskToolHumanInputRunner } from "./workflow/human-tool-runtime";
 import { createTaskToolAgentRunner } from "./workflow/task-tool-runtime";
 import { buildWorkspaceTree, type WorkspaceTree } from "./workspace-tree";
@@ -2026,6 +2027,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			onPayload,
 			onResponse,
 			workflowAgentTaskRunner: createTaskToolAgentRunner(toolSession),
+			workflowScriptEvalRunner: createEvalToolScriptRunner(toolSession),
 			workflowHumanInputRunner: createAskToolHumanInputRunner(toolSession, () => toolContextStore.getContext()),
 			convertToLlm: convertToLlmFinal,
 			rebuildSystemPrompt,
