@@ -4,6 +4,7 @@ import {
 	applyWorkflowGraphPatch,
 	applyWorkflowGraphPatchToRun,
 	proposeWorkflowGraphPatch,
+	proposeWorkflowGraphPatchToRun,
 	WorkflowGraphPatchError,
 	type WorkflowGraphPatchOperation,
 } from "../../src/workflow/patches";
@@ -243,8 +244,14 @@ describe("workflow graph patch API", () => {
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
 
+		const proposal = proposeWorkflowGraphPatchToRun(host, run, patchOperations(), {
+			actor: "agent",
+			proposalId: "proposal-1",
+			reason: "request finish branch",
+		});
 		const result = applyWorkflowGraphPatchToRun(host, run, patchOperations(), {
 			actor: "human",
+			proposalId: proposal.id,
 			graphRevisionId: "run-1:graph-1",
 			reason: "approved finish branch",
 		});
@@ -258,5 +265,11 @@ describe("workflow graph patch API", () => {
 			"review",
 			"finish",
 		]);
+		expect(reconstructed[0]?.graphPatchProposals.map(entry => [entry.id, entry.actor, entry.reason])).toEqual([
+			["proposal-1", "agent", "request finish branch"],
+		]);
+		expect(
+			reconstructed[0]?.appliedGraphPatches.map(entry => [entry.proposalId, entry.actor, entry.graphRevisionId]),
+		).toEqual([["proposal-1", "human", "run-1:graph-1"]]);
 	});
 });

@@ -5,6 +5,8 @@ import {
 	appendWorkflowActivationCompleted,
 	appendWorkflowActivationFailed,
 	appendWorkflowActivationStarted,
+	appendWorkflowGraphPatchApplied,
+	appendWorkflowGraphPatchProposed,
 	appendWorkflowGraphRevision,
 	appendWorkflowStatePatch,
 	reconstructWorkflowRuns,
@@ -128,6 +130,72 @@ describe("workflow run store", () => {
 		const reconstructed = reconstructWorkflowRuns(host.getBranch());
 
 		expect(reconstructed[0]?.state).toEqual({ round: 1, verdict: "continue" });
+	});
+
+	it("reconstructs graph patch proposals and applied patch audit records", () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		const run = startWorkflowRun(host, definition, { runId: "run-1" });
+		const patch = [
+			{
+				op: "add_node" as const,
+				node: { id: "review", type: "review" as const },
+			},
+		];
+		const preview = {
+			addedNodes: ["review"],
+			removedNodes: [],
+			changedNodes: [],
+			addedEdges: [],
+			removedEdges: [],
+			changedEdges: [],
+			promptSourceChanges: [],
+			modelChanges: [],
+			permissionChanges: [],
+			modelRoleChanges: [],
+			warnings: [],
+		};
+
+		appendWorkflowGraphPatchProposed(host, run.id, {
+			proposalId: "proposal-1",
+			actor: "agent",
+			patch,
+			preview,
+			reason: "add review gate",
+		});
+		appendWorkflowGraphPatchApplied(host, run.id, {
+			proposalId: "proposal-1",
+			actor: "supervisor",
+			patch,
+			preview,
+			graphRevisionId: "run-1:graph-1",
+			parentGraphRevisionId: run.currentGraphRevisionId,
+			reason: "approved review gate",
+		});
+
+		const reconstructed = reconstructWorkflowRuns(host.getBranch());
+
+		expect(reconstructed[0]?.graphPatchProposals).toEqual([
+			{
+				id: "proposal-1",
+				status: "proposed",
+				actor: "agent",
+				patch,
+				preview,
+				reason: "add review gate",
+			},
+		]);
+		expect(reconstructed[0]?.appliedGraphPatches).toEqual([
+			{
+				proposalId: "proposal-1",
+				actor: "supervisor",
+				patch,
+				preview,
+				graphRevisionId: "run-1:graph-1",
+				parentGraphRevisionId: "run-1:graph-0",
+				reason: "approved review gate",
+			},
+		]);
 	});
 
 	it("reconstructs activation output and model audit records", () => {

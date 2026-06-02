@@ -1,6 +1,7 @@
 import type { CustomEntry, SessionEntry } from "../session/session-manager";
 import type { WorkflowDefinition } from "./definition";
 import type { WorkflowModelResolutionAudit } from "./model-resolution";
+import type { WorkflowGraphPatchActor, WorkflowGraphPatchOperation, WorkflowGraphPatchPreview } from "./patches";
 import type { WorkflowActivationInputSnapshot } from "./prompt-source";
 import type { WorkflowActivationOutput } from "./state";
 import { applyWorkflowStatePatch, type WorkflowStatePatchOperation } from "./state";
@@ -24,6 +25,8 @@ export interface WorkflowRunSnapshot {
 	currentGraphRevisionId: string;
 	definition: WorkflowDefinition;
 	graphRevisions: WorkflowGraphRevision[];
+	graphPatchProposals: WorkflowGraphPatchProposalRecord[];
+	appliedGraphPatches: WorkflowGraphPatchAppliedRecord[];
 	state: Record<string, unknown>;
 	activations: WorkflowActivationRecord[];
 }
@@ -41,6 +44,24 @@ export interface AppendWorkflowGraphRevisionOptions {
 
 export interface AppendWorkflowStatePatchOptions {
 	patch: WorkflowStatePatchOperation[];
+	reason?: string;
+}
+
+export interface AppendWorkflowGraphPatchProposedOptions {
+	proposalId: string;
+	actor: WorkflowGraphPatchActor;
+	patch: WorkflowGraphPatchOperation[];
+	preview: WorkflowGraphPatchPreview;
+	reason?: string;
+}
+
+export interface AppendWorkflowGraphPatchAppliedOptions {
+	proposalId?: string;
+	actor: WorkflowGraphPatchActor;
+	patch: WorkflowGraphPatchOperation[];
+	preview: WorkflowGraphPatchPreview;
+	graphRevisionId: string;
+	parentGraphRevisionId?: string;
 	reason?: string;
 }
 
@@ -77,10 +98,31 @@ export interface WorkflowActivationRecord {
 	error?: string;
 }
 
+export interface WorkflowGraphPatchProposalRecord {
+	id: string;
+	status: "proposed";
+	actor: WorkflowGraphPatchActor;
+	patch: WorkflowGraphPatchOperation[];
+	preview: WorkflowGraphPatchPreview;
+	reason?: string;
+}
+
+export interface WorkflowGraphPatchAppliedRecord {
+	proposalId?: string;
+	actor: WorkflowGraphPatchActor;
+	patch: WorkflowGraphPatchOperation[];
+	preview: WorkflowGraphPatchPreview;
+	graphRevisionId: string;
+	parentGraphRevisionId?: string;
+	reason?: string;
+}
+
 export type WorkflowRunEvent =
 	| WorkflowRunStartedEvent
 	| WorkflowGraphRevisionCreatedEvent
 	| WorkflowStatePatchAppliedEvent
+	| WorkflowGraphPatchProposedEvent
+	| WorkflowGraphPatchAppliedEvent
 	| WorkflowActivationStartedEvent
 	| WorkflowActivationCompletedEvent
 	| WorkflowActivationFailedEvent;
@@ -105,6 +147,28 @@ export interface WorkflowStatePatchAppliedEvent {
 	event: "state_patch_applied";
 	runId: string;
 	patch: WorkflowStatePatchOperation[];
+	reason?: string;
+}
+
+export interface WorkflowGraphPatchProposedEvent {
+	event: "graph_patch_proposed";
+	runId: string;
+	proposalId: string;
+	actor: WorkflowGraphPatchActor;
+	patch: WorkflowGraphPatchOperation[];
+	preview: WorkflowGraphPatchPreview;
+	reason?: string;
+}
+
+export interface WorkflowGraphPatchAppliedEvent {
+	event: "graph_patch_applied";
+	runId: string;
+	proposalId?: string;
+	actor: WorkflowGraphPatchActor;
+	patch: WorkflowGraphPatchOperation[];
+	preview: WorkflowGraphPatchPreview;
+	graphRevisionId: string;
+	parentGraphRevisionId?: string;
 	reason?: string;
 }
 
@@ -151,6 +215,8 @@ export function startWorkflowRun(
 		currentGraphRevisionId: graphRevisionId,
 		definition,
 		graphRevisions: [{ id: graphRevisionId, definition }],
+		graphPatchProposals: [],
+		appliedGraphPatches: [],
 		state: {},
 		activations: [],
 	};
@@ -189,6 +255,42 @@ export function appendWorkflowStatePatch(
 		runId,
 		patch: options.patch,
 	};
+	if (options.reason !== undefined) event.reason = options.reason;
+	host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, event);
+}
+
+export function appendWorkflowGraphPatchProposed(
+	host: WorkflowRunStoreHost,
+	runId: string,
+	options: AppendWorkflowGraphPatchProposedOptions,
+): void {
+	const event: WorkflowGraphPatchProposedEvent = {
+		event: "graph_patch_proposed",
+		runId,
+		proposalId: options.proposalId,
+		actor: options.actor,
+		patch: options.patch,
+		preview: options.preview,
+	};
+	if (options.reason !== undefined) event.reason = options.reason;
+	host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, event);
+}
+
+export function appendWorkflowGraphPatchApplied(
+	host: WorkflowRunStoreHost,
+	runId: string,
+	options: AppendWorkflowGraphPatchAppliedOptions,
+): void {
+	const event: WorkflowGraphPatchAppliedEvent = {
+		event: "graph_patch_applied",
+		runId,
+		actor: options.actor,
+		patch: options.patch,
+		preview: options.preview,
+		graphRevisionId: options.graphRevisionId,
+	};
+	if (options.proposalId !== undefined) event.proposalId = options.proposalId;
+	if (options.parentGraphRevisionId !== undefined) event.parentGraphRevisionId = options.parentGraphRevisionId;
 	if (options.reason !== undefined) event.reason = options.reason;
 	host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, event);
 }
@@ -252,6 +354,8 @@ export function reconstructWorkflowRuns(
 				currentGraphRevisionId: event.graphRevisionId,
 				definition: event.definitionSnapshot,
 				graphRevisions: [{ id: event.graphRevisionId, definition: event.definitionSnapshot }],
+				graphPatchProposals: [],
+				appliedGraphPatches: [],
 				state: {},
 				activations: [],
 			});
@@ -261,6 +365,30 @@ export function reconstructWorkflowRuns(
 		if (!run) continue;
 		if (event.event === "state_patch_applied") {
 			applyWorkflowStatePatch(run.state, event.patch);
+			continue;
+		}
+		if (event.event === "graph_patch_proposed") {
+			run.graphPatchProposals.push({
+				id: event.proposalId,
+				status: "proposed",
+				actor: event.actor,
+				patch: event.patch,
+				preview: event.preview,
+				reason: event.reason,
+			});
+			continue;
+		}
+		if (event.event === "graph_patch_applied") {
+			const record: WorkflowGraphPatchAppliedRecord = {
+				actor: event.actor,
+				patch: event.patch,
+				preview: event.preview,
+				graphRevisionId: event.graphRevisionId,
+			};
+			if (event.proposalId !== undefined) record.proposalId = event.proposalId;
+			if (event.parentGraphRevisionId !== undefined) record.parentGraphRevisionId = event.parentGraphRevisionId;
+			if (event.reason !== undefined) record.reason = event.reason;
+			run.appliedGraphPatches.push(record);
 			continue;
 		}
 		if (event.event === "activation_started") {
@@ -315,6 +443,8 @@ function isWorkflowRunEvent(value: unknown): value is WorkflowRunEvent {
 		value.event !== "run_started" &&
 		value.event !== "graph_revision_created" &&
 		value.event !== "state_patch_applied" &&
+		value.event !== "graph_patch_proposed" &&
+		value.event !== "graph_patch_applied" &&
 		value.event !== "activation_started" &&
 		value.event !== "activation_completed" &&
 		value.event !== "activation_failed"
@@ -324,6 +454,22 @@ function isWorkflowRunEvent(value: unknown): value is WorkflowRunEvent {
 	if (typeof value.runId !== "string") return false;
 	if (value.event === "state_patch_applied") {
 		return Array.isArray(value.patch);
+	}
+	if (value.event === "graph_patch_proposed") {
+		return (
+			typeof value.proposalId === "string" &&
+			isWorkflowGraphPatchActor(value.actor) &&
+			Array.isArray(value.patch) &&
+			isRecord(value.preview)
+		);
+	}
+	if (value.event === "graph_patch_applied") {
+		return (
+			isWorkflowGraphPatchActor(value.actor) &&
+			Array.isArray(value.patch) &&
+			isRecord(value.preview) &&
+			typeof value.graphRevisionId === "string"
+		);
 	}
 	if (value.event === "activation_started") {
 		return (
@@ -341,6 +487,10 @@ function isWorkflowRunEvent(value: unknown): value is WorkflowRunEvent {
 	}
 	if (typeof value.graphRevisionId !== "string") return false;
 	return isRecord(value.definitionSnapshot);
+}
+
+function isWorkflowGraphPatchActor(value: unknown): value is WorkflowGraphPatchActor {
+	return value === "agent" || value === "supervisor" || value === "human";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -8,6 +8,8 @@ import type {
 	WorkflowPromptSource,
 } from "./definition";
 import {
+	appendWorkflowGraphPatchApplied,
+	appendWorkflowGraphPatchProposed,
 	appendWorkflowGraphRevision,
 	type WorkflowGraphRevision,
 	type WorkflowRunSnapshot,
@@ -92,6 +94,7 @@ export interface WorkflowGraphPatchProposalContext extends WorkflowGraphPatchCon
 
 export interface WorkflowGraphPatchRunContext extends WorkflowGraphPatchContext {
 	graphRevisionId: string;
+	proposalId?: string;
 }
 
 export interface WorkflowGraphPatchPreview {
@@ -181,6 +184,23 @@ export function proposeWorkflowGraphPatch(
 	};
 }
 
+export function proposeWorkflowGraphPatchToRun(
+	host: WorkflowRunStoreHost,
+	run: WorkflowRunSnapshot,
+	patch: WorkflowGraphPatchOperation[],
+	context: WorkflowGraphPatchProposalContext,
+): WorkflowGraphPatchProposal {
+	const proposal = proposeWorkflowGraphPatch(run.definition, patch, context);
+	appendWorkflowGraphPatchProposed(host, run.id, {
+		proposalId: proposal.id,
+		actor: context.actor,
+		patch,
+		preview: proposal.preview,
+		reason: context.reason,
+	});
+	return proposal;
+}
+
 export function applyWorkflowGraphPatch(
 	definition: WorkflowDefinition,
 	patch: WorkflowGraphPatchOperation[],
@@ -201,6 +221,15 @@ export function applyWorkflowGraphPatchToRun(
 	const result = applyWorkflowGraphPatch(run.definition, patch, context);
 	const revision = appendWorkflowGraphRevision(host, run.id, result.definition, {
 		graphRevisionId: context.graphRevisionId,
+		parentGraphRevisionId: run.currentGraphRevisionId,
+		reason: context.reason,
+	});
+	appendWorkflowGraphPatchApplied(host, run.id, {
+		proposalId: context.proposalId,
+		actor: context.actor,
+		patch,
+		preview: result.preview,
+		graphRevisionId: revision.id,
 		parentGraphRevisionId: run.currentGraphRevisionId,
 		reason: context.reason,
 	});
