@@ -11,6 +11,7 @@ export interface WorkflowAgentNodeInput extends WorkflowNodeRuntimeInput {
 	agent: string;
 	prompt?: string;
 	model?: WorkflowModelContext;
+	modelOverride?: string;
 }
 
 export interface WorkflowScriptNodeInput extends WorkflowNodeRuntimeInput {
@@ -28,6 +29,7 @@ export interface WorkflowReviewNodeInput extends WorkflowNodeRuntimeInput {
 	agent?: string;
 	prompt?: string;
 	model?: WorkflowModelContext;
+	modelOverride?: string;
 	gates?: string[];
 }
 
@@ -55,9 +57,10 @@ export async function executeWorkflowNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
+	options: { modelOverride?: string } = {},
 ): Promise<WorkflowActivationOutput> {
 	if (node.type === "agent") {
-		return executeAgentNode(node, activation, host);
+		return executeAgentNode(node, activation, host, options);
 	}
 	if (node.type === "script") {
 		return executeScriptNode(node, activation, host);
@@ -66,7 +69,7 @@ export async function executeWorkflowNode(
 		return executeHumanNode(node, activation, host);
 	}
 	if (node.type === "review") {
-		return executeReviewNode(node, activation, host);
+		return executeReviewNode(node, activation, host, options);
 	}
 	throw new WorkflowNodeRuntimeError(`unsupported workflow node type: ${node.type}`);
 }
@@ -75,6 +78,7 @@ async function executeAgentNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
+	options: { modelOverride?: string },
 ): Promise<WorkflowActivationOutput> {
 	if (!node.agent) {
 		throw new WorkflowNodeRuntimeError(`agent node "${node.id}" must define an agent`);
@@ -82,13 +86,17 @@ async function executeAgentNode(
 	if (!host.runAgentNode) {
 		throw new WorkflowNodeRuntimeError("workflow runtime host does not support agent nodes");
 	}
-	return host.runAgentNode({
+	const input: WorkflowAgentNodeInput = {
 		node,
 		activation,
 		agent: node.agent,
 		prompt: node.prompt,
 		model: node.model,
-	});
+	};
+	if (options.modelOverride !== undefined) {
+		input.modelOverride = options.modelOverride;
+	}
+	return host.runAgentNode(input);
 }
 
 async function executeScriptNode(
@@ -128,18 +136,23 @@ async function executeReviewNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
+	options: { modelOverride?: string },
 ): Promise<WorkflowActivationOutput> {
 	if (!host.runReviewNode) {
 		throw new WorkflowNodeRuntimeError("workflow runtime host does not support review nodes");
 	}
-	const output = await host.runReviewNode({
+	const input: WorkflowReviewNodeInput = {
 		node,
 		activation,
 		agent: node.agent,
 		prompt: node.prompt,
 		model: node.model,
 		gates: node.gates,
-	});
+	};
+	if (options.modelOverride !== undefined) {
+		input.modelOverride = options.modelOverride;
+	}
+	const output = await host.runReviewNode(input);
 	if (node.gates?.length && !node.gates.includes(output.verdict)) {
 		throw new WorkflowNodeRuntimeError(
 			`workflow review node "${node.id}" returned undeclared verdict "${output.verdict}"`,

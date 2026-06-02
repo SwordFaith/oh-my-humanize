@@ -26,6 +26,7 @@ function createRequest(): WorkflowAgentTaskRequest {
 		agent: "task",
 		activationId: "activation-build",
 		nodeId: "build",
+		modelOverride: "openai/gpt-4o",
 		task: {
 			id: "build",
 			description: "build",
@@ -74,6 +75,7 @@ describe("workflow task tool runtime adapter", () => {
 
 		expect(capturedParams).toEqual({
 			agent: "task",
+			modelOverride: "openai/gpt-4o",
 			tasks: [
 				{
 					id: "build",

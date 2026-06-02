@@ -98,8 +98,10 @@ describe("workflow end-to-end smoke", () => {
 		let buildCount = 0;
 		let reviewCount = 0;
 		const buildPrompts: string[] = [];
+		const modelOverrides: Array<[string, string | undefined]> = [];
 		const runtimeHost: WorkflowNodeRuntimeHost = {
 			runAgentNode: async input => {
+				modelOverrides.push([input.node.id, input.modelOverride]);
 				if (input.node.id === "planner") {
 					planCount++;
 					return {
@@ -115,7 +117,8 @@ describe("workflow end-to-end smoke", () => {
 					statePatch: [{ op: "set", path: "/work/round", value: buildCount }],
 				};
 			},
-			runReviewNode: async () => {
+			runReviewNode: async input => {
+				modelOverrides.push([input.node.id, input.modelOverride]);
 				reviewCount++;
 				const verdict = reviewCount === 1 ? "continue" : "finish";
 				return {
@@ -150,6 +153,14 @@ describe("workflow end-to-end smoke", () => {
 			["finish", "completed"],
 		]);
 		expect(buildPrompts).toEqual(["Build round 1", "Build round 2"]);
+		expect(modelOverrides).toEqual([
+			["planner", "openai/gpt-4o"],
+			["build", "openai/gpt-4o"],
+			["review", "openai/gpt-4o"],
+			["planner", "openai/gpt-4o"],
+			["build", "openai/gpt-4o"],
+			["review", "openai/gpt-4o"],
+		]);
 
 		const reconstructed = reconstructWorkflowRuns(host.getBranch());
 		const run = reconstructed[0];

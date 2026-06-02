@@ -9,6 +9,9 @@ export function createTaskToolAgentRunner(toolSession: ToolSession): WorkflowAge
 			agent: request.agent,
 			tasks: [request.task],
 		};
+		if (request.modelOverride !== undefined) {
+			params.modelOverride = request.modelOverride;
+		}
 		const result = await taskTool.execute(`workflow-${request.activationId}`, params);
 		const taskResult = result.details?.results[0];
 		if (!taskResult) {

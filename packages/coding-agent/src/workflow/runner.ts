@@ -107,7 +107,9 @@ async function executeAndPersistActivation(
 			throw new WorkflowRunnerError(modelAudit.error);
 		}
 		const output = validateWorkflowActivationOutput(
-			await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost),
+			await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost, {
+				modelOverride: modelOverrideFromAudit(modelAudit),
+			}),
 			{
 				allowedWritePaths: node.writes,
 			},
@@ -139,6 +141,14 @@ async function executeAndPersistActivation(
 		});
 		throw error;
 	}
+}
+
+function modelOverrideFromAudit(modelAudit: WorkflowModelResolutionAudit | undefined): string | undefined {
+	if (!modelAudit?.resolvedModel) return undefined;
+	if (modelAudit.explicitThinkingLevel && modelAudit.thinkingLevel) {
+		return `${modelAudit.resolvedModel}:${modelAudit.thinkingLevel}`;
+	}
+	return modelAudit.resolvedModel;
 }
 
 async function resolvePromptForActivation(

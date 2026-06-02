@@ -14,6 +14,7 @@ export interface WorkflowAgentTaskRequest {
 	agent: string;
 	activationId: string;
 	nodeId: string;
+	modelOverride?: string;
 	task: WorkflowAgentTaskItem;
 }
 
@@ -80,12 +81,16 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 				description: input.node.id,
 				assignment: input.prompt?.trim() || `Run workflow node "${input.node.id}".`,
 			};
-			const result = await options.runAgentTask({
+			const request: WorkflowAgentTaskRequest = {
 				agent: input.agent,
 				activationId: input.activation.id,
 				nodeId: input.node.id,
 				task,
-			});
+			};
+			if (input.modelOverride !== undefined) {
+				request.modelOverride = input.modelOverride;
+			}
+			const result = await options.runAgentTask(request);
 			return activationOutputFromTaskResult(input.node.id, result);
 		},
 		runScriptNode: async input => {
@@ -144,7 +149,7 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			if (!assignment) {
 				throw new WorkflowNodeRuntimeError(`workflow review node "${input.node.id}" must define a review prompt`);
 			}
-			const result = await options.runAgentTask({
+			const request: WorkflowAgentTaskRequest = {
 				agent: input.agent ?? "reviewer",
 				activationId: input.activation.id,
 				nodeId: input.node.id,
@@ -153,7 +158,11 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 					description: input.node.id,
 					assignment,
 				},
-			});
+			};
+			if (input.modelOverride !== undefined) {
+				request.modelOverride = input.modelOverride;
+			}
+			const result = await options.runAgentTask(request);
 			return reviewOutputFromTaskResult(input.node.id, result, input.gates);
 		},
 	};

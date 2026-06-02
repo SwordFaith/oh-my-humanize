@@ -157,12 +157,14 @@ describe("session workflow runtime host", () => {
 			agent: "task",
 			prompt: node.prompt,
 			model: node.model,
+			modelOverride: "openai/gpt-4o",
 		});
 
 		expect(capturedRequest).toEqual({
 			agent: "task",
 			activationId: "activation-build",
 			nodeId: "build",
+			modelOverride: "openai/gpt-4o",
 			task: {
 				id: "build",
 				description: "build",
@@ -197,6 +199,7 @@ describe("session workflow runtime host", () => {
 			agent: node.agent,
 			prompt: node.prompt,
 			model: node.model,
+			modelOverride: "openai/gpt-4o",
 			gates: node.gates,
 		});
 
@@ -204,6 +207,7 @@ describe("session workflow runtime host", () => {
 			agent: "reviewer",
 			activationId: "activation-review",
 			nodeId: "review",
+			modelOverride: "openai/gpt-4o",
 			task: {
 				id: "review",
 				description: "review",
