@@ -61,6 +61,24 @@ describe("workflow condition DSL", () => {
 		expect(evaluateWorkflowCondition("!exists(outputs.review.missing)", context)).toBe(true);
 	});
 
+	it("evaluates paths with kebab-case workflow ids", () => {
+		const context = {
+			state: {
+				"review-phase": {
+					status: "active",
+				},
+			},
+			outputs: {
+				"supervisor-policy": {
+					route: "surface-audit",
+				},
+			},
+		};
+
+		expect(evaluateWorkflowCondition('outputs.supervisor-policy.route == "surface-audit"', context)).toBe(true);
+		expect(evaluateWorkflowCondition("exists(state.review-phase.status)", context)).toBe(true);
+	});
+
 	it("rejects arbitrary function calls", () => {
 		expect(() => evaluateWorkflowCondition('readFile("/tmp/secret") == true', {})).toThrow(WorkflowConditionError);
 		expect(() => evaluateWorkflowCondition('readFile("/tmp/secret") == true', {})).toThrow(

@@ -246,7 +246,7 @@ function tokenize(source: string): WorkflowConditionToken[] {
 			index += raw.length;
 			continue;
 		}
-		const pathMatch = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*/.exec(source.slice(index));
+		const pathMatch = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*/.exec(source.slice(index));
 		if (pathMatch) {
 			const raw = pathMatch[0] ?? "";
 			if (raw === "true") {
