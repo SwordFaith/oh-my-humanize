@@ -7,6 +7,7 @@ export interface WorkflowSessionRuntimeOptions {
 	cwd: string;
 	runShellCommand?: (command: string, options: WorkflowShellCommandOptions) => Promise<BashResult>;
 	runAgentTask?: WorkflowAgentTaskRunner;
+	runHumanInput?: WorkflowHumanInputRunner;
 }
 
 export interface WorkflowShellCommandOptions {
@@ -36,6 +37,20 @@ export interface WorkflowAgentTaskResult {
 }
 
 export type WorkflowAgentTaskRunner = (request: WorkflowAgentTaskRequest) => Promise<WorkflowAgentTaskResult>;
+
+export interface WorkflowHumanInputRequest {
+	activationId: string;
+	nodeId: string;
+	question: string;
+}
+
+export interface WorkflowHumanInputResult {
+	response: string;
+	selectedOptions?: string[];
+	customInput?: string;
+}
+
+export type WorkflowHumanInputRunner = (request: WorkflowHumanInputRequest) => Promise<WorkflowHumanInputResult>;
 
 const DEFAULT_WORKFLOW_SCRIPT_TIMEOUT_MS = 300_000;
 
@@ -85,7 +100,19 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			};
 		},
 		runHumanNode: async input => {
-			throw new WorkflowNodeRuntimeError(`workflow human node "${input.node.id}" requires a human input adapter`);
+			if (!options.runHumanInput) {
+				throw new WorkflowNodeRuntimeError(`workflow human node "${input.node.id}" requires a human input adapter`);
+			}
+			const question = input.prompt?.trim();
+			if (!question) {
+				throw new WorkflowNodeRuntimeError(`workflow human node "${input.node.id}" must define a question prompt`);
+			}
+			const result = await options.runHumanInput({
+				activationId: input.activation.id,
+				nodeId: input.node.id,
+				question,
+			});
+			return activationOutputFromHumanInputResult(result);
 		},
 		runReviewNode: async input => {
 			if (!options.runAgentTask) {
@@ -130,6 +157,18 @@ function activationOutputFromTaskResult(nodeId: string, result: WorkflowAgentTas
 		output.artifacts = [`local://${result.outputPath}`];
 	}
 	return output;
+}
+
+function activationOutputFromHumanInputResult(result: WorkflowHumanInputResult): WorkflowActivationOutput {
+	const data: Record<string, unknown> = {
+		response: result.response,
+	};
+	if (result.selectedOptions !== undefined) data.selectedOptions = result.selectedOptions;
+	if (result.customInput !== undefined) data.customInput = result.customInput;
+	return {
+		summary: result.response,
+		data,
+	};
 }
 
 function reviewOutputFromTaskResult(

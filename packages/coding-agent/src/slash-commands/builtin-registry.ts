@@ -1725,6 +1725,7 @@ export async function executeBuiltinSlashCommand(
 				createSessionWorkflowRuntimeHost({
 					cwd: ctx.sessionManager.getCwd(),
 					runAgentTask: ctx.session.getWorkflowAgentTaskRunner(),
+					runHumanInput: ctx.session.getWorkflowHumanInputRunner(),
 				}),
 			refreshCommands: () => ctx.refreshSlashCommandState(),
 			reloadPlugins: async () => {

@@ -206,7 +206,7 @@ import { type EditMode, resolveEditMode } from "../utils/edit-mode";
 import { resolveFileDisplayMode } from "../utils/file-display-mode";
 import { extractFileMentions, generateFileMentionMessages } from "../utils/file-mentions";
 import { buildNamedToolChoice } from "../utils/tool-choice";
-import type { WorkflowAgentTaskRunner } from "../workflow/session-runtime";
+import type { WorkflowAgentTaskRunner, WorkflowHumanInputRunner } from "../workflow/session-runtime";
 import type { AuthStorage } from "./auth-storage";
 import type { ClientBridge, ClientBridgePermissionOption, ClientBridgePermissionOutcome } from "./client-bridge";
 import {
@@ -372,6 +372,8 @@ export interface AgentSessionConfig {
 	providerSessionId?: string;
 	/** Runtime adapter used by workflow agent nodes to dispatch subagent tasks. */
 	workflowAgentTaskRunner?: WorkflowAgentTaskRunner;
+	/** Runtime adapter used by workflow human nodes to collect user input. */
+	workflowHumanInputRunner?: WorkflowHumanInputRunner;
 }
 
 /** Options for AgentSession.prompt() */
@@ -923,6 +925,7 @@ export class AgentSession {
 	#onResponse: SimpleStreamOptions["onResponse"] | undefined;
 	#onSseEvent: SimpleStreamOptions["onSseEvent"] | undefined;
 	#workflowAgentTaskRunner: WorkflowAgentTaskRunner | undefined;
+	#workflowHumanInputRunner: WorkflowHumanInputRunner | undefined;
 	#convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	#rebuildSystemPrompt:
 		| ((toolNames: string[], tools: Map<string, AgentTool>) => Promise<{ systemPrompt: string[] }>)
@@ -1100,6 +1103,7 @@ export class AgentSession {
 		this.#transformContext = config.transformContext ?? (messages => messages);
 		this.#onPayload = config.onPayload;
 		this.#workflowAgentTaskRunner = config.workflowAgentTaskRunner;
+		this.#workflowHumanInputRunner = config.workflowHumanInputRunner;
 		this.rawSseDebugBuffer = config.rawSseDebugBuffer ?? new RawSseDebugBuffer();
 		// Avoid wrapping in an `async` closure when no user callback is configured: the
 		// outer await on `#onResponse` (provider-response.ts) tolerates a sync void return,
@@ -3136,6 +3140,10 @@ export class AgentSession {
 
 	getWorkflowAgentTaskRunner(): WorkflowAgentTaskRunner | undefined {
 		return this.#workflowAgentTaskRunner;
+	}
+
+	getWorkflowHumanInputRunner(): WorkflowHumanInputRunner | undefined {
+		return this.#workflowHumanInputRunner;
 	}
 
 	/**

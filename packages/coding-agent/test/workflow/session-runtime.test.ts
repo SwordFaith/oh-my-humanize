@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
 import type { WorkflowActivation } from "../../src/workflow/scheduler";
-import { createSessionWorkflowRuntimeHost, type WorkflowAgentTaskRequest } from "../../src/workflow/session-runtime";
+import {
+	createSessionWorkflowRuntimeHost,
+	type WorkflowAgentTaskRequest,
+	type WorkflowHumanInputRequest,
+} from "../../src/workflow/session-runtime";
 
 const scriptWorkflow = `
 name: session-runtime-demo
@@ -21,6 +25,9 @@ nodes:
     gates:
       - continue
       - finish
+  approve:
+    type: human
+    prompt: Approve this workflow result?
 edges: []
 `;
 
@@ -148,6 +155,42 @@ describe("session workflow runtime host", () => {
 		expect(output).toEqual({
 			summary: "review passed",
 			verdict: "continue",
+		});
+	});
+
+	it("maps human nodes to a human input runner when configured", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "approve");
+		if (!node) throw new Error("expected approve node");
+		let capturedRequest: WorkflowHumanInputRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runHumanInput: async request => {
+				capturedRequest = request;
+				return {
+					response: "approved",
+					selectedOptions: ["Approve"],
+				};
+			},
+		});
+
+		const output = await host.runHumanNode?.({
+			node,
+			activation: activation(node.id),
+			prompt: node.prompt,
+		});
+
+		expect(capturedRequest).toEqual({
+			activationId: "activation-approve",
+			nodeId: "approve",
+			question: "Approve this workflow result?",
+		});
+		expect(output).toEqual({
+			summary: "approved",
+			data: {
+				response: "approved",
+				selectedOptions: ["Approve"],
+			},
 		});
 	});
 });

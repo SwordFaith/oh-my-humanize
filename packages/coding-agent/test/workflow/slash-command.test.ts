@@ -80,6 +80,7 @@ function createTuiRuntime(entries: CapturedEntry[], cwd: string, runner: Workflo
 	const output: string[] = [];
 	const session = {
 		getWorkflowAgentTaskRunner: () => runner,
+		getWorkflowHumanInputRunner: () => undefined,
 	} as unknown as AgentSession;
 	const sessionManager = {
 		appendCustomEntry: (customType: string, data?: unknown) => {
