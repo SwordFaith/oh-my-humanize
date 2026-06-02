@@ -31,6 +31,27 @@ edges:
     to: review
 `;
 
+const promptSourcePatchSource = `
+name: prompt-patch-demo
+version: 1
+nodes:
+  planner:
+    type: agent
+    agent: task
+    prompt: Plan the next build.
+  build:
+    type: agent
+    agent: task
+    prompt:
+      output:
+        node: planner
+        path: /data/nextPrompt
+        activation: latest-completed
+edges:
+  - from: planner
+    to: build
+`;
+
 interface CapturedEntry {
 	type: "custom";
 	customType: string;
@@ -179,6 +200,42 @@ describe("workflow graph patch API", () => {
 				{ actor: "supervisor" },
 			),
 		).toThrow("workflow graph patch model context must define exactly one of role, selector, or candidates");
+	});
+
+	it("validates and previews prompt source dependency changes", () => {
+		const definition = parseWorkflowDefinition(promptSourcePatchSource, { sourcePath: "workflow.yml" });
+
+		expect(() =>
+			applyWorkflowGraphPatch(definition, [{ op: "remove_node", nodeId: "planner" }], { actor: "supervisor" }),
+		).toThrow('workflow graph patch leaves node "build" prompt referencing unknown output node "planner"');
+
+		const result = applyWorkflowGraphPatch(
+			definition,
+			[
+				{
+					op: "replace_node_prompt_source",
+					nodeId: "build",
+					promptSource: { kind: "inline", text: "Use the static fallback plan." },
+				},
+			],
+			{ actor: "supervisor" },
+		);
+
+		const build = result.definition.nodes.find(node => node.id === "build");
+		expect(build?.prompt).toBe("Use the static fallback plan.");
+		expect(build?.promptSource).toEqual({ kind: "inline", text: "Use the static fallback plan." });
+		expect(result.preview.promptSourceChanges).toEqual([
+			{
+				nodeId: "build",
+				before: {
+					kind: "output",
+					node: "planner",
+					path: "/data/nextPrompt",
+					activation: "latest-completed",
+				},
+				after: { kind: "inline", text: "Use the static fallback plan." },
+			},
+		]);
 	});
 
 	it("appends graph revisions to runs without mutating earlier graph snapshots", () => {

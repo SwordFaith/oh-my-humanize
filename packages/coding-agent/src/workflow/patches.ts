@@ -5,6 +5,7 @@ import type {
 	WorkflowModelContext,
 	WorkflowNode,
 	WorkflowNodeType,
+	WorkflowPromptSource,
 } from "./definition";
 import {
 	appendWorkflowGraphRevision,
@@ -22,6 +23,7 @@ export type WorkflowGraphPatchOperation =
 	| WorkflowAddEdgePatchOperation
 	| WorkflowRemoveEdgePatchOperation
 	| WorkflowReplaceEdgeConditionPatchOperation
+	| WorkflowReplaceNodePromptSourcePatchOperation
 	| WorkflowReplaceNodeModelPatchOperation
 	| WorkflowReplaceNodePermissionsPatchOperation
 	| WorkflowSetModelRolePatchOperation;
@@ -52,6 +54,12 @@ export interface WorkflowReplaceEdgeConditionPatchOperation {
 	from: string;
 	to: string;
 	condition?: string;
+}
+
+export interface WorkflowReplaceNodePromptSourcePatchOperation {
+	op: "replace_node_prompt_source";
+	nodeId: string;
+	promptSource: WorkflowPromptSource;
 }
 
 export interface WorkflowReplaceNodeModelPatchOperation {
@@ -93,6 +101,7 @@ export interface WorkflowGraphPatchPreview {
 	addedEdges: WorkflowEdgeReference[];
 	removedEdges: WorkflowEdgeReference[];
 	changedEdges: WorkflowEdgeReference[];
+	promptSourceChanges: WorkflowPromptSourceChange[];
 	modelChanges: WorkflowNodeModelChange[];
 	permissionChanges: WorkflowNodePermissionChange[];
 	modelRoleChanges: WorkflowModelRoleChange[];
@@ -108,6 +117,12 @@ export interface WorkflowNodeModelChange {
 	nodeId: string;
 	before?: WorkflowModelContext;
 	after?: WorkflowModelContext;
+}
+
+export interface WorkflowPromptSourceChange {
+	nodeId: string;
+	before?: WorkflowPromptSource;
+	after: WorkflowPromptSource;
 }
 
 export interface WorkflowNodePermissions {
@@ -230,6 +245,10 @@ function applyPatchOperation(
 		replaceEdgeCondition(definition, operation, preview);
 		return;
 	}
+	if (operation.op === "replace_node_prompt_source") {
+		replaceNodePromptSource(definition, operation, preview);
+		return;
+	}
 	if (operation.op === "replace_node_model") {
 		replaceNodeModel(definition, operation, preview);
 		return;
@@ -314,6 +333,32 @@ function replaceEdgeCondition(
 	preview.changedEdges.push({ from: operation.from, to: operation.to });
 }
 
+function replaceNodePromptSource(
+	definition: WorkflowDefinition,
+	operation: WorkflowReplaceNodePromptSourcePatchOperation,
+	preview: WorkflowGraphPatchPreview,
+): void {
+	const node = definition.nodes[findNodeIndex(definition, operation.nodeId)];
+	if (!node) {
+		throw new WorkflowGraphPatchError(`workflow graph patch references unknown node "${operation.nodeId}"`);
+	}
+	validatePromptSourceShape(operation.promptSource, operation.nodeId);
+	const nextPromptSource = structuredClone(operation.promptSource);
+	preview.promptSourceChanges.push({
+		nodeId: operation.nodeId,
+		before: clonePromptSource(node.promptSource),
+		after: nextPromptSource,
+	});
+	node.promptSource = nextPromptSource;
+	const prompt = promptTextForSource(operation.promptSource);
+	if (prompt === undefined) {
+		delete node.prompt;
+	} else {
+		node.prompt = prompt;
+	}
+	pushUnique(preview.changedNodes, operation.nodeId);
+}
+
 function replaceNodeModel(
 	definition: WorkflowDefinition,
 	operation: WorkflowReplaceNodeModelPatchOperation,
@@ -379,6 +424,7 @@ function validateDefinitionGraph(definition: WorkflowDefinition): void {
 		}
 		nodeIds.add(node.id);
 	}
+	validatePromptSourceReferences(definition, nodeIds);
 	for (const edge of definition.edges) {
 		validateEdgeReferences(definition, edge);
 		validateEdgeCondition(edge.condition?.source);
@@ -393,6 +439,9 @@ function validateNodeShape(node: WorkflowNode): void {
 	validateModelContext(node.model);
 	validateStateScopes(node.reads);
 	validateStateScopes(node.writes);
+	if (node.promptSource !== undefined) {
+		validatePromptSourceShape(node.promptSource, node.id);
+	}
 }
 
 function validateNodeType(type: WorkflowNodeType): void {
@@ -444,6 +493,57 @@ function validateStateScopes(scopes: string[] | undefined): void {
 	}
 }
 
+function validatePromptSourceReferences(definition: WorkflowDefinition, nodeIds: Set<string>): void {
+	for (const node of definition.nodes) {
+		const source = node.promptSource;
+		if (source?.kind === "output" && !nodeIds.has(source.node)) {
+			throw new WorkflowGraphPatchError(
+				`workflow graph patch leaves node "${node.id}" prompt referencing unknown output node "${source.node}"`,
+			);
+		}
+	}
+}
+
+function validatePromptSourceShape(source: WorkflowPromptSource, nodeId: string): void {
+	if (source.kind === "inline") {
+		validateNonEmptyString(source.text, `workflow graph patch node "${nodeId}" inline prompt`);
+		return;
+	}
+	if (source.kind === "file") {
+		validateNonEmptyString(source.path, `workflow graph patch node "${nodeId}" prompt file path`);
+		return;
+	}
+	if (source.kind === "state" || source.kind === "human") {
+		validateJsonPointer(source.path, `workflow graph patch node "${nodeId}" prompt path`);
+		return;
+	}
+	if (source.kind === "output") {
+		validateNonEmptyString(source.node, `workflow graph patch node "${nodeId}" prompt output node`);
+		validateJsonPointer(source.path, `workflow graph patch node "${nodeId}" prompt output path`);
+		if (source.activation !== "parent" && source.activation !== "latest-completed") {
+			throw new WorkflowGraphPatchError(
+				`workflow graph patch node "${nodeId}" prompt activation selector is invalid`,
+			);
+		}
+		return;
+	}
+	const unreachable: never = source;
+	throw new WorkflowGraphPatchError(`workflow graph patch prompt source is invalid: ${String(unreachable)}`);
+}
+
+function validateJsonPointer(path: string, label: string): void {
+	validateNonEmptyString(path, label);
+	if (!path.startsWith("/")) {
+		throw new WorkflowGraphPatchError(`${label} must be a JSON pointer`);
+	}
+}
+
+function validateNonEmptyString(value: string, label: string): void {
+	if (typeof value !== "string" || !value.trim()) {
+		throw new WorkflowGraphPatchError(`${label} must be non-empty`);
+	}
+}
+
 function findNodeIndex(definition: WorkflowDefinition, nodeId: string): number {
 	const index = definition.nodes.findIndex(node => node.id === nodeId);
 	if (index >= 0) return index;
@@ -472,6 +572,16 @@ function cloneModelContext(model: WorkflowModelContext | undefined): WorkflowMod
 	return model === undefined ? undefined : structuredClone(model);
 }
 
+function clonePromptSource(source: WorkflowPromptSource | undefined): WorkflowPromptSource | undefined {
+	return source === undefined ? undefined : structuredClone(source);
+}
+
+function promptTextForSource(source: WorkflowPromptSource): string | undefined {
+	if (source.kind === "inline") return source.text;
+	if (source.kind === "file") return source.path;
+	return undefined;
+}
+
 function edgeReference(edge: WorkflowEdge): WorkflowEdgeReference {
 	return { from: edge.from, to: edge.to };
 }
@@ -495,6 +605,7 @@ function createEmptyPreview(): WorkflowGraphPatchPreview {
 		addedEdges: [],
 		removedEdges: [],
 		changedEdges: [],
+		promptSourceChanges: [],
 		modelChanges: [],
 		permissionChanges: [],
 		modelRoleChanges: [],
