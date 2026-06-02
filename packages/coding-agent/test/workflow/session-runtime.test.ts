@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
+import { executeWorkflowNode } from "../../src/workflow/node-runtime";
 import type { WorkflowActivation } from "../../src/workflow/scheduler";
 import {
 	createSessionWorkflowRuntimeHost,
@@ -15,6 +16,11 @@ nodes:
   shell:
     type: script
     prompt: return "workflow-ok";
+  python:
+    type: script
+    script:
+      language: py
+      inline: print("workflow-ok")
   build:
     type: agent
     agent: task
@@ -78,6 +84,37 @@ describe("session workflow runtime host", () => {
 			summary: "workflow-ok",
 			data: { exitCode: 0 },
 			artifacts: ["artifact://eval-output"],
+		});
+	});
+
+	it("maps explicit Python script nodes to an eval runner", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "python");
+		if (!node) throw new Error("expected python node");
+		let capturedRequest: WorkflowScriptEvalRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: "workflow-ok",
+				};
+			},
+		});
+
+		const output = await executeWorkflowNode(node, activation(node.id), host);
+
+		expect(capturedRequest).toEqual({
+			activationId: "activation-python",
+			nodeId: "python",
+			code: 'print("workflow-ok")',
+			language: "py",
+			title: "python",
+		});
+		expect(output).toEqual({
+			summary: "workflow-ok",
+			data: { exitCode: 0 },
 		});
 	});
 

@@ -3,6 +3,7 @@ import { parseWorkflowCondition, WorkflowConditionError } from "./condition";
 
 export type WorkflowNodeType = "agent" | "script" | "human" | "review";
 export type WorkflowModelUnavailablePolicy = "fallback-to-parent" | "fail";
+export type WorkflowScriptLanguage = "js" | "py";
 
 export interface WorkflowModelContext {
 	role?: string;
@@ -63,6 +64,12 @@ export interface WorkflowHumanPromptSource {
 	path: string;
 }
 
+export interface WorkflowScriptSource {
+	language?: WorkflowScriptLanguage;
+	code?: string;
+	file?: string;
+}
+
 export interface WorkflowNode {
 	id: string;
 	type: WorkflowNodeType;
@@ -70,6 +77,7 @@ export interface WorkflowNode {
 	model?: WorkflowModelContext;
 	prompt?: string;
 	promptSource?: WorkflowPromptSource;
+	script?: WorkflowScriptSource;
 	gates?: string[];
 	reads?: string[];
 	writes?: string[];
@@ -148,11 +156,12 @@ function parseNodes(value: unknown, sourcePath?: string): WorkflowNode[] {
 		const agent = parseOptionalString(node.agent, `${path}.agent`, sourcePath);
 		const model = parseModelContext(node.model, `${path}.model`, sourcePath);
 		const prompt = parsePromptSource(node.prompt, `${path}.prompt`, sourcePath);
+		const script = parseScriptSource(node.script, `${path}.script`, sourcePath);
 		const gates = parseOptionalStringList(node.gates, `${path}.gates`, sourcePath);
 		const reads = parseOptionalStringList(node.reads, `${path}.reads`, sourcePath);
 		const writes = parseOptionalStringList(node.writes, `${path}.writes`, sourcePath);
 		const waitFor = parseOptionalStringList(node.waitFor, `${path}.waitFor`, sourcePath);
-		return compactNode({ id, type, agent, model, ...prompt, gates, reads, writes, waitFor });
+		return compactNode({ id, type, agent, model, ...prompt, script, gates, reads, writes, waitFor });
 	});
 }
 
@@ -290,6 +299,32 @@ function parseModelContext(value: unknown, path: string, sourcePath?: string): W
 	return Object.keys(context).length > 0 ? context : undefined;
 }
 
+function parseScriptSource(value: unknown, path: string, sourcePath?: string): WorkflowScriptSource | undefined {
+	if (value === undefined) return undefined;
+	const raw = expectRecord(value, path, sourcePath);
+	const language = parseScriptLanguage(raw.language, `${path}.language`, sourcePath);
+	const code = parseOptionalString(raw.inline, `${path}.inline`, sourcePath);
+	const file = parseOptionalString(raw.file, `${path}.file`, sourcePath);
+	const sourceCount = [code, file].filter(entry => entry !== undefined).length;
+	if (sourceCount !== 1) {
+		throw new WorkflowDefinitionError(`${path} must define exactly one of inline or file`, sourcePath);
+	}
+	if (file !== undefined && !file.startsWith("./")) {
+		throw new WorkflowDefinitionError(`${path}.file must be package-relative`, sourcePath);
+	}
+	const script: WorkflowScriptSource = {};
+	if (language !== undefined) script.language = language;
+	if (code !== undefined) script.code = code;
+	if (file !== undefined) script.file = file;
+	return script;
+}
+
+function parseScriptLanguage(value: unknown, path: string, sourcePath?: string): WorkflowScriptLanguage | undefined {
+	if (value === undefined) return undefined;
+	if (value === "js" || value === "py") return value;
+	throw new WorkflowDefinitionError(`${path} must be js or py`, sourcePath);
+}
+
 function parseUnavailable(
 	value: unknown,
 	path: string,
@@ -320,6 +355,7 @@ function compactNode(node: WorkflowNode): WorkflowNode {
 	if (node.model !== undefined) result.model = node.model;
 	if (node.prompt !== undefined) result.prompt = node.prompt;
 	if (node.promptSource !== undefined) result.promptSource = node.promptSource;
+	if (node.script !== undefined) result.script = node.script;
 	if (node.gates !== undefined) result.gates = node.gates;
 	if (node.reads !== undefined) result.reads = node.reads;
 	if (node.writes !== undefined) result.writes = node.writes;

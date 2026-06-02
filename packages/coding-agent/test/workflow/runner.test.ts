@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Api, Model } from "@oh-my-pi/pi-ai";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
-import type { WorkflowNodeRuntimeHost } from "../../src/workflow/node-runtime";
+import type { WorkflowNodeRuntimeHost, WorkflowScriptNodeInput } from "../../src/workflow/node-runtime";
 import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../../src/workflow/run-store";
 import { runWorkflow } from "../../src/workflow/runner";
 
@@ -145,5 +148,53 @@ describe("workflow runner", () => {
 				error: "build failed",
 			},
 		]);
+	});
+
+	it("loads package-local script files with their declared language", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-script-file-"));
+		try {
+			await fs.mkdir(path.join(dir, "scripts"), { recursive: true });
+			await Bun.write(path.join(dir, "scripts", "score.py"), 'print("scored")\n');
+			const definition = parseWorkflowDefinition(
+				`
+name: script-file-workflow
+version: 1
+nodes:
+  score:
+    type: script
+    script:
+      language: py
+      file: ./scripts/score.py
+edges: []
+`,
+				{ sourcePath: path.join(dir, "workflow.yml") },
+			);
+			const host = createHost();
+			let capturedInput: WorkflowScriptNodeInput | undefined;
+			const runtimeHost: WorkflowNodeRuntimeHost = {
+				runScriptNode: async input => {
+					capturedInput = input;
+					return {
+						summary: "scored",
+						data: { exitCode: 0 },
+					};
+				},
+			};
+
+			await runWorkflow({
+				host,
+				definition,
+				runId: "run-script-file",
+				startNodeId: "score",
+				runtimeHost,
+				packageRoot: dir,
+			});
+
+			expect(capturedInput?.script).toBe('print("scored")\n');
+			expect(capturedInput?.scriptLanguage).toBe("py");
+			expect(capturedInput?.scriptPath).toBe("./scripts/score.py");
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true });
+		}
 	});
 });

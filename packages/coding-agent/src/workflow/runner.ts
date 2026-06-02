@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { Api, Model } from "@oh-my-pi/pi-ai";
 import type { CanonicalModelRegistry, ModelMatchPreferences } from "../config/model-resolver";
 import type { Settings } from "../config/settings";
@@ -97,7 +98,8 @@ async function executeAndPersistActivation(
 			input,
 		});
 		started = true;
-		const nodeForExecution = resolvedPrompt ? { ...node, prompt: resolvedPrompt.value } : node;
+		const promptedNode = resolvedPrompt ? { ...node, prompt: resolvedPrompt.value } : node;
+		const nodeForExecution = await resolveScriptForExecution(options, promptedNode);
 		const modelAudit = nodeRequiresModel(node) ? resolveModelAudit(options, node) : undefined;
 		if (modelAudit?.error && nodeRequiresModel(node)) {
 			throw new WorkflowRunnerError(modelAudit.error);
@@ -181,6 +183,32 @@ function resolveAgentModelPattern(
 ): string | string[] | undefined {
 	if (!node.agent) return undefined;
 	return modelResolution.agentModels?.[node.agent] ?? modelResolution.agentModels?.[node.id];
+}
+
+async function resolveScriptForExecution(options: WorkflowRunnerOptions, node: WorkflowNode): Promise<WorkflowNode> {
+	if (node.type !== "script" || !node.script?.file) return node;
+	if (!options.packageRoot) {
+		throw new WorkflowRunnerError(`workflow script file for node "${node.id}" requires a workflow package root`);
+	}
+	const root = path.resolve(options.packageRoot);
+	const resolved = path.resolve(root, node.script.file);
+	const relative = path.relative(root, resolved);
+	if (relative.startsWith("..") || path.isAbsolute(relative)) {
+		throw new WorkflowRunnerError(`workflow script file for node "${node.id}" escapes the package root`);
+	}
+	try {
+		const code = await Bun.file(resolved).text();
+		return {
+			...node,
+			script: {
+				...node.script,
+				code,
+			},
+		};
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new WorkflowRunnerError(`workflow script file for node "${node.id}" is not readable: ${reason}`);
+	}
 }
 
 function nodeRequiresModel(node: WorkflowNode): boolean {

@@ -1,3 +1,4 @@
+import type { WorkflowScriptLanguage } from "./definition";
 import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput } from "./node-runtime";
 import { WorkflowNodeRuntimeError } from "./node-runtime";
 import type { WorkflowActivationOutput } from "./state";
@@ -32,7 +33,7 @@ export interface WorkflowAgentTaskResult {
 
 export type WorkflowAgentTaskRunner = (request: WorkflowAgentTaskRequest) => Promise<WorkflowAgentTaskResult>;
 
-export type WorkflowScriptEvalLanguage = "js" | "py";
+export type WorkflowScriptEvalLanguage = WorkflowScriptLanguage;
 
 export interface WorkflowScriptEvalRequest {
 	activationId: string;
@@ -101,8 +102,8 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 				activationId: input.activation.id,
 				nodeId: input.node.id,
 				code,
-				language: "js",
-				title: input.node.id,
+				language: input.scriptLanguage ?? "js",
+				title: input.scriptPath ?? input.node.id,
 			});
 			if (result.exitCode !== 0) {
 				const reason = result.error || `exit code ${result.exitCode}`;

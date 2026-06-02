@@ -128,6 +128,45 @@ edges: []
 		expect(definition.nodes[0]?.writes).toEqual(["/review"]);
 	});
 
+	it("preserves explicit script language and package file selection", () => {
+		const source = `
+name: script-source
+version: 1
+nodes:
+  score:
+    type: script
+    script:
+      language: py
+      file: ./scripts/score.py
+edges: []
+`;
+
+		const definition = parseWorkflowDefinition(source, { sourcePath: "script.yml" });
+
+		expect(definition.nodes[0]?.script).toEqual({
+			language: "py",
+			file: "./scripts/score.py",
+		});
+	});
+
+	it("rejects unsupported script languages", () => {
+		const source = `
+name: invalid-script-language
+version: 1
+nodes:
+  score:
+    type: script
+    script:
+      language: rb
+      inline: puts "no"
+edges: []
+`;
+
+		expect(() => parseWorkflowDefinition(source, { sourcePath: "script.yml" })).toThrow(
+			"script.yml: nodes.score.script.language must be js or py",
+		);
+	});
+
 	it("rejects duplicate node ids in list-form definitions", () => {
 		const source = `
 name: duplicate-nodes

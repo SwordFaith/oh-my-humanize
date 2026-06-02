@@ -1,4 +1,4 @@
-import type { WorkflowModelContext, WorkflowNode } from "./definition";
+import type { WorkflowModelContext, WorkflowNode, WorkflowScriptLanguage } from "./definition";
 import type { WorkflowActivation } from "./scheduler";
 import type { WorkflowActivationOutput } from "./state";
 
@@ -15,6 +15,8 @@ export interface WorkflowAgentNodeInput extends WorkflowNodeRuntimeInput {
 
 export interface WorkflowScriptNodeInput extends WorkflowNodeRuntimeInput {
 	script?: string;
+	scriptLanguage?: WorkflowScriptLanguage;
+	scriptPath?: string;
 	model?: WorkflowModelContext;
 }
 
@@ -100,7 +102,9 @@ async function executeScriptNode(
 	return host.runScriptNode({
 		node,
 		activation,
-		script: node.prompt,
+		script: node.script?.code ?? node.prompt,
+		scriptLanguage: node.script?.language,
+		scriptPath: node.script?.file,
 		model: node.model,
 	});
 }
