@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { Buffer } from "node:buffer";
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { exportSessionToHtml, getTemplate } from "../../src/export/html";
 import { SessionManager } from "../../src/session/session-manager";
@@ -9,7 +8,10 @@ import { parseWorkflowDefinition } from "../../src/workflow/definition";
 import type { FlowFreeze } from "../../src/workflow/freeze";
 import type { WorkflowInspection, WorkflowLifecycleInspection } from "../../src/workflow/inspection";
 import {
+	approveWorkflowChangeRequest,
 	completeWorkflowAttempt,
+	createWorkflowCheckpoint,
+	proposeWorkflowChangeRequest,
 	recordWorkflowFreeze,
 	startWorkflowAttempt,
 	startWorkflowFamily,
@@ -41,9 +43,16 @@ interface ExportedSessionData {
 	workflowLifecycleInspections?: WorkflowLifecycleInspection[];
 }
 
+const exportTestTempRoot = path.resolve(import.meta.dir, "../../../..", "temp", "html-workflow-export-tests");
+
+async function createTempDir(): Promise<string> {
+	await fs.mkdir(exportTestTempRoot, { recursive: true });
+	return fs.mkdtemp(path.join(exportTestTempRoot, "omp-html-workflow-export-"));
+}
+
 describe("HTML export workflow inspection support", () => {
 	it("exports compact workflow inspection data reconstructed from session events", async () => {
-		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-html-workflow-export-"));
+		const dir = await createTempDir();
 		const sm = SessionManager.create(dir, dir);
 		const outputPath = path.join(dir, "session.html");
 		const definition = parseWorkflowDefinition(workflowSource, { sourcePath: path.join(dir, "workflow.yml") });
@@ -134,7 +143,7 @@ describe("HTML export workflow inspection support", () => {
 	});
 
 	it("exports workflow lifecycle inspection data reconstructed from session events", async () => {
-		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-html-workflow-export-"));
+		const dir = await createTempDir();
 		const sm = SessionManager.create(dir, dir);
 		const outputPath = path.join(dir, "session.html");
 		try {
@@ -155,6 +164,30 @@ describe("HTML export workflow inspection support", () => {
 					unavailable: [],
 					warnings: [],
 				},
+			});
+			proposeWorkflowChangeRequest(sm, {
+				changeRequestId: "change-export",
+				familyId: "family-export",
+				attemptId: "attempt-export-1",
+				actor: "agent:reviewer",
+				origin: "internal-agent",
+				reason: "upgrade export validation",
+				operations: [{ op: "add_node", node: { id: "verify", type: "script" } }],
+				frontierMapping: { build: "verify" },
+			});
+			approveWorkflowChangeRequest(sm, {
+				changeRequestId: "change-export",
+				actor: "human:sihao",
+			});
+			createWorkflowCheckpoint(sm, {
+				checkpointId: "checkpoint-export",
+				familyId: "family-export",
+				attemptId: "attempt-export-1",
+				completedActivationIds: ["activation-1"],
+				abortedActivationIds: [],
+				frontierNodeIds: ["build"],
+				state: { score: 0.92 },
+				sourceMapping: { build: "verify" },
 			});
 			completeWorkflowAttempt(sm, {
 				attemptId: "attempt-export-1",
@@ -178,6 +211,29 @@ describe("HTML export workflow inspection support", () => {
 							runtimeBindingSnapshot: { id: "binding-export" },
 						},
 					],
+					checkpoints: [
+						{
+							id: "checkpoint-export",
+							attemptId: "attempt-export-1",
+							completedActivationCount: 1,
+							abortedActivationCount: 0,
+							frontierNodeIds: ["build"],
+							sourceMapping: { build: "verify" },
+						},
+					],
+					changeRequests: [
+						{
+							id: "change-export",
+							status: "approved",
+							actor: "agent:reviewer",
+							origin: "internal-agent",
+							reason: "upgrade export validation",
+							attemptId: "attempt-export-1",
+							operationCount: 1,
+							frontierMapping: { build: "verify" },
+							approvedBy: "human:sihao",
+						},
+					],
 				},
 			]);
 		} finally {
@@ -187,7 +243,7 @@ describe("HTML export workflow inspection support", () => {
 	});
 
 	it("redacts frozen resource text from raw HTML session entries", async () => {
-		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-html-workflow-export-"));
+		const dir = await createTempDir();
 		const sm = SessionManager.create(dir, dir);
 		const outputPath = path.join(dir, "session.html");
 		try {
