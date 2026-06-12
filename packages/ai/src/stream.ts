@@ -22,6 +22,11 @@ import type { GoogleGeminiCliOptions } from "./providers/google-gemini-cli";
 import type { GoogleVertexOptions } from "./providers/google-vertex";
 import { isKimiModel, streamKimi } from "./providers/kimi";
 import type { OllamaChatOptions } from "./providers/ollama";
+import {
+	canUseConfiguredAuthorizationHeader,
+	hasAuthorizationHeader,
+	MODEL_AUTHORIZATION_HEADER_API_KEY,
+} from "./providers/openai-auth-headers";
 import type { OpenAICompletionsOptions } from "./providers/openai-completions";
 import { streamPiNative } from "./providers/pi-native-client";
 // Heavy provider stream functions are imported lazily via register-builtins,
@@ -261,7 +266,7 @@ export function stream<TApi extends Api>(
 		);
 	}
 
-	const apiKey = requestOptions?.apiKey || getEnvApiKey(model.provider);
+	const apiKey = requestOptions?.apiKey || getEnvApiKey(model.provider) || modelConfiguredAuthorizationApiKey(model);
 	if (!apiKey) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
@@ -511,7 +516,9 @@ export function streamSimple<TApi extends Api>(
 	// The resolver form is handled by the wrapper above; only a static string
 	// key reaches this point.
 	const apiKey =
-		(typeof requestOptions?.apiKey === "string" ? requestOptions.apiKey : undefined) || getEnvApiKey(model.provider);
+		(typeof requestOptions?.apiKey === "string" ? requestOptions.apiKey : undefined) ||
+		getEnvApiKey(model.provider) ||
+		modelConfiguredAuthorizationApiKey(model);
 	if (!apiKey) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
@@ -545,6 +552,12 @@ export function streamSimple<TApi extends Api>(
 	}
 	const providerOptions = mapOptionsForApi(model, requestOptions, apiKey);
 	return stream(model, context, providerOptions);
+}
+
+function modelConfiguredAuthorizationApiKey(model: Model<Api>): string | undefined {
+	if (model.api !== "openai-responses" && model.api !== "openai-completions") return undefined;
+	if (!canUseConfiguredAuthorizationHeader(model.provider)) return undefined;
+	return hasAuthorizationHeader(model.headers) ? MODEL_AUTHORIZATION_HEADER_API_KEY : undefined;
 }
 
 export async function completeSimple<TApi extends Api>(

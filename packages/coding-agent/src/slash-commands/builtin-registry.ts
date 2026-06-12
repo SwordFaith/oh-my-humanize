@@ -24,12 +24,15 @@ import {
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace";
 import { resolveMemoryBackend } from "../memory-backend";
+import { WorkflowGraphComponent } from "../modes/components/workflow-graph";
 import { theme } from "../modes/theme/theme";
 import type { InteractiveModeContext } from "../modes/types";
 import type { AgentSession, FreshSessionResult } from "../session/agent-session";
 import { formatShakeSummary, type ShakeMode } from "../session/shake-types";
 import { urlHyperlinkAlways } from "../tui";
 import { getChangelogPath, parseChangelog } from "../utils/changelog";
+import { buildWorkflowGraphView } from "../workflow/graph-view";
+import { reconstructWorkflowFamilies } from "../workflow/lifecycle";
 import { createSessionWorkflowRuntimeHost } from "../workflow/session-runtime";
 import { buildContextReportText } from "./helpers/context-report";
 import { formatDuration } from "./helpers/format";
@@ -281,6 +284,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		subcommands: [
 			{ name: "inspect", description: "Show current workflow run summary" },
 			{ name: "start", description: "Start a workflow package", usage: "<path>" },
+			{ name: "apply-change", description: "Record an approved workflow change as applied" },
 		],
 		allowArgs: true,
 		handle: handleWorkflowAcp,
@@ -2162,11 +2166,24 @@ export async function executeBuiltinSlashCommand(
 			output: (text: string) => {
 				ctx.showStatus(text);
 			},
+			outputWorkflowGraph: view => {
+				const component = new WorkflowGraphComponent(view, {
+					viewProvider: () => {
+						const family = reconstructWorkflowFamilies(ctx.sessionManager.getBranch()).find(
+							candidate => candidate.id === view.familyId,
+						);
+						return family ? buildWorkflowGraphView(family) : view;
+					},
+					requestRender: target => ctx.ui.requestComponentRender(target),
+				});
+				ctx.present(component);
+			},
 			createWorkflowRuntimeHost: () =>
 				createSessionWorkflowRuntimeHost({
 					cwd: ctx.sessionManager.getCwd(),
 					runAgentTask: ctx.session.getWorkflowAgentTaskRunner(),
 					runEvalScript: ctx.session.getWorkflowScriptEvalRunner(),
+					runShellScript: ctx.session.getWorkflowShellScriptRunner?.(),
 					runHumanInput: ctx.session.getWorkflowHumanInputRunner(),
 				}),
 			refreshCommands: () => ctx.refreshSlashCommandState(),

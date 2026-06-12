@@ -56,14 +56,15 @@ afterEach(() => {
 });
 
 describe("AssistantMessageComponent mermaid markdown", () => {
-	it("renders fenced Mermaid ASCII without terminal image protocol", () => {
-		const rendered = renderAssistantMessage("```mermaid\nflowchart TD\n  Start-->Stop\n```");
+	it("renders fenced Mermaid diagrams with aligned Unicode arrows and no terminal image protocol", () => {
+		const rendered = renderAssistantMessage("```mermaid\nflowchart LR\n  A[Start] --> B[Stop]\n```");
 
 		expect(TERMINAL.imageProtocol).toBeNull();
 		expect(rendered).toContain("Start");
-		expect(rendered).toContain("Start--");
+		expect(rendered).toMatch(/Start.*─+►.*Stop/u);
+		expect(rendered).not.toMatch(/[-─]+>/u);
 		expect(rendered).not.toContain("```mermaid");
-		expect(rendered).not.toContain("flowchart TD");
+		expect(rendered).not.toContain("flowchart LR");
 	});
 
 	it("falls back to the fenced code block when Mermaid rendering fails", () => {

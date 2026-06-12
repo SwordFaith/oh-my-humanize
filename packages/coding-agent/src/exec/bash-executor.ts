@@ -25,6 +25,8 @@ export interface BashExecutorOptions {
 	env?: Record<string, string>;
 	/** Run through the configured user shell instead of brush parsing directly. */
 	useUserShell?: boolean;
+	/** Per-call override for the persisted output column cap. */
+	outputMaxColumns?: number;
 	/** Artifact path/id for full output storage */
 	artifactPath?: string;
 	artifactId?: string;
@@ -199,7 +201,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		artifactPath: options?.artifactPath,
 		artifactId: options?.artifactId,
 		headBytes: resolveOutputSinkHeadBytes(settings),
-		maxColumns: resolveOutputMaxColumns(settings),
+		maxColumns: options?.outputMaxColumns ?? resolveOutputMaxColumns(settings),
 		chunkThrottleMs: options?.onChunk ? (options.chunkThrottleMs ?? 50) : 0,
 	});
 

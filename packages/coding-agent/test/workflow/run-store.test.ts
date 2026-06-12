@@ -5,9 +5,7 @@ import {
 	appendWorkflowActivationCompleted,
 	appendWorkflowActivationFailed,
 	appendWorkflowActivationStarted,
-	appendWorkflowGraphPatchApplied,
 	appendWorkflowGraphPatchProposed,
-	appendWorkflowGraphRevision,
 	appendWorkflowStatePatch,
 	reconstructWorkflowRuns,
 	startWorkflowRun,
@@ -76,36 +74,54 @@ describe("workflow run store", () => {
 		expect(reconstructed[0]?.activations).toEqual([]);
 	});
 
-	it("appends graph revisions without mutating prior revisions", () => {
+	it("rejects duplicate run ids before appending run events", () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+
+		startWorkflowRun(host, definition, { runId: "run-1" });
+		const entryCount = host.entries.length;
+
+		expect(() => startWorkflowRun(host, definition, { runId: "run-1" })).toThrow(
+			"Workflow run already exists: run-1",
+		);
+		expect(host.entries).toHaveLength(entryCount);
+		expect(reconstructWorkflowRuns(host.getBranch()).map(run => run.id)).toEqual(["run-1"]);
+	});
+
+	it("ignores legacy active-run graph revision events during reconstruction", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
 		const nextDefinition = renamedDefinition(definition);
 
-		const revision = appendWorkflowGraphRevision(host, run.id, nextDefinition, {
+		host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, {
+			event: "graph_revision_created",
+			runId: run.id,
 			graphRevisionId: "run-1:graph-1",
 			parentGraphRevisionId: run.currentGraphRevisionId,
+			definitionSnapshot: nextDefinition,
 			reason: "rename workflow",
 		});
 
-		expect(revision.id).toBe("run-1:graph-1");
 		expect(host.entries).toHaveLength(2);
 		const reconstructed = reconstructWorkflowRuns(host.getBranch());
 
-		expect(reconstructed[0]?.currentGraphRevisionId).toBe("run-1:graph-1");
-		expect(reconstructed[0]?.definition.name).toBe("renamed-workflow");
-		expect(reconstructed[0]?.graphRevisions.map(entry => entry.definition.name)).toEqual([
-			"run-store-demo",
-			"renamed-workflow",
-		]);
+		expect(reconstructed[0]?.currentGraphRevisionId).toBe("run-1:graph-0");
+		expect(reconstructed[0]?.definition.name).toBe("run-store-demo");
+		expect(reconstructed[0]?.graphRevisions.map(entry => entry.definition.name)).toEqual(["run-store-demo"]);
 	});
 
-	it("ignores unrelated custom entries and orphan graph revisions during reconstruction", () => {
+	it("ignores unrelated custom entries and orphan legacy graph revisions during reconstruction", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 
 		host.appendCustomEntry("other-feature", { ok: true });
-		appendWorkflowGraphRevision(host, "missing-run", definition, { graphRevisionId: "missing-run:graph-1" });
+		host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, {
+			event: "graph_revision_created",
+			runId: "missing-run",
+			graphRevisionId: "missing-run:graph-1",
+			definitionSnapshot: definition,
+		});
 		startWorkflowRun(host, definition, { runId: "run-1" });
 
 		const reconstructed = reconstructWorkflowRuns(host.getBranch());
@@ -132,7 +148,7 @@ describe("workflow run store", () => {
 		expect(reconstructed[0]?.state).toEqual({ round: 1, verdict: "continue" });
 	});
 
-	it("reconstructs graph patch proposals and applied patch audit records", () => {
+	it("reconstructs graph patch proposals without active-run patch applications", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
@@ -163,15 +179,6 @@ describe("workflow run store", () => {
 			preview,
 			reason: "add review gate",
 		});
-		appendWorkflowGraphPatchApplied(host, run.id, {
-			proposalId: "proposal-1",
-			actor: "supervisor",
-			patch,
-			preview,
-			graphRevisionId: "run-1:graph-1",
-			parentGraphRevisionId: run.currentGraphRevisionId,
-			reason: "approved review gate",
-		});
 
 		const reconstructed = reconstructWorkflowRuns(host.getBranch());
 
@@ -185,17 +192,7 @@ describe("workflow run store", () => {
 				reason: "add review gate",
 			},
 		]);
-		expect(reconstructed[0]?.appliedGraphPatches).toEqual([
-			{
-				proposalId: "proposal-1",
-				actor: "supervisor",
-				patch,
-				preview,
-				graphRevisionId: "run-1:graph-1",
-				parentGraphRevisionId: "run-1:graph-0",
-				reason: "approved review gate",
-			},
-		]);
+		expect(Object.hasOwn(reconstructed[0] ?? {}, "appliedGraphPatches")).toBe(false);
 	});
 
 	it("reconstructs activation output and model audit records", () => {

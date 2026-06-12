@@ -1213,7 +1213,6 @@
           const graphRevisions = Array.isArray(run.graphRevisions) ? run.graphRevisions : [];
           const modelAssignments = Array.isArray(run.modelAssignments) ? run.modelAssignments : [];
           const pendingPatches = Array.isArray(run.pendingGraphPatchProposals) ? run.pendingGraphPatchProposals : [];
-          const appliedPatches = Array.isArray(run.appliedGraphPatches) ? run.appliedGraphPatches : [];
           const state = run.state && typeof run.state === 'object' && !Array.isArray(run.state) ? run.state : {};
           const stateKeys = Object.keys(state);
           const statusCounts = activations.reduce((counts, activation) => {
@@ -1237,7 +1236,7 @@
               <div><span class="workflow-label">Revisions</span><span>${graphRevisions.length}</span></div>
               <div><span class="workflow-label">Activations</span><span>${activations.length}${statusText ? ' ' + escapeHtml(statusText) : ''}</span></div>
               <div><span class="workflow-label">State</span><span>${stateKeys.length ? escapeHtml(stateKeys.join(', ')) : 'empty'}</span></div>
-              <div><span class="workflow-label">Patches</span><span>${pendingPatches.length} pending, ${appliedPatches.length} applied</span></div>
+              <div><span class="workflow-label">Patches</span><span>${pendingPatches.length} pending</span></div>
               <div><span class="workflow-label">Models</span><span>${modelText ? escapeHtml(modelText) : 'none'}</span></div>
             </div>
             ${latestSummary ? `<div class="workflow-summary">${escapeHtml(truncate(latestSummary, 160))}</div>` : ''}

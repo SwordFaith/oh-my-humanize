@@ -192,6 +192,66 @@ edges: []
 		});
 	});
 
+	it("uses the parent active model for portable node role defaults when policy allows it", () => {
+		const definition = workflow(`
+name: role-parent-demo
+version: 1
+models:
+  roles:
+    planner: openai/gpt-4o
+  defaults: {}
+  unavailable: fallback-to-parent
+nodes:
+  build:
+    type: agent
+    model:
+      role: planner
+edges: []
+`);
+
+		const result = resolveWorkflowNodeModel(definition, definition.nodes[0]!, {
+			availableModels,
+			parentActiveModelPattern: "anthropic/claude-sonnet-4-5",
+		});
+
+		expect(result.model?.provider).toBe("anthropic");
+		expect(result.audit).toMatchObject({
+			nodeId: "build",
+			source: "parent-fallback",
+			requestedRole: "planner",
+			requestedPattern: "openai/gpt-4o",
+			resolvedModel: "anthropic/claude-sonnet-4-5",
+			fallbackUsed: true,
+			fallbackReason: "parent active model overrides workflow role default",
+		});
+	});
+
+	it("uses the parent active model when the workflow leaves model selection to the session", () => {
+		const definition = workflow(`
+name: session-model-demo
+version: 1
+nodes:
+  review:
+    type: review
+    prompt: Review with the active session model.
+edges: []
+`);
+
+		const result = resolveWorkflowNodeModel(definition, definition.nodes[0]!, {
+			availableModels,
+			parentActiveModelPattern: "openai/gpt-4o",
+		});
+
+		expect(result.model?.provider).toBe("openai");
+		expect(result.audit).toMatchObject({
+			nodeId: "review",
+			source: "parent-fallback",
+			resolvedModel: "openai/gpt-4o",
+			fallbackUsed: true,
+			fallbackReason: "no workflow model configured",
+		});
+	});
+
 	it("uses workflow defaults before agent frontmatter models", () => {
 		const definition = workflow(`
 name: default-demo

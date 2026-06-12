@@ -274,7 +274,120 @@ describe("workflow activation scheduler", () => {
 		expect(join.parentActivationIds).toEqual([left.id, right.id]);
 	});
 
-	it("stops queued activations when the workflow is cancelled", async () => {
+	it("starts ready sibling activations concurrently before waiting for either to finish", async () => {
+		const definition = parseWorkflowDefinition(joinWorkflow, { sourcePath: "workflow.yml" });
+		const leftStarted = Promise.withResolvers<void>();
+		const rightStarted = Promise.withResolvers<void>();
+		const releaseLeft = Promise.withResolvers<void>();
+		const releaseRight = Promise.withResolvers<void>();
+		const started: string[] = [];
+		const resultPromise = runWorkflowScheduler(definition, {
+			startNodeId: "start",
+			executeNode: async activation => {
+				started.push(activation.nodeId);
+				if (activation.nodeId === "left") {
+					leftStarted.resolve();
+					await releaseLeft.promise;
+				}
+				if (activation.nodeId === "right") {
+					rightStarted.resolve();
+					await releaseRight.promise;
+				}
+				return { summary: `ran ${activation.nodeId}` };
+			},
+		});
+
+		await leftStarted.promise;
+		const secondSibling = await Promise.race([
+			rightStarted.promise.then(() => "right-started"),
+			Bun.sleep(20).then(() => "timeout"),
+		]);
+		let failure: unknown;
+		try {
+			expect(secondSibling).toBe("right-started");
+		} catch (error) {
+			failure = error;
+		}
+		releaseLeft.resolve();
+		releaseRight.resolve();
+		const result = await resultPromise;
+		if (failure !== undefined) throw failure;
+
+		expect(started.slice(0, 3)).toEqual(["start", "left", "right"]);
+		expect(result.activations.map(activation => activation.nodeId)).toEqual(["start", "left", "right", "join"]);
+	});
+
+	it("stops scheduling downstream nodes after parallel activations observe cancellation", async () => {
+		const definition = parseWorkflowDefinition(
+			`
+name: parallel-stop-demo
+version: 1
+nodes:
+  start:
+    type: script
+  left:
+    type: script
+  right:
+    type: script
+  afterLeft:
+    type: script
+  afterRight:
+    type: script
+edges:
+  - from: start
+    to: left
+  - from: start
+    to: right
+  - from: left
+    to: afterLeft
+  - from: right
+    to: afterRight
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+		const controller = new AbortController();
+		const leftStarted = Promise.withResolvers<void>();
+		const rightStarted = Promise.withResolvers<void>();
+		const releaseBranches = Promise.withResolvers<void>();
+
+		const resultPromise = runWorkflowScheduler(definition, {
+			startNodeId: "start",
+			signal: controller.signal,
+			executeNode: async activation => {
+				if (activation.nodeId === "left") leftStarted.resolve();
+				if (activation.nodeId === "right") rightStarted.resolve();
+				if (activation.nodeId === "left" || activation.nodeId === "right") {
+					await releaseBranches.promise;
+				}
+				return { summary: `ran ${activation.nodeId}` };
+			},
+		});
+
+		await leftStarted.promise;
+		const secondSibling = await Promise.race([
+			rightStarted.promise.then(() => "right-started"),
+			Bun.sleep(20).then(() => "timeout"),
+		]);
+		let failure: unknown;
+		try {
+			expect(secondSibling).toBe("right-started");
+		} catch (error) {
+			failure = error;
+		}
+		controller.abort("user stopped workflow");
+		releaseBranches.resolve();
+		const result = await resultPromise;
+		if (failure !== undefined) throw failure;
+
+		expect(result.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["start", "completed"],
+			["left", "completed"],
+			["right", "completed"],
+		]);
+		expect(result.frontierNodeIds).toEqual(["afterLeft", "afterRight"]);
+	});
+
+	it("returns frontier without starting downstream activations when cancellation follows completion", async () => {
 		const definition = parseWorkflowDefinition(linearWorkflow, { sourcePath: "workflow.yml" });
 		const controller = new AbortController();
 		const executed: string[] = [];
@@ -292,8 +405,8 @@ describe("workflow activation scheduler", () => {
 		expect(executed).toEqual(["start"]);
 		expect(result.activations.map(activation => [activation.nodeId, activation.status, activation.error])).toEqual([
 			["start", "completed", undefined],
-			["review", "failed", "user cancelled workflow"],
 		]);
+		expect(result.frontierNodeIds).toEqual(["review"]);
 	});
 
 	it("fails active-run graph patch attempts without changing the run graph", async () => {

@@ -338,6 +338,35 @@ describe("task.batch spawning", () => {
 		expect(job.status).toBe("completed");
 	});
 
+	it("preserves internal exact model overrides through flat spawn normalization", async () => {
+		mockDiscovery();
+		const seen: Array<{ modelOverride?: string | string[]; modelOverrideAuthFallback?: boolean }> = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			seen.push({
+				modelOverride: options.modelOverride,
+				modelOverrideAuthFallback: options.modelOverrideAuthFallback,
+			});
+			return makeResult(options.id ?? "?");
+		});
+
+		const tool = await TaskTool.create(createSession({ settings: { "async.enabled": false, "task.batch": true } }));
+
+		await tool.execute("tc-flat-exact-model", {
+			agent: "task",
+			id: "Review",
+			assignment: "Run a workflow review node.",
+			modelOverride: "rust-cat/gpt-5.5",
+			modelOverrideAuthFallback: false,
+		} as TaskParams);
+
+		expect(seen).toEqual([
+			{
+				modelOverride: "rust-cat/gpt-5.5",
+				modelOverrideAuthFallback: false,
+			},
+		]);
+	});
+
 	it("blocks batch execution when async.enabled is false even with a job manager", async () => {
 		mockDiscovery();
 		const seen: Array<{ id?: string; context?: string; assignment?: string }> = [];

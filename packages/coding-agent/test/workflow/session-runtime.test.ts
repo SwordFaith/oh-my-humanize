@@ -7,6 +7,7 @@ import {
 	type WorkflowAgentTaskRequest,
 	type WorkflowHumanInputRequest,
 	type WorkflowScriptEvalRequest,
+	type WorkflowShellScriptRequest,
 } from "../../src/workflow/session-runtime";
 
 const scriptWorkflow = `
@@ -21,6 +22,11 @@ nodes:
     script:
       language: py
       inline: print("workflow-ok")
+  command:
+    type: script
+    script:
+      language: sh
+      inline: printf '{"summary":"shell-ok","data":{"kind":"command"}}\\n'
   build:
     type: agent
     agent: task
@@ -118,6 +124,102 @@ describe("session workflow runtime host", () => {
 		});
 	});
 
+	it("maps shell script nodes to a shell runner without using the eval runner", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "command");
+		if (!node) throw new Error("expected command node");
+		let capturedRequest: WorkflowShellScriptRequest | undefined;
+		let evalCalled = false;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async () => {
+				evalCalled = true;
+				return {
+					exitCode: 0,
+					output: "wrong runner",
+				};
+			},
+			runShellScript: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: JSON.stringify({ summary: "shell-ok", data: { kind: "command" } }),
+					language: request.language,
+				};
+			},
+		});
+
+		const output = await executeWorkflowNode(node, activation(node.id), host);
+
+		expect(evalCalled).toBe(false);
+		expect(capturedRequest).toEqual({
+			activationId: "activation-command",
+			nodeId: "command",
+			code: 'printf \'{"summary":"shell-ok","data":{"kind":"command"}}\\n\'',
+			language: "sh",
+			title: "command",
+		});
+		expect(output).toEqual({
+			summary: "shell-ok",
+			data: { kind: "command" },
+		});
+	});
+
+	it("accepts structured activation output from script stdout JSON", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "shell");
+		if (!node) throw new Error("expected shell node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async () => ({
+				exitCode: 0,
+				output: JSON.stringify({
+					summary: "loop round 1",
+					data: { verdict: "continue", round: 1 },
+					statePatch: [{ op: "set", path: "/loop/round", value: 1 }],
+					artifacts: ["artifact://workflow/run-1/loop.json"],
+				}),
+			}),
+		});
+
+		const output = await executeWorkflowNode(node, activation(node.id), host);
+
+		expect(output).toEqual({
+			summary: "loop round 1",
+			data: { verdict: "continue", round: 1 },
+			statePatch: [{ op: "set", path: "/loop/round", value: 1 }],
+			artifacts: ["artifact://workflow/run-1/loop.json"],
+		});
+	});
+
+	it("accepts structured activation output from the final script stdout JSON line", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "shell");
+		if (!node) throw new Error("expected shell node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async () => ({
+				exitCode: 0,
+				output: [
+					"running validation command",
+					JSON.stringify({
+						summary: "validation passed",
+						data: { reviewPrompt: "Review the validation report." },
+						statePatch: [{ op: "set", path: "/validation/passed", value: 77 }],
+					}),
+				].join("\n"),
+			}),
+		});
+
+		const output = await executeWorkflowNode(node, activation(node.id), host);
+
+		expect(output).toEqual({
+			summary: "validation passed",
+			data: { reviewPrompt: "Review the validation report." },
+			statePatch: [{ op: "set", path: "/validation/passed", value: 77 }],
+		});
+	});
+
 	it("fails agent nodes until a real subagent adapter is configured", async () => {
 		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
 		const node = definition.nodes.find(candidate => candidate.id === "build");
@@ -165,6 +267,7 @@ describe("session workflow runtime host", () => {
 			activationId: "activation-build",
 			nodeId: "build",
 			modelOverride: "openai/gpt-4o",
+			modelOverrideAuthFallback: false,
 			task: {
 				id: "build",
 				description: "build",
@@ -175,6 +278,94 @@ describe("session workflow runtime host", () => {
 			summary: "agent completed",
 			data: { exitCode: 0 },
 		});
+	});
+
+	it("accepts structured activation output from agent task results", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "build");
+		if (!node) throw new Error("expected build node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: JSON.stringify({
+					summary: "agent selected retry path",
+					data: { decision: "retry" },
+					statePatch: [{ op: "set", path: "/agent/decision", value: "retry" }],
+				}),
+			}),
+		});
+
+		const output = await host.runAgentNode?.({
+			node,
+			activation: activation(node.id),
+			agent: "task",
+			prompt: node.prompt,
+			model: node.model,
+		});
+
+		expect(output).toEqual({
+			summary: "agent selected retry path",
+			data: { decision: "retry" },
+			statePatch: [{ op: "set", path: "/agent/decision", value: "retry" }],
+		});
+	});
+
+	it("propagates abort signals to agent task requests", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "build");
+		if (!node) throw new Error("expected build node");
+		const controller = new AbortController();
+		let capturedRequest: WorkflowAgentTaskRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: "agent completed",
+				};
+			},
+		});
+
+		await host.runAgentNode?.({
+			node,
+			activation: activation(node.id),
+			agent: "task",
+			prompt: node.prompt,
+			model: node.model,
+			signal: controller.signal,
+		});
+
+		const captured = capturedRequest as (WorkflowAgentTaskRequest & { signal?: AbortSignal }) | undefined;
+		expect(captured?.signal).toBe(controller.signal);
+	});
+
+	it("preserves provider request context in failed agent node diagnostics", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "build");
+		if (!node) throw new Error("expected build node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 1,
+				output: "",
+				error: [
+					"JSON Parse error: Unexpected EOF",
+					"request-context: provider=rust-cat api=openai-responses model=gpt-5.5 url=https://rust.cat/v1/responses",
+				].join("\n"),
+			}),
+		});
+
+		await expect(
+			host.runAgentNode?.({
+				node,
+				activation: activation(node.id),
+				agent: "task",
+				prompt: node.prompt,
+				model: node.model,
+			}),
+		).rejects.toThrow(/provider=rust-cat api=openai-responses model=gpt-5\.5/u);
 	});
 
 	it("maps review nodes to a reviewer task and extracts a structured verdict", async () => {
@@ -208,6 +399,7 @@ describe("session workflow runtime host", () => {
 			activationId: "activation-review",
 			nodeId: "review",
 			modelOverride: "openai/gpt-4o",
+			modelOverrideAuthFallback: false,
 			task: {
 				id: "review",
 				description: "review",
@@ -217,6 +409,190 @@ describe("session workflow runtime host", () => {
 		expect(output).toEqual({
 			summary: "review passed",
 			verdict: "continue",
+		});
+	});
+
+	it("propagates abort signals to review task requests", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const controller = new AbortController();
+		let capturedRequest: WorkflowAgentTaskRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: JSON.stringify({ verdict: "continue" }),
+				};
+			},
+		});
+
+		await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: node.gates,
+			signal: controller.signal,
+		});
+
+		const captured = capturedRequest as (WorkflowAgentTaskRequest & { signal?: AbortSignal }) | undefined;
+		expect(captured?.signal).toBe(controller.signal);
+	});
+
+	it("extracts review verdicts nested in the reviewer output explanation", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: JSON.stringify({
+					overall_correctness: "correct",
+					explanation: JSON.stringify({ verdict: "pass", summary: "workflow-review-runtime-ok" }),
+					confidence: 1,
+				}),
+			}),
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: ["pass", "fail"],
+		});
+
+		expect(output).toEqual({
+			summary: "workflow-review-runtime-ok",
+			verdict: "pass",
+		});
+	});
+
+	it("extracts Humanize-style review verdicts from the last non-empty output line", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: ["Review findings:", "- all acceptance criteria are satisfied", "", "COMPLETE"].join("\n"),
+			}),
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: ["COMPLETE", "STOP"],
+		});
+
+		expect(output).toEqual({
+			summary: "Review findings:\n- all acceptance criteria are satisfied\n\nCOMPLETE",
+			verdict: "COMPLETE",
+		});
+	});
+
+	it("maps unmatched Humanize-style review text to an explicit fallback verdict", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: [
+					"Review findings:",
+					"- acceptance criterion AC-2 is still missing",
+					"- continue implementation before review can pass",
+				].join("\n"),
+			}),
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: ["CONTINUE", "COMPLETE"],
+			fallbackVerdict: "CONTINUE",
+		});
+
+		expect(output).toEqual({
+			summary:
+				"Review findings:\n- acceptance criterion AC-2 is still missing\n- continue implementation before review can pass",
+			verdict: "CONTINUE",
+		});
+	});
+
+	it("extracts structured review verdicts from the final JSON output line", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: [
+					"Review findings:",
+					"- benchmark evidence is missing",
+					JSON.stringify({ verdict: "retry", summary: "benchmark evidence is missing" }),
+				].join("\n"),
+			}),
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: ["retry", "finish"],
+		});
+
+		expect(output).toEqual({
+			summary: "benchmark evidence is missing",
+			verdict: "retry",
+		});
+	});
+
+	it("maps reviewer correctness output to declared pass/fail gates", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: JSON.stringify({
+					overall_correctness: "incorrect",
+					explanation: "validation failed",
+					confidence: 0.8,
+				}),
+			}),
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: ["pass", "fail"],
+		});
+
+		expect(output).toEqual({
+			summary: "validation failed",
+			verdict: "fail",
 		});
 	});
 

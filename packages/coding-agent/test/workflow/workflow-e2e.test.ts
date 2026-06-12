@@ -3,11 +3,22 @@ import type { Api, Model } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
 import type { FlowFreeze } from "../../src/workflow/freeze";
-import { buildWorkflowInspection } from "../../src/workflow/inspection";
-import { type RuntimeBindingSnapshot, reconstructWorkflowFamilies } from "../../src/workflow/lifecycle";
+import { buildWorkflowInspection, buildWorkflowLifecycleInspection } from "../../src/workflow/inspection";
+import {
+	approveWorkflowChangeRequest,
+	proposeWorkflowChangeRequest,
+	type RuntimeBindingSnapshot,
+	reconstructWorkflowFamilies,
+	recordWorkflowChangeRequestApplied,
+	recordWorkflowFreeze,
+	startWorkflowFamily,
+	type WorkflowRunFamilySnapshot,
+} from "../../src/workflow/lifecycle";
 import type { WorkflowNodeRuntimeHost } from "../../src/workflow/node-runtime";
 import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../../src/workflow/run-store";
 import { runWorkflow } from "../../src/workflow/runner";
+import type { WorkflowActivation } from "../../src/workflow/scheduler";
+import { createSessionWorkflowRuntimeHost } from "../../src/workflow/session-runtime";
 
 const openAiModel: Model<Api> = buildModel({
 	id: "gpt-4o",
@@ -73,6 +84,65 @@ edges:
   - from: review
     to: finish
     when: outputs.review.verdict == "finish"
+`;
+
+const agentRoutedLoopSource = `
+name: agent-routed-loop
+version: 1
+models:
+  roles:
+    builder: openai/gpt-4o
+nodes:
+  router:
+    type: agent
+    agent: task
+    model:
+      role: builder
+    prompt: Choose whether to fix another round or finish.
+  fix:
+    type: script
+    prompt: return "fixed";
+  finish:
+    type: script
+    prompt: return "done";
+edges:
+  - from: router
+    to: fix
+    when: outputs.router.route == "fix"
+  - from: fix
+    to: router
+  - from: router
+    to: finish
+    when: outputs.router.route == "finish"
+`;
+
+const humanizeFallbackLoopSource = `
+name: humanize-fallback-loop
+version: 1
+nodes:
+  build:
+    type: script
+    prompt: return "built";
+  review:
+    type: review
+    agent: reviewer
+    prompt: Review the build result.
+    gates:
+      - CONTINUE
+      - COMPLETE
+    fallbackVerdict: CONTINUE
+  finish:
+    type: script
+    prompt: return "done";
+edges:
+  - from: build
+    to: review
+  - from: review
+    to: build
+    when: outputs.review.verdict != "COMPLETE"
+  - from: review
+    to: finish
+    when: outputs.review.verdict == "COMPLETE"
 `;
 
 interface CapturedEntry {
@@ -212,6 +282,91 @@ describe("workflow end-to-end smoke", () => {
 		]);
 	});
 
+	it("lets an agent node route the next workflow edge from structured output data", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(agentRoutedLoopSource, { sourcePath: "workflow.yml" });
+		let routerCount = 0;
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async () => {
+				routerCount++;
+				const route = routerCount === 1 ? "fix" : "finish";
+				return {
+					summary: `router selected ${route}`,
+					data: { route },
+				};
+			},
+			runScriptNode: async input => ({
+				summary: `${input.node.id} completed`,
+			}),
+		};
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "agent-route",
+			startNodeId: "router",
+			runtimeHost,
+			modelResolution: { availableModels: [openAiModel] },
+			maxActivations: 6,
+			maxNodeActivations: 3,
+		});
+
+		expect(result.scheduler.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["router", "completed"],
+			["fix", "completed"],
+			["router", "completed"],
+			["finish", "completed"],
+		]);
+		expect(result.scheduler.state).toEqual({});
+		const reconstructed = reconstructWorkflowRuns(host.getBranch());
+		expect(reconstructed[0]?.activations.at(0)?.output?.data).toEqual({ route: "fix" });
+		expect(reconstructed[0]?.activations.at(2)?.output?.data).toEqual({ route: "finish" });
+	});
+
+	it("routes a Humanize-style fallback review loop until final-line COMPLETE exits", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(humanizeFallbackLoopSource, { sourcePath: "workflow.yml" });
+		let reviewCount = 0;
+		const runtimeHost = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async input => ({
+				exitCode: 0,
+				output: JSON.stringify({ summary: `${input.nodeId} completed` }),
+			}),
+			runAgentTask: async () => {
+				reviewCount++;
+				return {
+					exitCode: 0,
+					output:
+						reviewCount === 1
+							? "Review findings:\n- AC-2 still needs implementation."
+							: "Review findings:\n- all acceptance criteria are satisfied\n\nCOMPLETE",
+				};
+			},
+		});
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "humanize-fallback",
+			startNodeId: "build",
+			runtimeHost,
+			maxActivations: 8,
+			maxNodeActivations: 4,
+		});
+
+		expect(result.scheduler.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "completed"],
+			["review", "completed"],
+			["build", "completed"],
+			["review", "completed"],
+			["finish", "completed"],
+		]);
+		const reconstructed = reconstructWorkflowRuns(host.getBranch());
+		expect(reconstructed[0]?.activations.at(1)?.output?.data).toEqual({ verdict: "CONTINUE" });
+		expect(reconstructed[0]?.activations.at(3)?.output?.data).toEqual({ verdict: "COMPLETE" });
+	});
+
 	it("records immutable lifecycle events for a frozen workflow attempt", async () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(
@@ -280,7 +435,164 @@ edges:
 			["review", "completed"],
 		]);
 	});
+
+	it("runs a complete Phase 1 freeze-change-checkpoint-refreeze-restart lifecycle", async () => {
+		const host = createHost();
+		const freezeA = createFreeze("flowfreeze:phase1-a", ["build", "weakReview"]);
+		const freezeB = createFreeze("flowfreeze:phase1-b", ["strongReview"]);
+		const bindingA = binding("binding-phase1-a");
+		const bindingB = binding("binding-phase1-b");
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => {
+				if (input.node.id === "build") {
+					return {
+						summary: `ran ${input.node.id}`,
+						statePatch: [{ op: "set", path: "/build/status", value: "built" }],
+					};
+				}
+				return { summary: `ran ${input.node.id}` };
+			},
+		};
+
+		startWorkflowFamily(host, { familyId: "family-phase1", objective: "complete phase 1 lifecycle" });
+		recordWorkflowFreeze(host, freezeA, { familyId: "family-phase1" });
+		const request = proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-phase1",
+			familyId: "family-phase1",
+			attemptId: "attempt-phase1-1",
+			actor: "agent:reviewer",
+			origin: "internal-agent",
+			reason: "upgrade weak review to strong review",
+			operations: [
+				{ op: "add_node", node: { id: "strongReview", type: "script" } },
+				{ op: "remove_node", nodeId: "weakReview" },
+			],
+			frontierMapping: { weakReview: "strongReview" },
+		});
+		approveWorkflowChangeRequest(host, { changeRequestId: request.id, actor: "human:sihao" });
+
+		await runWorkflow({
+			host,
+			definition: freezeA.definition,
+			runId: "run-phase1-a",
+			startNodeId: "build",
+			runtimeHost,
+			maxActivations: 1,
+			lifecycle: {
+				familyId: "family-phase1",
+				attemptId: "attempt-phase1-1",
+				freeze: freezeA,
+				runtimeBindingSnapshot: bindingA,
+				recordFamily: false,
+				recordFreeze: false,
+			},
+		});
+
+		let family = reconstructWorkflowFamilies(host.getBranch())[0];
+		const checkpoint = family?.checkpoints[0];
+		if (!family || !checkpoint) throw new Error("expected checkpoint after first phase attempt");
+		recordWorkflowFreeze(host, freezeB, { familyId: family.id });
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: request.id,
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
+			reason: "strict refreeze passed",
+		});
+
+		await runWorkflow({
+			host,
+			definition: freezeB.definition,
+			runId: "run-phase1-b",
+			startNodeId: "strongReview",
+			runtimeHost,
+			initialState: checkpoint.state,
+			completedActivations: completedActivationsForCheckpoint(family, checkpoint.completedActivationIds),
+			startParentActivationIds: checkpoint.completedActivationIds,
+			lifecycle: {
+				familyId: family.id,
+				attemptId: "attempt-phase1-2",
+				checkpointId: checkpoint.id,
+				freeze: freezeB,
+				runtimeBindingSnapshot: bindingB,
+				recordFamily: false,
+				recordFreeze: false,
+			},
+		});
+
+		family = reconstructWorkflowFamilies(host.getBranch())[0];
+		if (!family) throw new Error("expected reconstructed family");
+		const inspection = buildWorkflowLifecycleInspection(family);
+
+		expect(reconstructWorkflowFamilies(host.getBranch())).toHaveLength(1);
+		expect(inspection.freezeIds).toEqual(["flowfreeze:phase1-a", "flowfreeze:phase1-b"]);
+		expect(inspection.attempts.map(attempt => [attempt.id, attempt.freezeId, attempt.status])).toEqual([
+			["attempt-phase1-1", "flowfreeze:phase1-a", "stopped"],
+			["attempt-phase1-2", "flowfreeze:phase1-b", "completed"],
+		]);
+		expect(inspection.checkpoints).toMatchObject([
+			{
+				id: "attempt-phase1-1:checkpoint-1",
+				attemptId: "attempt-phase1-1",
+				completedActivationCount: 1,
+				frontierNodeIds: ["weakReview"],
+				sourceMapping: { weakReview: "strongReview" },
+			},
+		]);
+		expect(inspection.changeRequests).toMatchObject([
+			{
+				id: "change-phase1",
+				status: "approved",
+				approvedBy: "human:sihao",
+				frontierMapping: { weakReview: "strongReview" },
+				applications: [{ target: "freeze", freezeId: "flowfreeze:phase1-b" }],
+			},
+		]);
+		expect(inspection.attempts.map(attempt => attempt.runtimeBindingSnapshot.id)).toEqual([
+			"binding-phase1-a",
+			"binding-phase1-b",
+		]);
+		expect(family.attempts.flatMap(attempt => attempt.activations.map(activation => activation.nodeId))).toEqual([
+			"build",
+			"strongReview",
+		]);
+	});
 });
+
+function completedActivationsForCheckpoint(
+	family: WorkflowRunFamilySnapshot,
+	completedActivationIds: string[],
+): WorkflowActivation[] {
+	const completedIds = new Set(completedActivationIds);
+	const activations: WorkflowActivation[] = [];
+	for (const attempt of family.attempts) {
+		for (const activation of attempt.activations) {
+			if (!completedIds.has(activation.id) || activation.status !== "completed") continue;
+			const completed: WorkflowActivation = {
+				id: activation.id,
+				nodeId: activation.nodeId,
+				graphRevisionId: `${attempt.id}:checkpoint`,
+				status: "completed",
+				parentActivationIds: activation.parentActivationIds,
+			};
+			if (activation.output !== undefined) completed.output = activation.output;
+			activations.push(completed);
+		}
+	}
+	return activations;
+}
+
+function binding(id: string): RuntimeBindingSnapshot {
+	return {
+		id,
+		requestedRoles: {},
+		resolvedModels: {},
+		tools: ["eval"],
+		agents: [],
+		unavailable: [],
+		warnings: [],
+	};
+}
 
 function createFreeze(id: string, nodeIds: string[]): FlowFreeze {
 	return {

@@ -458,6 +458,7 @@ function validateNodeShape(node: WorkflowNode): void {
 	validateModelContext(node.model);
 	validateStateScopes(node.reads);
 	validateStateScopes(node.writes);
+	validateFallbackVerdict(node);
 	if (node.promptSource !== undefined) {
 		validatePromptSourceShape(node.promptSource, node.id);
 	}
@@ -466,6 +467,18 @@ function validateNodeShape(node: WorkflowNode): void {
 function validateNodeType(type: WorkflowNodeType): void {
 	if (type === "agent" || type === "script" || type === "human" || type === "review") return;
 	throw new WorkflowGraphPatchError(`workflow graph patch node type is invalid: ${String(type)}`);
+}
+
+function validateFallbackVerdict(node: WorkflowNode): void {
+	if (node.fallbackVerdict === undefined) return;
+	if (node.type !== "review") {
+		throw new WorkflowGraphPatchError("workflow graph patch fallbackVerdict is only valid for review nodes");
+	}
+	if (!node.gates?.includes(node.fallbackVerdict)) {
+		throw new WorkflowGraphPatchError(
+			`workflow graph patch fallbackVerdict for node "${node.id}" must be one of the declared gates`,
+		);
+	}
 }
 
 function validateEdgeReferences(definition: WorkflowDefinition, edge: WorkflowEdge): void {

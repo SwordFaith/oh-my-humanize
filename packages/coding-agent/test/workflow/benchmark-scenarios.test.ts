@@ -60,20 +60,32 @@ sequence:
   - node:
       id: start
       type: script
+      script:
+        inline: |
+          return { summary: "ran start" };
   - parallel:
       - node:
           id: tryTiling
           type: script
+          script:
+            inline: |
+              return { summary: "candidate tryTiling positive +18%" };
           writes:
             - /candidates
       - node:
           id: tryFusion
           type: script
+          script:
+            inline: |
+              return { summary: "candidate tryFusion negative -3%" };
           writes:
             - /candidates
     join:
       id: evaluate
       type: script
+      script:
+        inline: |
+          return { summary: "selected tryTiling; abandoned tryFusion" };
       writes:
         - /decision
 `,
@@ -86,6 +98,9 @@ sequence:
   - node:
       id: integrate
       type: script
+      script:
+        inline: |
+          return { summary: "integrated tiling optimization as feature" };
       reads:
         - /decision
       writes:
@@ -93,6 +108,7 @@ sequence:
   - node:
       id: review
       type: review
+      prompt: Review the integrated optimization.
       reads:
         - /feature
       gates:
@@ -261,16 +277,26 @@ sequence:
   - node:
       id: kickoff
       type: script
+      script:
+        inline: |
+          return { summary: "script kickoff" };
   - parallel:
       - node:
           id: implementApi
           type: script
+          script:
+            inline: |
+              return { summary: "script implementApi" };
       - node:
           id: implementUi
           type: script
+          script:
+            inline: |
+              return { summary: "script implementUi" };
     join:
       id: weakReview
       type: review
+      prompt: Weakly review the early parallel implementation.
       gates:
         - continue
         - finish
@@ -288,12 +314,19 @@ sequence:
   - node:
       id: designContract
       type: script
+      script:
+        inline: |
+          return { summary: "script designContract" };
   - node:
       id: implementSerial
       type: script
+      script:
+        inline: |
+          return { summary: "script implementSerial" };
   - node:
       id: strongReview
       type: review
+      prompt: Strongly review the serial implementation.
       gates:
         - finish
 `,
@@ -310,19 +343,30 @@ sequence:
   - node:
       id: triage
       type: script
+      script:
+        inline: |
+          return { summary: "script triage" };
   - parallel:
       - node:
           id: regressionTest
           type: script
+          script:
+            inline: |
+              return { summary: "script regressionTest" };
       - node:
           id: securityReview
           type: review
+          prompt: Review maintenance security risk.
       - node:
           id: docsAudit
           type: review
+          prompt: Review maintenance documentation readiness.
     join:
       id: maintenanceDecision
       type: script
+      script:
+        inline: |
+          return { summary: "script maintenanceDecision" };
 `,
 				),
 			),

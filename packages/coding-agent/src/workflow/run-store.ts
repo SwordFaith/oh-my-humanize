@@ -26,7 +26,6 @@ export interface WorkflowRunSnapshot {
 	definition: WorkflowDefinition;
 	graphRevisions: WorkflowGraphRevision[];
 	graphPatchProposals: WorkflowGraphPatchProposalRecord[];
-	appliedGraphPatches: WorkflowGraphPatchAppliedRecord[];
 	state: Record<string, unknown>;
 	activations: WorkflowActivationRecord[];
 }
@@ -34,12 +33,6 @@ export interface WorkflowRunSnapshot {
 export interface StartWorkflowRunOptions {
 	runId: string;
 	graphRevisionId?: string;
-}
-
-export interface AppendWorkflowGraphRevisionOptions {
-	graphRevisionId: string;
-	parentGraphRevisionId?: string;
-	reason?: string;
 }
 
 export interface AppendWorkflowStatePatchOptions {
@@ -52,16 +45,6 @@ export interface AppendWorkflowGraphPatchProposedOptions {
 	actor: WorkflowGraphPatchActor;
 	patch: WorkflowGraphPatchOperation[];
 	preview: WorkflowGraphPatchPreview;
-	reason?: string;
-}
-
-export interface AppendWorkflowGraphPatchAppliedOptions {
-	proposalId?: string;
-	actor: WorkflowGraphPatchActor;
-	patch: WorkflowGraphPatchOperation[];
-	preview: WorkflowGraphPatchPreview;
-	graphRevisionId: string;
-	parentGraphRevisionId?: string;
 	reason?: string;
 }
 
@@ -107,22 +90,10 @@ export interface WorkflowGraphPatchProposalRecord {
 	reason?: string;
 }
 
-export interface WorkflowGraphPatchAppliedRecord {
-	proposalId?: string;
-	actor: WorkflowGraphPatchActor;
-	patch: WorkflowGraphPatchOperation[];
-	preview: WorkflowGraphPatchPreview;
-	graphRevisionId: string;
-	parentGraphRevisionId?: string;
-	reason?: string;
-}
-
 export type WorkflowRunEvent =
 	| WorkflowRunStartedEvent
-	| WorkflowGraphRevisionCreatedEvent
 	| WorkflowStatePatchAppliedEvent
 	| WorkflowGraphPatchProposedEvent
-	| WorkflowGraphPatchAppliedEvent
 	| WorkflowActivationStartedEvent
 	| WorkflowActivationCompletedEvent
 	| WorkflowActivationFailedEvent;
@@ -132,15 +103,6 @@ export interface WorkflowRunStartedEvent {
 	runId: string;
 	graphRevisionId: string;
 	definitionSnapshot: WorkflowDefinition;
-}
-
-export interface WorkflowGraphRevisionCreatedEvent {
-	event: "graph_revision_created";
-	runId: string;
-	graphRevisionId: string;
-	parentGraphRevisionId?: string;
-	definitionSnapshot: WorkflowDefinition;
-	reason?: string;
 }
 
 export interface WorkflowStatePatchAppliedEvent {
@@ -157,18 +119,6 @@ export interface WorkflowGraphPatchProposedEvent {
 	actor: WorkflowGraphPatchActor;
 	patch: WorkflowGraphPatchOperation[];
 	preview: WorkflowGraphPatchPreview;
-	reason?: string;
-}
-
-export interface WorkflowGraphPatchAppliedEvent {
-	event: "graph_patch_applied";
-	runId: string;
-	proposalId?: string;
-	actor: WorkflowGraphPatchActor;
-	patch: WorkflowGraphPatchOperation[];
-	preview: WorkflowGraphPatchPreview;
-	graphRevisionId: string;
-	parentGraphRevisionId?: string;
 	reason?: string;
 }
 
@@ -202,6 +152,7 @@ export function startWorkflowRun(
 	definition: WorkflowDefinition,
 	options: StartWorkflowRunOptions,
 ): WorkflowRunSnapshot {
+	assertWorkflowRunIdAvailable(host, options.runId);
 	const graphRevisionId = options.graphRevisionId ?? `${options.runId}:graph-0`;
 	const event: WorkflowRunStartedEvent = {
 		event: "run_started",
@@ -216,33 +167,14 @@ export function startWorkflowRun(
 		definition,
 		graphRevisions: [{ id: graphRevisionId, definition }],
 		graphPatchProposals: [],
-		appliedGraphPatches: [],
 		state: {},
 		activations: [],
 	};
 }
 
-export function appendWorkflowGraphRevision(
-	host: WorkflowRunStoreHost,
-	runId: string,
-	definition: WorkflowDefinition,
-	options: AppendWorkflowGraphRevisionOptions,
-): WorkflowGraphRevision {
-	const event: WorkflowGraphRevisionCreatedEvent = {
-		event: "graph_revision_created",
-		runId,
-		graphRevisionId: options.graphRevisionId,
-		definitionSnapshot: definition,
-	};
-	if (options.parentGraphRevisionId !== undefined) event.parentGraphRevisionId = options.parentGraphRevisionId;
-	if (options.reason !== undefined) event.reason = options.reason;
-	host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, event);
-	return {
-		id: options.graphRevisionId,
-		parentId: options.parentGraphRevisionId,
-		definition,
-		reason: options.reason,
-	};
+function assertWorkflowRunIdAvailable(host: WorkflowRunStoreHost, runId: string): void {
+	const existing = reconstructWorkflowRuns(host.getBranch()).some(run => run.id === runId);
+	if (existing) throw new Error(`Workflow run already exists: ${runId}`);
 }
 
 export function appendWorkflowStatePatch(
@@ -272,25 +204,6 @@ export function appendWorkflowGraphPatchProposed(
 		patch: options.patch,
 		preview: options.preview,
 	};
-	if (options.reason !== undefined) event.reason = options.reason;
-	host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, event);
-}
-
-export function appendWorkflowGraphPatchApplied(
-	host: WorkflowRunStoreHost,
-	runId: string,
-	options: AppendWorkflowGraphPatchAppliedOptions,
-): void {
-	const event: WorkflowGraphPatchAppliedEvent = {
-		event: "graph_patch_applied",
-		runId,
-		actor: options.actor,
-		patch: options.patch,
-		preview: options.preview,
-		graphRevisionId: options.graphRevisionId,
-	};
-	if (options.proposalId !== undefined) event.proposalId = options.proposalId;
-	if (options.parentGraphRevisionId !== undefined) event.parentGraphRevisionId = options.parentGraphRevisionId;
 	if (options.reason !== undefined) event.reason = options.reason;
 	host.appendCustomEntry(WORKFLOW_RUN_EVENT_TYPE, event);
 }
@@ -355,7 +268,6 @@ export function reconstructWorkflowRuns(
 				definition: event.definitionSnapshot,
 				graphRevisions: [{ id: event.graphRevisionId, definition: event.definitionSnapshot }],
 				graphPatchProposals: [],
-				appliedGraphPatches: [],
 				state: {},
 				activations: [],
 			});
@@ -376,19 +288,6 @@ export function reconstructWorkflowRuns(
 				preview: event.preview,
 				reason: event.reason,
 			});
-			continue;
-		}
-		if (event.event === "graph_patch_applied") {
-			const record: WorkflowGraphPatchAppliedRecord = {
-				actor: event.actor,
-				patch: event.patch,
-				preview: event.preview,
-				graphRevisionId: event.graphRevisionId,
-			};
-			if (event.proposalId !== undefined) record.proposalId = event.proposalId;
-			if (event.parentGraphRevisionId !== undefined) record.parentGraphRevisionId = event.parentGraphRevisionId;
-			if (event.reason !== undefined) record.reason = event.reason;
-			run.appliedGraphPatches.push(record);
 			continue;
 		}
 		if (event.event === "activation_started") {
@@ -417,16 +316,7 @@ export function reconstructWorkflowRuns(
 			if (!activation) continue;
 			activation.status = "failed";
 			activation.error = event.error;
-			continue;
 		}
-		run.currentGraphRevisionId = event.graphRevisionId;
-		run.definition = event.definitionSnapshot;
-		run.graphRevisions.push({
-			id: event.graphRevisionId,
-			parentId: event.parentGraphRevisionId,
-			definition: event.definitionSnapshot,
-			reason: event.reason,
-		});
 	}
 	return [...runs.values()];
 }
@@ -441,10 +331,8 @@ function isWorkflowRunEvent(value: unknown): value is WorkflowRunEvent {
 	if (!isRecord(value)) return false;
 	if (
 		value.event !== "run_started" &&
-		value.event !== "graph_revision_created" &&
 		value.event !== "state_patch_applied" &&
 		value.event !== "graph_patch_proposed" &&
-		value.event !== "graph_patch_applied" &&
 		value.event !== "activation_started" &&
 		value.event !== "activation_completed" &&
 		value.event !== "activation_failed"
@@ -461,14 +349,6 @@ function isWorkflowRunEvent(value: unknown): value is WorkflowRunEvent {
 			isWorkflowGraphPatchActor(value.actor) &&
 			Array.isArray(value.patch) &&
 			isRecord(value.preview)
-		);
-	}
-	if (value.event === "graph_patch_applied") {
-		return (
-			isWorkflowGraphPatchActor(value.actor) &&
-			Array.isArray(value.patch) &&
-			isRecord(value.preview) &&
-			typeof value.graphRevisionId === "string"
 		);
 	}
 	if (value.event === "activation_started") {

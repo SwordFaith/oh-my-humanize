@@ -743,6 +743,7 @@ export class AcpAgent implements Agent {
 					cwd: record.session.sessionManager.getCwd(),
 					runAgentTask: record.session.getWorkflowAgentTaskRunner(),
 					runEvalScript: record.session.getWorkflowScriptEvalRunner(),
+					runShellScript: record.session.getWorkflowShellScriptRunner?.(),
 					runHumanInput: record.session.getWorkflowHumanInputRunner(),
 				}),
 			refreshCommands: () => this.#emitAvailableCommandsUpdate(record),

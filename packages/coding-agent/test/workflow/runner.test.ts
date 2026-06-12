@@ -5,6 +5,14 @@ import * as path from "node:path";
 import type { Api, Model } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
+import type { FlowFreeze } from "../../src/workflow/freeze";
+import {
+	approveWorkflowChangeRequest,
+	proposeWorkflowChangeRequest,
+	type RuntimeBindingSnapshot,
+	reconstructWorkflowFamilies,
+	startWorkflowFamily,
+} from "../../src/workflow/lifecycle";
 import type { WorkflowNodeRuntimeHost, WorkflowScriptNodeInput } from "../../src/workflow/node-runtime";
 import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../../src/workflow/run-store";
 import { runWorkflow } from "../../src/workflow/runner";
@@ -52,6 +60,28 @@ edges:
     to: review
 `;
 
+const agentDecisionSource = `
+name: agent-decision-demo
+version: 1
+nodes:
+  decide:
+    type: agent
+    agent: task
+  retry:
+    type: script
+  done:
+    type: script
+edges:
+  - from: decide
+    to: retry
+    when: outputs.decide.verdict == "retry"
+  - from: decide
+    to: done
+    when: outputs.decide.verdict == "done"
+  - from: retry
+    to: decide
+`;
+
 interface CapturedEntry {
 	type: "custom";
 	customType: string;
@@ -67,6 +97,41 @@ function createHost(): WorkflowRunStoreHost & { entries: CapturedEntry[] } {
 			return `entry-${entries.length}`;
 		},
 		getBranch: () => entries,
+	};
+}
+
+function createFreeze(
+	id: string,
+	definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" }),
+): FlowFreeze {
+	return {
+		id,
+		schemaVersion: "omhflow/v1",
+		flowPath: "workflow.omhflow",
+		resourceDir: ".",
+		mainContentHash: "sha256:main",
+		resourceHashes: [],
+		resourceSnapshots: [],
+		canonicalGraphHash: "sha256:graph",
+		sourceMapping: {
+			workflowBlocks: [{ id: "workflow:0", language: "yaml" }],
+			nodes: Object.fromEntries(definition.nodes.map(node => [node.id, { sourceBlock: "workflow:0" }])),
+		},
+		staticCheckReport: { status: "passed", checks: [] },
+		portableDefaults: { models: definition.models },
+		definition,
+	};
+}
+
+function binding(id: string): RuntimeBindingSnapshot {
+	return {
+		id,
+		requestedRoles: {},
+		resolvedModels: {},
+		tools: ["task"],
+		agents: ["task"],
+		unavailable: [],
+		warnings: [],
 	};
 }
 
@@ -116,6 +181,344 @@ describe("workflow runner", () => {
 			resolvedModel: "openai/gpt-4o",
 			fallbackUsed: false,
 		});
+	});
+
+	it("lets agent node outputs choose downstream paths", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(agentDecisionSource, { sourcePath: "workflow.yml" });
+		let decisionCount = 0;
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async () => {
+				decisionCount += 1;
+				const verdict = decisionCount === 1 ? "retry" : "done";
+				return {
+					summary: `agent selected ${verdict}`,
+					data: { verdict },
+				};
+			},
+			runScriptNode: async input => ({
+				summary: `ran ${input.node.id}`,
+			}),
+		};
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "run-agent-decision",
+			startNodeId: "decide",
+			runtimeHost,
+		});
+
+		expect(result.scheduler.activations.map(activation => activation.nodeId)).toEqual([
+			"decide",
+			"retry",
+			"decide",
+			"done",
+		]);
+		expect(result.scheduler.activations.findLast(activation => activation.nodeId === "decide")?.output?.data).toEqual(
+			{
+				verdict: "done",
+			},
+		);
+	});
+
+	it("checkpoints frozen attempts that stop at the activation limit", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async () => ({
+				summary: "build completed",
+				statePatch: [{ op: "set", path: "/work/summary", value: "built" }],
+			}),
+		};
+
+		await runWorkflow({
+			host,
+			definition,
+			runId: "run-limit",
+			startNodeId: "build",
+			runtimeHost,
+			maxActivations: 1,
+			lifecycle: {
+				familyId: "family-limit",
+				attemptId: "attempt-limit-1",
+				freeze: createFreeze("flowfreeze:limit", definition),
+				runtimeBindingSnapshot: binding("binding-limit"),
+			},
+		});
+
+		const families = reconstructWorkflowFamilies(host.getBranch());
+		expect(families[0]?.attempts.map(attempt => [attempt.id, attempt.status, attempt.summary])).toEqual([
+			["attempt-limit-1", "stopped", undefined],
+		]);
+		expect(families[0]?.checkpoints).toMatchObject([
+			{
+				id: "attempt-limit-1:checkpoint-1",
+				attemptId: "attempt-limit-1",
+				completedActivationIds: ["activation-1"],
+				abortedActivationIds: [],
+				frontierNodeIds: ["review"],
+				state: { work: { summary: "built" } },
+				sourceMapping: { review: "review" },
+			},
+		]);
+	});
+
+	it("checkpoints frozen attempts when cancellation stops downstream scheduling", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		const controller = new AbortController();
+		const calls: string[] = [];
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async () => {
+				calls.push("build");
+				controller.abort("workflow stop requested");
+				return {
+					summary: "build completed",
+					statePatch: [{ op: "set", path: "/work/summary", value: "built" }],
+				};
+			},
+			runReviewNode: async () => {
+				calls.push("review");
+				return { summary: "review should not run", verdict: "finish" };
+			},
+		};
+
+		await runWorkflow({
+			host,
+			definition,
+			runId: "run-cancel",
+			startNodeId: "build",
+			runtimeHost,
+			signal: controller.signal,
+			lifecycle: {
+				familyId: "family-cancel",
+				attemptId: "attempt-cancel-1",
+				freeze: createFreeze("flowfreeze:cancel", definition),
+				runtimeBindingSnapshot: binding("binding-cancel"),
+			},
+		});
+
+		const families = reconstructWorkflowFamilies(host.getBranch());
+		expect(calls).toEqual(["build"]);
+		expect(families[0]?.attempts.map(attempt => [attempt.id, attempt.status, attempt.summary])).toEqual([
+			["attempt-cancel-1", "stopped", undefined],
+		]);
+		expect(families[0]?.attempts[0]?.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "completed"],
+		]);
+		expect(families[0]?.checkpoints).toMatchObject([
+			{
+				id: "attempt-cancel-1:checkpoint-1",
+				attemptId: "attempt-cancel-1",
+				completedActivationIds: ["activation-1"],
+				abortedActivationIds: [],
+				frontierNodeIds: ["review"],
+				state: { work: { summary: "built" } },
+				sourceMapping: { review: "review" },
+			},
+		]);
+	});
+
+	it("passes a dedicated node abort signal separately from the scheduler stop signal", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		const stopController = new AbortController();
+		const nodeAbortController = new AbortController();
+		const calls: string[] = [];
+		let receivedSignal: AbortSignal | undefined;
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async input => {
+				calls.push("build");
+				receivedSignal = input.signal;
+				stopController.abort("workflow stop requested");
+				return { summary: "build completed" };
+			},
+			runReviewNode: async () => {
+				calls.push("review");
+				return { summary: "review should not run", verdict: "finish" };
+			},
+		};
+
+		await runWorkflow({
+			host,
+			definition,
+			runId: "run-node-abort-signal",
+			startNodeId: "build",
+			runtimeHost,
+			signal: stopController.signal,
+			nodeAbortSignal: nodeAbortController.signal,
+			lifecycle: {
+				familyId: "family-node-abort-signal",
+				attemptId: "attempt-node-abort-signal-1",
+				freeze: createFreeze("flowfreeze:node-abort-signal", definition),
+				runtimeBindingSnapshot: binding("binding-node-abort-signal"),
+			},
+		});
+
+		expect(calls).toEqual(["build"]);
+		expect(receivedSignal).toBe(nodeAbortController.signal);
+		const families = reconstructWorkflowFamilies(host.getBranch());
+		expect(families[0]?.attempts[0]?.status).toBe("stopped");
+		expect(families[0]?.checkpoints[0]?.frontierNodeIds).toEqual(["review"]);
+	});
+
+	it("checkpoints deadline-aborted lifecycle activations instead of failing the attempt", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		const stopController = new AbortController();
+		const nodeAbortController = new AbortController();
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async input => {
+				stopController.abort("workflow stop requested");
+				await Promise.resolve();
+				nodeAbortController.abort("stop deadline elapsed");
+				throw new Error(input.signal?.reason ?? "stop deadline elapsed");
+			},
+			runReviewNode: async () => ({ summary: "review should not run", verdict: "finish" }),
+		};
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "run-node-abort",
+			startNodeId: "build",
+			runtimeHost,
+			signal: stopController.signal,
+			nodeAbortSignal: nodeAbortController.signal,
+			lifecycle: {
+				familyId: "family-node-abort",
+				attemptId: "attempt-node-abort-1",
+				freeze: createFreeze("flowfreeze:node-abort", definition),
+				runtimeBindingSnapshot: binding("binding-node-abort"),
+			},
+		});
+
+		expect(result.scheduler.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "aborted"],
+		]);
+		const families = reconstructWorkflowFamilies(host.getBranch());
+		expect(families[0]?.attempts.map(attempt => [attempt.id, attempt.status, attempt.error])).toEqual([
+			["attempt-node-abort-1", "stopped", undefined],
+		]);
+		expect(families[0]?.attempts[0]?.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "aborted"],
+		]);
+		expect(families[0]?.checkpoints).toMatchObject([
+			{
+				id: "attempt-node-abort-1:checkpoint-1",
+				attemptId: "attempt-node-abort-1",
+				completedActivationIds: [],
+				abortedActivationIds: ["activation-1"],
+				frontierNodeIds: ["build"],
+				state: {},
+				sourceMapping: { build: "build" },
+			},
+		]);
+	});
+
+	it("uses approved change request mappings when checkpointing activation-limited attempts", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		startWorkflowFamily(host, { familyId: "family-mapped-limit" });
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-review",
+			familyId: "family-mapped-limit",
+			attemptId: "attempt-mapped-limit-1",
+			actor: "human:operator",
+			origin: "human",
+			reason: "upgrade review node before restart",
+			operations: [],
+			frontierMapping: { review: "strongReview" },
+		});
+		approveWorkflowChangeRequest(host, {
+			changeRequestId: "change-review",
+			actor: "human:sihao",
+		});
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async () => ({ summary: "build completed" }),
+		};
+
+		await runWorkflow({
+			host,
+			definition,
+			runId: "run-mapped-limit",
+			startNodeId: "build",
+			runtimeHost,
+			maxActivations: 1,
+			lifecycle: {
+				familyId: "family-mapped-limit",
+				attemptId: "attempt-mapped-limit-1",
+				freeze: createFreeze("flowfreeze:mapped-limit", definition),
+				runtimeBindingSnapshot: binding("binding-mapped-limit"),
+			},
+		});
+
+		const families = reconstructWorkflowFamilies(host.getBranch());
+		expect(families[0]?.checkpoints[0]?.sourceMapping).toEqual({ review: "strongReview" });
+	});
+
+	it("resolves parent output prompts from checkpointed activations during restart", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(
+			`
+name: checkpoint-prompt-restart
+version: 1
+nodes:
+  runValidation:
+    type: script
+  strongReview:
+    type: review
+    agent: task
+    prompt:
+      output:
+        node: runValidation
+        path: /data/reviewPrompt
+        activation: parent
+    reads:
+      - /data/reviewPrompt
+    gates:
+      - approve
+edges:
+  - from: runValidation
+    to: strongReview
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+		const receivedPrompts: string[] = [];
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runReviewNode: async input => {
+				receivedPrompts.push(input.prompt ?? "");
+				return { summary: "approved", verdict: "approve" };
+			},
+		};
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "run-restart",
+			startNodeId: "strongReview",
+			runtimeHost,
+			completedActivations: [
+				{
+					id: "activation-1",
+					nodeId: "runValidation",
+					graphRevisionId: "previous-graph",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: "validation passed",
+						data: { reviewPrompt: "Review the checkpointed validation report." },
+					},
+				},
+			],
+			startParentActivationIds: ["activation-1"],
+		});
+
+		expect(receivedPrompts).toEqual(["Review the checkpointed validation report."]);
+		expect(
+			result.scheduler.activations.map(activation => [activation.id, activation.nodeId, activation.status]),
+		).toEqual([["activation-2", "strongReview", "completed"]]);
 	});
 
 	it("persists failed activations when node execution rejects", async () => {

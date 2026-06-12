@@ -29,6 +29,7 @@ function createRequest(): WorkflowAgentTaskRequest {
 		activationId: "activation-build",
 		nodeId: "build",
 		modelOverride: "openai/gpt-4o",
+		modelOverrideAuthFallback: false,
 		task: {
 			id: "build",
 			description: "build",
@@ -79,14 +80,11 @@ describe("workflow task tool runtime adapter", () => {
 
 		expect(capturedParams).toEqual({
 			agent: "task",
+			id: "build",
+			description: "build",
+			assignment: "Implement the workflow feature.",
 			modelOverride: "openai/gpt-4o",
-			tasks: [
-				{
-					id: "build",
-					description: "build",
-					assignment: "Implement the workflow feature.",
-				},
-			],
+			modelOverrideAuthFallback: false,
 		});
 		expect(result).toEqual({
 			exitCode: 0,
@@ -137,5 +135,54 @@ describe("workflow task tool runtime adapter", () => {
 		expect(result.exitCode).toBe(0);
 		expect(capturedSession?.settings.get("async.enabled")).toBe(false);
 		expect(parentSettings.get("async.enabled")).toBe(true);
+	});
+
+	it("passes workflow abort signals into TaskTool execution", async () => {
+		const controller = new AbortController();
+		let capturedSignal: AbortSignal | undefined;
+		const taskTool = {
+			execute: async (
+				_toolCallId: string,
+				_params: unknown,
+				signal?: AbortSignal,
+			): Promise<AgentToolResult<TaskToolDetails>> => {
+				capturedSignal = signal;
+				return {
+					content: [{ type: "text", text: "task tool completed" }],
+					details: {
+						projectAgentsDir: null,
+						totalDurationMs: 12,
+						results: [
+							{
+								index: 0,
+								id: "build",
+								agent: "task",
+								agentSource: "project",
+								task: "Implement the workflow feature.",
+								assignment: "Implement the workflow feature.",
+								description: "build",
+								exitCode: 0,
+								output: "agent completed",
+								stderr: "",
+								truncated: false,
+								durationMs: 12,
+								tokens: 0,
+								requests: 1,
+							},
+						],
+					},
+				};
+			},
+		};
+		vi.spyOn(taskModule.TaskTool, "create").mockResolvedValue(taskTool as unknown as taskModule.TaskTool);
+		const runner = createTaskToolAgentRunner(createToolSession());
+
+		const request = {
+			...createRequest(),
+			signal: controller.signal,
+		};
+		await runner(request);
+
+		expect(capturedSignal).toBe(controller.signal);
 	});
 });

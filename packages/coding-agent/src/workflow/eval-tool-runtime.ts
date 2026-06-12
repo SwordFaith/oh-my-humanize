@@ -5,8 +5,8 @@ import { EvalTool, type EvalToolParams } from "../tools/eval";
 import type { WorkflowScriptEvalResult, WorkflowScriptEvalRunner } from "./session-runtime";
 
 export function createEvalToolScriptRunner(toolSession: ToolSession): WorkflowScriptEvalRunner {
-	const evalTool = new EvalTool(toolSession);
 	return async request => {
+		const evalTool = new EvalTool(await workflowScriptToolSession(toolSession));
 		const params: EvalToolParams = {
 			cells: [
 				{
@@ -19,6 +19,13 @@ export function createEvalToolScriptRunner(toolSession: ToolSession): WorkflowSc
 		const result = await evalTool.execute(`workflow-${request.activationId}`, params);
 		return workflowScriptResultFromEvalTool(request.language, result);
 	};
+}
+
+async function workflowScriptToolSession(toolSession: ToolSession): Promise<ToolSession> {
+	if (toolSession.settings.get("tools.outputMaxColumns") === 0) return toolSession;
+	const settings = await toolSession.settings.cloneForCwd(toolSession.cwd);
+	settings.override("tools.outputMaxColumns", 0);
+	return { ...toolSession, settings };
 }
 
 function workflowScriptResultFromEvalTool(

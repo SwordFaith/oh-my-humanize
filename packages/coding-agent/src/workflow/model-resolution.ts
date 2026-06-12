@@ -79,7 +79,43 @@ export function resolveWorkflowNodeModel(
 	const unavailablePolicy = resolveUnavailablePolicy(definition, node, request?.modelContext);
 	const baseAudit = createAudit(node.id, request, unavailablePolicy);
 	if (!request) {
+		const parentDefault = resolveParentActiveModelDefault(options);
+		if (parentDefault) {
+			return {
+				model: parentDefault.model,
+				thinkingLevel: parentDefault.thinkingLevel,
+				audit: {
+					...baseAudit,
+					source: "parent-fallback",
+					resolvedModel: formatModel(parentDefault.model),
+					thinkingLevel: parentDefault.thinkingLevel,
+					explicitThinkingLevel: parentDefault.explicitThinkingLevel,
+					fallbackUsed: true,
+					fallbackReason: "no workflow model configured",
+				},
+			};
+		}
 		return { audit: baseAudit };
+	}
+
+	const portableOverrideReason = portableParentOverrideReason(request, unavailablePolicy);
+	if (portableOverrideReason !== undefined) {
+		const parentOverride = resolveParentActiveModelDefault(options);
+		if (parentOverride) {
+			return {
+				model: parentOverride.model,
+				thinkingLevel: parentOverride.thinkingLevel,
+				audit: {
+					...baseAudit,
+					source: "parent-fallback",
+					resolvedModel: formatModel(parentOverride.model),
+					thinkingLevel: parentOverride.thinkingLevel,
+					explicitThinkingLevel: parentOverride.explicitThinkingLevel,
+					fallbackUsed: true,
+					fallbackReason: portableOverrideReason,
+				},
+			};
+		}
 	}
 
 	const resolved = resolveFirstPattern(request.patterns, options);
@@ -185,6 +221,18 @@ function defaultRequest(definition: WorkflowDefinition, value: string): Workflow
 	return { source: "workflow-default", patterns: [value] };
 }
 
+function portableParentOverrideReason(
+	request: WorkflowModelRequest,
+	unavailablePolicy: WorkflowModelUnavailablePolicy,
+): string | undefined {
+	if (unavailablePolicy !== "fallback-to-parent" || request.patterns.length === 0) return undefined;
+	if (request.source === "workflow-default") return "parent active model overrides workflow default";
+	if (request.source === "node" && request.role !== undefined) {
+		return "parent active model overrides workflow role default";
+	}
+	return undefined;
+}
+
 function resolveFirstPattern(
 	patterns: string[],
 	options: WorkflowModelResolutionOptions,
@@ -205,6 +253,13 @@ function resolveFirstPattern(
 		};
 	}
 	return undefined;
+}
+
+function resolveParentActiveModelDefault(
+	options: WorkflowModelResolutionOptions,
+): ResolvedWorkflowModelRequest | undefined {
+	if (!options.parentActiveModelPattern) return undefined;
+	return resolveFirstPattern([options.parentActiveModelPattern], options);
 }
 
 function resolveUnavailablePolicy(

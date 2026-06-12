@@ -5,6 +5,7 @@ import type { WorkflowActivationOutput } from "./state";
 export interface WorkflowNodeRuntimeInput {
 	node: WorkflowNode;
 	activation: WorkflowActivation;
+	signal?: AbortSignal;
 }
 
 export interface WorkflowAgentNodeInput extends WorkflowNodeRuntimeInput {
@@ -31,6 +32,7 @@ export interface WorkflowReviewNodeInput extends WorkflowNodeRuntimeInput {
 	model?: WorkflowModelContext;
 	modelOverride?: string;
 	gates?: string[];
+	fallbackVerdict?: string;
 }
 
 export interface WorkflowReviewNodeOutput {
@@ -46,6 +48,11 @@ export interface WorkflowNodeRuntimeHost {
 	runReviewNode?: (input: WorkflowReviewNodeInput) => Promise<WorkflowReviewNodeOutput>;
 }
 
+export interface WorkflowNodeRuntimeOptions {
+	modelOverride?: string;
+	signal?: AbortSignal;
+}
+
 export class WorkflowNodeRuntimeError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -57,16 +64,16 @@ export async function executeWorkflowNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
-	options: { modelOverride?: string } = {},
+	options: WorkflowNodeRuntimeOptions = {},
 ): Promise<WorkflowActivationOutput> {
 	if (node.type === "agent") {
 		return executeAgentNode(node, activation, host, options);
 	}
 	if (node.type === "script") {
-		return executeScriptNode(node, activation, host);
+		return executeScriptNode(node, activation, host, options);
 	}
 	if (node.type === "human") {
-		return executeHumanNode(node, activation, host);
+		return executeHumanNode(node, activation, host, options);
 	}
 	if (node.type === "review") {
 		return executeReviewNode(node, activation, host, options);
@@ -78,7 +85,7 @@ async function executeAgentNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
-	options: { modelOverride?: string },
+	options: WorkflowNodeRuntimeOptions,
 ): Promise<WorkflowActivationOutput> {
 	if (!node.agent) {
 		throw new WorkflowNodeRuntimeError(`agent node "${node.id}" must define an agent`);
@@ -96,6 +103,9 @@ async function executeAgentNode(
 	if (options.modelOverride !== undefined) {
 		input.modelOverride = options.modelOverride;
 	}
+	if (options.signal !== undefined) {
+		input.signal = options.signal;
+	}
 	return host.runAgentNode(input);
 }
 
@@ -103,40 +113,50 @@ async function executeScriptNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
+	options: WorkflowNodeRuntimeOptions,
 ): Promise<WorkflowActivationOutput> {
 	if (!host.runScriptNode) {
 		throw new WorkflowNodeRuntimeError("workflow runtime host does not support script nodes");
 	}
-	return host.runScriptNode({
+	const input: WorkflowScriptNodeInput = {
 		node,
 		activation,
 		script: node.script?.code ?? node.prompt,
 		scriptLanguage: node.script?.language,
 		scriptPath: node.script?.file,
 		model: node.model,
-	});
+	};
+	if (options.signal !== undefined) {
+		input.signal = options.signal;
+	}
+	return host.runScriptNode(input);
 }
 
 async function executeHumanNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
+	options: WorkflowNodeRuntimeOptions,
 ): Promise<WorkflowActivationOutput> {
 	if (!host.runHumanNode) {
 		throw new WorkflowNodeRuntimeError("workflow runtime host does not support human nodes");
 	}
-	return host.runHumanNode({
+	const input: WorkflowHumanNodeInput = {
 		node,
 		activation,
 		prompt: node.prompt,
-	});
+	};
+	if (options.signal !== undefined) {
+		input.signal = options.signal;
+	}
+	return host.runHumanNode(input);
 }
 
 async function executeReviewNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
 	host: WorkflowNodeRuntimeHost,
-	options: { modelOverride?: string },
+	options: WorkflowNodeRuntimeOptions,
 ): Promise<WorkflowActivationOutput> {
 	if (!host.runReviewNode) {
 		throw new WorkflowNodeRuntimeError("workflow runtime host does not support review nodes");
@@ -149,8 +169,14 @@ async function executeReviewNode(
 		model: node.model,
 		gates: node.gates,
 	};
+	if (node.fallbackVerdict !== undefined) {
+		input.fallbackVerdict = node.fallbackVerdict;
+	}
 	if (options.modelOverride !== undefined) {
 		input.modelOverride = options.modelOverride;
+	}
+	if (options.signal !== undefined) {
+		input.signal = options.signal;
 	}
 	const output = await host.runReviewNode(input);
 	if (node.gates?.length && !node.gates.includes(output.verdict)) {

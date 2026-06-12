@@ -159,6 +159,8 @@ export interface TaskParams {
 	isolated?: boolean;
 	/** Internal override used by workflow/model-role dispatch; not exposed in the task tool schema. */
 	modelOverride?: string | string[];
+	/** Internal workflow exactness flag; false prevents auth fallback to the parent model. */
+	modelOverrideAuthFallback?: boolean;
 }
 
 /** A code review finding reported by the reviewer agent */

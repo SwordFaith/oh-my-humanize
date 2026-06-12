@@ -9,6 +9,7 @@ import {
 	createWorkflowCheckpoint,
 	proposeWorkflowChangeRequest,
 	reconstructWorkflowFamilies,
+	recordWorkflowChangeRequestApplied,
 	recordWorkflowFreeze,
 	requestWorkflowAttemptStop,
 	restartWorkflowAttempt,
@@ -114,6 +115,13 @@ describe("workflow lifecycle event store", () => {
 			sourceMapping: { review: "verify" },
 		});
 		recordWorkflowFreeze(host, freezeB);
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: changeRequest.id,
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
+			reason: "strict freeze passed",
+		});
 		restartWorkflowAttempt(host, {
 			familyId: "family-1",
 			attemptId: "attempt-2",
@@ -167,6 +175,14 @@ describe("workflow lifecycle event store", () => {
 				actor: "agent:reviewer",
 				approvedBy: "human:sihao",
 				frontierMapping: { review: "verify" },
+				applications: [
+					{
+						actor: "human:sihao",
+						target: "freeze",
+						freezeId: "flowfreeze:b",
+						reason: "strict freeze passed",
+					},
+				],
 			},
 		]);
 		expect(reconstructed[0]?.attempts[0]?.activations.map(activation => [activation.id, activation.status])).toEqual([
@@ -209,7 +225,64 @@ describe("workflow lifecycle event store", () => {
 		expect(reconstructed[0]?.objective).toBe("first objective");
 		expect(reconstructed[0]?.freezes.map(freeze => freeze.id)).toEqual(["flowfreeze:first", "flowfreeze:second"]);
 	});
+
+	it("deduplicates repeated freeze records for the same family during reconstruction", () => {
+		const host = createHost();
+		const freezeA = createFreeze("flowfreeze:a", ["build"]);
+		const freezeB = createFreeze("flowfreeze:b", ["verify"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freezeA, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freezeA, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freezeB, { familyId: "family-1" });
+
+		const reconstructed = reconstructWorkflowFamilies(host.getBranch());
+
+		expect(reconstructed[0]?.freezes.map(freeze => freeze.id)).toEqual(["flowfreeze:a", "flowfreeze:b"]);
+	});
+
+	it("rejects duplicate attempt ids before appending lifecycle events", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		startWorkflowAttempt(host, {
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			startWorkflowAttempt(host, {
+				familyId: "family-1",
+				attemptId: "attempt-1",
+				freezeId: freeze.id,
+				startNodeId: "build",
+				runtimeBindingSnapshot: binding("binding-duplicate"),
+			}),
+		).toThrow("Workflow attempt already exists: attempt-1");
+		expect(host.entries).toHaveLength(entryCount);
+		expect(reconstructWorkflowFamilies(host.getBranch())[0]?.attempts.map(attempt => attempt.id)).toEqual([
+			"attempt-1",
+		]);
+	});
 });
+
+function binding(id: string) {
+	return {
+		id,
+		requestedRoles: { builder: "openai/gpt-4o" },
+		resolvedModels: { builder: "openai/gpt-4o" },
+		tools: [],
+		agents: [],
+		unavailable: [],
+		warnings: [],
+	};
+}
 
 function createFreeze(id: string, nodeIds: string[]): FlowFreeze {
 	return {

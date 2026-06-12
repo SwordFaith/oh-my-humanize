@@ -5,16 +5,20 @@ import { disposeAllVmContexts } from "../../src/eval/js/context-manager";
 import type { ToolSession } from "../../src/tools";
 import { createEvalToolScriptRunner } from "../../src/workflow/eval-tool-runtime";
 
-function createToolSession(cwd: string): ToolSession {
+function createToolSession(cwd: string, outputMaxColumns?: number): ToolSession {
+	const settings = Settings.isolated({
+		"eval.js": true,
+		"eval.py": false,
+	});
+	if (outputMaxColumns !== undefined) {
+		settings.override("tools.outputMaxColumns", outputMaxColumns);
+	}
 	return {
 		cwd,
 		hasUI: false,
 		getSessionFile: () => null,
 		getSessionSpawns: () => "*",
-		settings: Settings.isolated({
-			"eval.js": true,
-			"eval.py": false,
-		}),
+		settings,
 		assertEvalExecutionAllowed: () => {},
 	} as unknown as ToolSession;
 }
@@ -41,5 +45,46 @@ describe("workflow eval tool runtime adapter", () => {
 			output: "workflow-ok",
 			language: "js",
 		});
+	});
+
+	it("returns raw cell stdout so structured workflow JSON can be parsed", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-eval-");
+		const runner = createEvalToolScriptRunner(createToolSession(tempDir.path()));
+		const structured = {
+			summary: "validation passed",
+			data: { reviewPrompt: "Review the validation report." },
+		};
+
+		const result = await runner({
+			activationId: "activation-script",
+			nodeId: "script",
+			code: `console.log(${JSON.stringify(JSON.stringify(structured))});`,
+			language: "js",
+			title: "script",
+		});
+
+		expect(result.output).toBe(JSON.stringify(structured));
+	});
+
+	it("does not column-truncate long structured stdout used as workflow data", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-eval-");
+		const runner = createEvalToolScriptRunner(createToolSession(tempDir.path(), 64));
+		const reviewPrompt = `Review validation details:\n${"line ".repeat(80)}`;
+		const structured = {
+			summary: "validation passed",
+			data: { reviewPrompt },
+			statePatch: [{ op: "set", path: "/reviewPrompt", value: reviewPrompt }],
+		};
+
+		const result = await runner({
+			activationId: "activation-script",
+			nodeId: "script",
+			code: `console.log(${JSON.stringify(JSON.stringify(structured))});`,
+			language: "js",
+			title: "script",
+		});
+
+		expect(result.output).toBe(JSON.stringify(structured));
+		expect(result.output).not.toContain("…");
 	});
 });

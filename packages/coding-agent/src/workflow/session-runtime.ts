@@ -1,11 +1,12 @@
 import type { WorkflowScriptLanguage } from "./definition";
 import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput } from "./node-runtime";
 import { WorkflowNodeRuntimeError } from "./node-runtime";
-import type { WorkflowActivationOutput } from "./state";
+import { validateWorkflowActivationOutput, type WorkflowActivationOutput } from "./state";
 
 export interface WorkflowSessionRuntimeOptions {
 	cwd: string;
 	runEvalScript?: WorkflowScriptEvalRunner;
+	runShellScript?: WorkflowShellScriptRunner;
 	runAgentTask?: WorkflowAgentTaskRunner;
 	runHumanInput?: WorkflowHumanInputRunner;
 }
@@ -15,6 +16,8 @@ export interface WorkflowAgentTaskRequest {
 	activationId: string;
 	nodeId: string;
 	modelOverride?: string;
+	modelOverrideAuthFallback?: boolean;
+	signal?: AbortSignal;
 	task: WorkflowAgentTaskItem;
 }
 
@@ -34,7 +37,8 @@ export interface WorkflowAgentTaskResult {
 
 export type WorkflowAgentTaskRunner = (request: WorkflowAgentTaskRequest) => Promise<WorkflowAgentTaskResult>;
 
-export type WorkflowScriptEvalLanguage = WorkflowScriptLanguage;
+export type WorkflowScriptEvalLanguage = Exclude<WorkflowScriptLanguage, "sh">;
+export type WorkflowShellScriptLanguage = Extract<WorkflowScriptLanguage, "sh">;
 
 export interface WorkflowScriptEvalRequest {
 	activationId: string;
@@ -44,15 +48,25 @@ export interface WorkflowScriptEvalRequest {
 	title: string;
 }
 
+export interface WorkflowShellScriptRequest {
+	activationId: string;
+	nodeId: string;
+	code: string;
+	language: WorkflowShellScriptLanguage;
+	title: string;
+	signal?: AbortSignal;
+}
+
 export interface WorkflowScriptEvalResult {
 	exitCode: number;
 	output: string;
 	error?: string;
 	artifactId?: string;
-	language?: WorkflowScriptEvalLanguage;
+	language?: WorkflowScriptLanguage;
 }
 
 export type WorkflowScriptEvalRunner = (request: WorkflowScriptEvalRequest) => Promise<WorkflowScriptEvalResult>;
+export type WorkflowShellScriptRunner = (request: WorkflowShellScriptRequest) => Promise<WorkflowScriptEvalResult>;
 
 export interface WorkflowHumanInputRequest {
 	activationId: string;
@@ -89,40 +103,29 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			};
 			if (input.modelOverride !== undefined) {
 				request.modelOverride = input.modelOverride;
+				request.modelOverrideAuthFallback = false;
+			}
+			if (input.signal !== undefined) {
+				request.signal = input.signal;
 			}
 			const result = await options.runAgentTask(request);
 			return activationOutputFromTaskResult(input.node.id, result);
 		},
 		runScriptNode: async input => {
-			if (!options.runEvalScript) {
-				throw new WorkflowNodeRuntimeError(
-					`workflow script node "${input.node.id}" requires an eval runtime adapter`,
-				);
-			}
 			const code = input.script?.trim();
 			if (!code) {
 				throw new WorkflowNodeRuntimeError(`workflow script node "${input.node.id}" must define script code`);
 			}
-			const result = await options.runEvalScript({
-				activationId: input.activation.id,
-				nodeId: input.node.id,
-				code,
-				language: input.scriptLanguage ?? "js",
-				title: input.scriptPath ?? input.node.id,
-			});
+			const language = input.scriptLanguage ?? "js";
+			const result =
+				language === "sh"
+					? await runShellWorkflowScript(input.node.id, code, input, options)
+					: await runEvalWorkflowScript(input.node.id, code, input, options);
 			if (result.exitCode !== 0) {
 				const reason = result.error || `exit code ${result.exitCode}`;
 				throw new WorkflowNodeRuntimeError(`workflow script node "${input.node.id}" failed: ${reason}`);
 			}
-			const summary = result.output.trim() || `script node "${input.node.id}" completed`;
-			const output: WorkflowActivationOutput = {
-				summary,
-				data: { exitCode: result.exitCode },
-			};
-			if (result.artifactId) {
-				output.artifacts = [`artifact://${result.artifactId}`];
-			}
-			return output;
+			return activationOutputFromScriptResult(input.node.id, result);
 		},
 		runHumanNode: async input => {
 			if (!options.runHumanInput) {
@@ -161,11 +164,101 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			};
 			if (input.modelOverride !== undefined) {
 				request.modelOverride = input.modelOverride;
+				request.modelOverrideAuthFallback = false;
+			}
+			if (input.signal !== undefined) {
+				request.signal = input.signal;
 			}
 			const result = await options.runAgentTask(request);
-			return reviewOutputFromTaskResult(input.node.id, result, input.gates);
+			return reviewOutputFromTaskResult(input.node.id, result, input.gates, input.fallbackVerdict);
 		},
 	};
+}
+
+async function runEvalWorkflowScript(
+	nodeId: string,
+	code: string,
+	input: { activation: { id: string }; scriptLanguage?: WorkflowScriptLanguage; scriptPath?: string },
+	options: WorkflowSessionRuntimeOptions,
+): Promise<WorkflowScriptEvalResult> {
+	if (!options.runEvalScript) {
+		throw new WorkflowNodeRuntimeError(`workflow script node "${nodeId}" requires an eval runtime adapter`);
+	}
+	const language = input.scriptLanguage ?? "js";
+	if (language === "sh") {
+		throw new WorkflowNodeRuntimeError(`workflow script node "${nodeId}" requires a shell runtime adapter`);
+	}
+	return options.runEvalScript({
+		activationId: input.activation.id,
+		nodeId,
+		code,
+		language,
+		title: input.scriptPath ?? nodeId,
+	});
+}
+
+async function runShellWorkflowScript(
+	nodeId: string,
+	code: string,
+	input: { activation: { id: string }; scriptPath?: string; signal?: AbortSignal },
+	options: WorkflowSessionRuntimeOptions,
+): Promise<WorkflowScriptEvalResult> {
+	if (!options.runShellScript) {
+		throw new WorkflowNodeRuntimeError(`workflow script node "${nodeId}" requires a shell runtime adapter`);
+	}
+	const request: WorkflowShellScriptRequest = {
+		activationId: input.activation.id,
+		nodeId,
+		code,
+		language: "sh",
+		title: input.scriptPath ?? nodeId,
+	};
+	if (input.signal !== undefined) {
+		request.signal = input.signal;
+	}
+	return options.runShellScript(request);
+}
+
+function activationOutputFromScriptResult(nodeId: string, result: WorkflowScriptEvalResult): WorkflowActivationOutput {
+	const structured = parseStructuredActivationOutput(result.output);
+	if (structured) return structured;
+	const summary = result.output.trim() || `script node "${nodeId}" completed`;
+	const output: WorkflowActivationOutput = {
+		summary,
+		data: { exitCode: result.exitCode },
+	};
+	if (result.artifactId) {
+		output.artifacts = [`artifact://${result.artifactId}`];
+	}
+	return output;
+}
+
+function parseStructuredActivationOutput(output: string): WorkflowActivationOutput | undefined {
+	const trimmed = output.trim();
+	const parsed = parseJsonObject(trimmed) ?? parseLastJsonObjectLine(trimmed);
+	if (!parsed || !hasActivationOutputField(parsed)) return undefined;
+	return validateWorkflowActivationOutput(parsed);
+}
+
+function parseLastJsonObjectLine(output: string): Record<string, unknown> | undefined {
+	const lines = output
+		.split(/\r?\n/)
+		.map(line => line.trim())
+		.filter(line => line.length > 0);
+	for (const line of lines.toReversed()) {
+		const parsed = parseJsonObject(line);
+		if (parsed) return parsed;
+	}
+	return undefined;
+}
+
+function hasActivationOutputField(value: Record<string, unknown>): boolean {
+	return (
+		value.summary !== undefined ||
+		value.data !== undefined ||
+		value.statePatch !== undefined ||
+		value.artifacts !== undefined
+	);
 }
 
 function taskIdForNode(nodeId: string): string {
@@ -177,6 +270,13 @@ function activationOutputFromTaskResult(nodeId: string, result: WorkflowAgentTas
 	if (result.exitCode !== 0) {
 		const reason = result.error || result.stderr || `exit code ${result.exitCode}`;
 		throw new WorkflowNodeRuntimeError(`workflow agent node "${nodeId}" failed: ${reason}`);
+	}
+	const structured = parseStructuredActivationOutput(result.output);
+	if (structured) {
+		if (result.outputPath && structured.artifacts === undefined) {
+			return { ...structured, artifacts: [`local://${result.outputPath}`] };
+		}
+		return structured;
 	}
 	const output: WorkflowActivationOutput = {
 		summary: result.output.trim() || `agent node "${nodeId}" completed`,
@@ -204,12 +304,13 @@ function reviewOutputFromTaskResult(
 	nodeId: string,
 	result: WorkflowAgentTaskResult,
 	gates: string[] | undefined,
+	fallbackVerdict: string | undefined,
 ): WorkflowReviewNodeOutput {
 	if (result.exitCode !== 0) {
 		const reason = result.error || result.stderr || `exit code ${result.exitCode}`;
 		throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" failed: ${reason}`);
 	}
-	const parsed = parseReviewTaskOutput(nodeId, result.output, gates);
+	const parsed = parseReviewTaskOutput(nodeId, result.output, gates, fallbackVerdict);
 	const output: WorkflowReviewNodeOutput = {
 		summary: parsed.summary,
 		verdict: parsed.verdict,
@@ -224,21 +325,103 @@ function parseReviewTaskOutput(
 	nodeId: string,
 	output: string,
 	gates: string[] | undefined,
+	fallbackVerdict: string | undefined,
 ): { verdict: string; summary: string } {
 	const trimmed = output.trim();
 	const parsed = parseJsonObject(trimmed);
 	if (parsed) {
-		const verdict = parsed.verdict;
-		if (typeof verdict !== "string" || verdict.length === 0) {
-			throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a string verdict`);
-		}
-		const summary = typeof parsed.summary === "string" && parsed.summary.length > 0 ? parsed.summary : trimmed;
-		return { verdict, summary };
+		return parseReviewObject(nodeId, parsed, trimmed, gates);
 	}
 	if (gates?.includes(trimmed)) {
 		return { verdict: trimmed, summary: trimmed };
 	}
+	const finalLine = lastNonEmptyLine(trimmed);
+	if (finalLine && finalLine !== trimmed) {
+		const finalJson = parseJsonObject(finalLine);
+		if (finalJson) {
+			return parseReviewObject(nodeId, finalJson, trimmed, gates);
+		}
+		if (gates?.includes(finalLine)) {
+			return { verdict: finalLine, summary: trimmed };
+		}
+	}
+	if (fallbackVerdict !== undefined) {
+		return { verdict: fallbackVerdict, summary: trimmed || fallbackVerdict };
+	}
 	throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a verdict`);
+}
+
+function lastNonEmptyLine(output: string): string | undefined {
+	const lines = output
+		.split(/\r?\n/)
+		.map(line => line.trim())
+		.filter(line => line.length > 0);
+	return lines.at(-1);
+}
+
+function parseReviewObject(
+	nodeId: string,
+	parsed: Record<string, unknown>,
+	fallbackSummary: string,
+	gates: string[] | undefined,
+): { verdict: string; summary: string } {
+	const direct = reviewVerdictFromObject(parsed, fallbackSummary);
+	if (direct) return direct;
+
+	const nested = nestedReviewVerdictFromObject(parsed, fallbackSummary);
+	if (nested) return nested;
+
+	const correctness = parsed.overall_correctness;
+	if (correctness === "correct" || correctness === "incorrect") {
+		return {
+			verdict: verdictFromReviewerCorrectness(correctness, gates),
+			summary: reviewSummaryFromObject(parsed, fallbackSummary),
+		};
+	}
+
+	throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a string verdict`);
+}
+
+function reviewVerdictFromObject(
+	parsed: Record<string, unknown>,
+	fallbackSummary: string,
+): { verdict: string; summary: string } | undefined {
+	const verdict = parsed.verdict;
+	if (typeof verdict !== "string" || verdict.length === 0) return undefined;
+	return { verdict, summary: reviewSummaryFromObject(parsed, fallbackSummary) };
+}
+
+function nestedReviewVerdictFromObject(
+	parsed: Record<string, unknown>,
+	fallbackSummary: string,
+): { verdict: string; summary: string } | undefined {
+	for (const source of [parsed.summary, parsed.explanation]) {
+		if (typeof source !== "string") continue;
+		const nested = parseJsonObject(source.trim());
+		if (!nested) continue;
+		const verdict = reviewVerdictFromObject(nested, fallbackSummary);
+		if (verdict) return verdict;
+	}
+	return undefined;
+}
+
+function reviewSummaryFromObject(parsed: Record<string, unknown>, fallbackSummary: string): string {
+	for (const source of [parsed.summary, parsed.explanation]) {
+		if (typeof source === "string" && source.length > 0) return source;
+	}
+	return fallbackSummary;
+}
+
+function verdictFromReviewerCorrectness(correctness: "correct" | "incorrect", gates: string[] | undefined): string {
+	const candidates =
+		correctness === "correct"
+			? ["correct", "pass", "approve", "approved", "finish"]
+			: ["incorrect", "fail", "reject", "rejected", "retry", "continue"];
+	if (gates) {
+		const declared = candidates.find(candidate => gates.includes(candidate));
+		if (declared) return declared;
+	}
+	return correctness === "correct" ? "pass" : "fail";
 }
 
 function parseJsonObject(source: string): Record<string, unknown> | undefined {

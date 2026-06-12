@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { WorkflowDefinition, WorkflowNode } from "./definition";
+import type { WorkflowDefinition, WorkflowNode, WorkflowPromptSource } from "./definition";
 import type { WorkflowArtifact } from "./package-loader";
 
 export interface FlowFreeze {
@@ -15,7 +15,19 @@ export interface FlowFreeze {
 	sourceMapping: WorkflowArtifact["sourceMapping"];
 	staticCheckReport: WorkflowStaticCheckReport;
 	portableDefaults: WorkflowPortableDefaults;
+	checkpointPolicy?: WorkflowCheckpointPolicy;
+	changePolicy?: WorkflowChangePolicy;
 	definition: WorkflowDefinition;
+}
+
+export interface WorkflowCheckpointPolicy {
+	stopDeadlineMs: number;
+}
+
+export interface WorkflowChangePolicy {
+	agentsCanPropose: boolean;
+	humansCanApprove: boolean;
+	supervisorsCanApprove?: boolean;
 }
 
 export interface FlowFreezeResourceHash {
@@ -53,7 +65,8 @@ export class WorkflowFreezeError extends Error {
 
 export async function freezeWorkflowArtifact(artifact: WorkflowArtifact): Promise<FlowFreeze> {
 	await ensureResourceDirectory(artifact.resourceDir);
-	validateFreezeMetadata(artifact);
+	const freezeMetadata = validateFreezeMetadata(artifact);
+	validateNodeRuntimeContracts(artifact.definition);
 	const resourceReferences = collectResourceReferences(artifact.definition);
 	await validateReferencedResources(artifact.resourceDir, resourceReferences);
 	const resourceHashes = await hashResourceDirectory(artifact.resourceDir);
@@ -86,15 +99,21 @@ export async function freezeWorkflowArtifact(artifact: WorkflowArtifact): Promis
 				{ name: "parse", status: "passed" },
 				{ name: "policy", status: "passed" },
 				{ name: "resources", status: "passed" },
+				{ name: "contracts", status: "passed" },
 				{ name: "canonical-graph", status: "passed" },
 			],
 		},
 		portableDefaults: { models: artifact.definition.models },
+		checkpointPolicy: freezeMetadata.checkpointPolicy,
+		changePolicy: freezeMetadata.changePolicy,
 		definition: structuredClone(artifact.definition),
 	};
 }
 
-function validateFreezeMetadata(artifact: WorkflowArtifact): void {
+function validateFreezeMetadata(artifact: WorkflowArtifact): {
+	checkpointPolicy: WorkflowCheckpointPolicy;
+	changePolicy: WorkflowChangePolicy;
+} {
 	if (artifact.metadata.schema !== "omhflow/v1") {
 		throw new WorkflowFreezeError(`unsupported .omhflow schema for production freeze: ${artifact.metadata.schema}`);
 	}
@@ -120,6 +139,76 @@ function validateFreezeMetadata(artifact: WorkflowArtifact): void {
 			".omhflow frontmatter changePolicy.supervisorsCanApprove must be a boolean when defined",
 		);
 	}
+	const policy: WorkflowChangePolicy = {
+		agentsCanPropose: changePolicy.agentsCanPropose,
+		humansCanApprove: changePolicy.humansCanApprove,
+	};
+	if (changePolicy.supervisorsCanApprove !== undefined) {
+		policy.supervisorsCanApprove = changePolicy.supervisorsCanApprove;
+	}
+	return {
+		checkpointPolicy: { stopDeadlineMs: checkpoint.stopDeadlineMs },
+		changePolicy: policy,
+	};
+}
+
+function validateNodeRuntimeContracts(definition: WorkflowDefinition): void {
+	for (const node of definition.nodes) {
+		validateNodeStateScopes(node);
+		validatePromptReadScope(node);
+		if (node.type === "script" && !node.script?.code && !node.script?.file) {
+			throw new WorkflowFreezeError(
+				`workflow script node "${node.id}" must define inline code or a script file before production freeze`,
+			);
+		}
+		if (node.type === "agent" && !node.agent) {
+			throw new WorkflowFreezeError(
+				`workflow agent node "${node.id}" must define an agent before production freeze`,
+			);
+		}
+		if ((node.type === "human" || node.type === "review") && !node.promptSource && !node.prompt?.trim()) {
+			throw new WorkflowFreezeError(
+				`workflow ${node.type} node "${node.id}" must define a prompt before production freeze`,
+			);
+		}
+	}
+}
+
+function validateNodeStateScopes(node: WorkflowNode): void {
+	for (const readScope of node.reads ?? []) {
+		if (!isJsonPointer(readScope)) {
+			throw new WorkflowFreezeError(`workflow node "${node.id}" read scope must be a JSON pointer: ${readScope}`);
+		}
+	}
+	for (const writeScope of node.writes ?? []) {
+		if (!isJsonPointer(writeScope)) {
+			throw new WorkflowFreezeError(`workflow node "${node.id}" write scope must be a JSON pointer: ${writeScope}`);
+		}
+	}
+}
+
+function validatePromptReadScope(node: WorkflowNode): void {
+	const source = node.promptSource;
+	const promptPath = promptStateReadPath(source);
+	if (promptPath === undefined) return;
+	if (statePathWithinScopes(promptPath, node.reads)) return;
+	throw new WorkflowFreezeError(
+		`workflow node "${node.id}" prompt reads "${promptPath}" outside declared read scopes`,
+	);
+}
+
+function promptStateReadPath(source: WorkflowPromptSource | undefined): string | undefined {
+	if (source?.kind === "state" || source?.kind === "human") return source.path;
+	return undefined;
+}
+
+function statePathWithinScopes(pointer: string, scopes: string[] | undefined): boolean {
+	if (scopes === undefined) return true;
+	return scopes.some(scope => scope === "/" || pointer === scope || pointer.startsWith(`${scope}/`));
+}
+
+function isJsonPointer(value: string): boolean {
+	return value.startsWith("/");
 }
 
 function expectRecord(value: unknown, message: string): Record<string, unknown> {
@@ -154,6 +243,7 @@ function collectResourceReferences(definition: WorkflowDefinition): string[] {
 			references.push(node.script.file);
 		}
 	}
+	for (const resource of definition.resources ?? []) references.push(resource.path);
 	return references;
 }
 
@@ -249,6 +339,10 @@ function canonicalGraph(definition: WorkflowDefinition): Record<string, unknown>
 		name: definition.name,
 		version: definition.version,
 		models: definition.models,
+		stateSchema: definition.stateSchema,
+		resources: definition.resources,
+		capabilities: definition.capabilities,
+		migrations: definition.migrations,
 		nodes: definition.nodes.map(canonicalNode).sort((left, right) => left.id.localeCompare(right.id)),
 		edges: [...definition.edges].sort((left, right) =>
 			`${left.from}\0${left.to}`.localeCompare(`${right.from}\0${right.to}`),

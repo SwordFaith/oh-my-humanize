@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { submitInteractiveInput } from "@oh-my-pi/pi-coding-agent/main";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import { applyCliRuntimeApiKey, submitInteractiveInput } from "@oh-my-pi/pi-coding-agent/main";
 import type { SubmittedUserInput } from "@oh-my-pi/pi-coding-agent/modes/types";
+import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { discoverTitleSystemPromptFile } from "@oh-my-pi/pi-coding-agent/system-prompt";
 
 const cleanupDirs: string[] = [];
@@ -32,6 +34,35 @@ describe("discoverTitleSystemPromptFile", () => {
 		await fs.writeFile(promptPath, "custom title prompt");
 
 		expect(discoverTitleSystemPromptFile(projectDir)).toBe(promptPath);
+	});
+});
+
+describe("applyCliRuntimeApiKey", () => {
+	it("applies the CLI key to the final session model provider above config keys", async () => {
+		const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-cli-api-key-"));
+		cleanupDirs.push(projectDir);
+		const authStorage = await AuthStorage.create(path.join(projectDir, "auth.db"));
+		try {
+			authStorage.setConfigApiKey("rust-cat", "models-yml-key");
+			const model = buildModel({
+				id: "gpt-5.5",
+				name: "GPT-5.5 via rust.cat",
+				api: "openai-responses",
+				provider: "rust-cat",
+				baseUrl: "https://rust.cat/v1",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 200000,
+				maxTokens: 32768,
+			});
+
+			applyCliRuntimeApiKey(authStorage, "cli-runtime-key", model);
+
+			expect(await authStorage.getApiKey("rust-cat")).toBe("cli-runtime-key");
+		} finally {
+			authStorage.close();
+		}
 	});
 });
 

@@ -7,12 +7,17 @@ export function createTaskToolAgentRunner(toolSession: ToolSession): WorkflowAge
 		const taskTool = await TaskTool.create(await synchronousTaskToolSession(toolSession));
 		const params: TaskParams = {
 			agent: request.agent,
-			tasks: [request.task],
+			id: request.task.id,
+			description: request.task.description,
+			assignment: request.task.assignment,
 		};
 		if (request.modelOverride !== undefined) {
 			params.modelOverride = request.modelOverride;
 		}
-		const result = await taskTool.execute(`workflow-${request.activationId}`, params);
+		if (request.modelOverrideAuthFallback !== undefined) {
+			params.modelOverrideAuthFallback = request.modelOverrideAuthFallback;
+		}
+		const result = await taskTool.execute(`workflow-${request.activationId}`, params, request.signal);
 		const taskResult = result.details?.results[0];
 		if (!taskResult) {
 			return {

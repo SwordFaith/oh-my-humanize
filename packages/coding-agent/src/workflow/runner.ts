@@ -5,13 +5,17 @@ import type { Settings } from "../config/settings";
 import type { WorkflowDefinition, WorkflowNode } from "./definition";
 import type { FlowFreeze, FlowFreezeResourceSnapshot } from "./freeze";
 import {
+	appendWorkflowAttemptActivationAborted,
 	appendWorkflowAttemptActivationCompleted,
 	appendWorkflowAttemptActivationFailed,
 	appendWorkflowAttemptActivationStarted,
 	completeWorkflowAttempt,
+	createWorkflowCheckpoint,
 	failWorkflowAttempt,
 	type RuntimeBindingSnapshot,
+	reconstructWorkflowFamilies,
 	recordWorkflowFreeze,
+	requestWorkflowAttemptStop,
 	restartWorkflowAttempt,
 	startWorkflowAttempt,
 	startWorkflowFamily,
@@ -55,12 +59,16 @@ export interface WorkflowRunnerOptions {
 	runId: string;
 	graphRevisionId?: string;
 	startNodeId: string;
+	startNodeIds?: string[];
 	runtimeHost: WorkflowNodeRuntimeHost;
 	modelResolution?: WorkflowRunnerModelResolutionOptions;
 	maxActivations?: number;
 	maxNodeActivations?: number;
 	initialState?: Record<string, unknown>;
+	completedActivations?: WorkflowActivation[];
+	startParentActivationIds?: string[];
 	signal?: AbortSignal;
+	nodeAbortSignal?: AbortSignal;
 	packageRoot?: string;
 	maxPromptBytes?: number;
 	frozenResources?: FlowFreezeResourceSnapshot[];
@@ -79,6 +87,7 @@ export interface WorkflowRunnerLifecycleOptions {
 	freeze: FlowFreeze;
 	runtimeBindingSnapshot: RuntimeBindingSnapshot;
 	checkpointId?: string;
+	stopDeadlineMs?: number;
 	recordFamily?: boolean;
 	recordFreeze?: boolean;
 }
@@ -101,7 +110,11 @@ export async function runWorkflow(options: WorkflowRunnerOptions): Promise<Workf
 		maxActivations: options.maxActivations,
 		maxNodeActivations: options.maxNodeActivations,
 		initialState: options.initialState,
+		completedActivations: options.completedActivations,
+		startNodeIds: options.startNodeIds,
+		startParentActivationIds: options.startParentActivationIds,
 		signal: options.signal,
+		nodeAbortSignal: options.nodeAbortSignal,
 		graphRevisionId: run.currentGraphRevisionId,
 		executeNode: async (activation, node, context) =>
 			executeAndPersistActivation(options, run, activation, node, context),
@@ -127,6 +140,7 @@ function startLifecycleAttempt(options: WorkflowRunnerOptions): void {
 		attemptId: lifecycle.attemptId,
 		freezeId: lifecycle.freeze.id,
 		startNodeId: options.startNodeId,
+		startNodeIds: options.startNodeIds,
 		runtimeBindingSnapshot: lifecycle.runtimeBindingSnapshot,
 	};
 	if (lifecycle.checkpointId !== undefined) {
@@ -150,10 +164,75 @@ function finishLifecycleAttempt(options: WorkflowRunnerOptions, scheduler: Workf
 		});
 		return;
 	}
+	const checkpointReason = workflowCheckpointReason(options, scheduler);
+	if (checkpointReason !== undefined) {
+		requestWorkflowAttemptStop(options.host, {
+			attemptId: lifecycle.attemptId,
+			deadlineMs: lifecycle.stopDeadlineMs ?? 0,
+			reason: checkpointReason,
+		});
+		createWorkflowCheckpoint(options.host, {
+			checkpointId: `${lifecycle.attemptId}:checkpoint-1`,
+			familyId: lifecycle.familyId,
+			attemptId: lifecycle.attemptId,
+			completedActivationIds: scheduler.activations
+				.filter(activation => activation.status === "completed")
+				.map(activation => activation.id),
+			abortedActivationIds: scheduler.activations
+				.filter(activation => activation.status === "aborted")
+				.map(activation => activation.id),
+			frontierNodeIds: scheduler.frontierNodeIds,
+			state: scheduler.state,
+			sourceMapping: lifecycleCheckpointSourceMapping(options, scheduler.frontierNodeIds),
+		});
+		return;
+	}
 	completeWorkflowAttempt(options.host, {
 		attemptId: lifecycle.attemptId,
-		summary: scheduler.limitReached ? "workflow stopped at activation limit" : "workflow completed",
+		summary: "workflow completed",
 	});
+}
+
+function workflowCheckpointReason(
+	options: WorkflowRunnerOptions,
+	scheduler: WorkflowSchedulerResult,
+): string | undefined {
+	if (scheduler.limitReached) return "activation limit reached";
+	if (scheduler.frontierNodeIds.length === 0 || !options.signal?.aborted) return undefined;
+	const reason: unknown = options.signal.reason;
+	if (reason instanceof Error) return reason.message;
+	if (typeof reason === "string" && reason.length > 0) return reason;
+	if (reason !== undefined && reason !== null) return String(reason);
+	return "workflow stopped";
+}
+
+function lifecycleCheckpointSourceMapping(
+	options: WorkflowRunnerOptions,
+	frontierNodeIds: string[],
+): Record<string, string> {
+	const lifecycle = options.lifecycle;
+	if (!lifecycle) return identitySourceMapping(frontierNodeIds);
+	const family = reconstructWorkflowFamilies(options.host.getBranch()).find(
+		candidate => candidate.id === lifecycle.familyId,
+	);
+	const approvedMappings =
+		family?.changeRequests
+			.filter(
+				request =>
+					request.status === "approved" &&
+					(request.attemptId === undefined || request.attemptId === lifecycle.attemptId),
+			)
+			.map(request => request.frontierMapping) ?? [];
+	return Object.fromEntries(
+		frontierNodeIds.map(nodeId => [
+			nodeId,
+			approvedMappings.find(mapping => mapping[nodeId] !== undefined)?.[nodeId] ?? nodeId,
+		]),
+	);
+}
+
+function identitySourceMapping(frontierNodeIds: string[]): Record<string, string> {
+	return Object.fromEntries(frontierNodeIds.map(nodeId => [nodeId, nodeId]));
 }
 
 async function executeAndPersistActivation(
@@ -185,6 +264,7 @@ async function executeAndPersistActivation(
 		const output = validateWorkflowActivationOutput(
 			await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost, {
 				modelOverride: modelOverrideFromAudit(modelAudit),
+				signal: context.nodeAbortSignal ?? context.signal,
 			}),
 			{
 				allowedWritePaths: node.writes,
@@ -214,6 +294,14 @@ async function executeAndPersistActivation(
 			appendLifecycleActivationStarted(options, activation, node);
 		}
 		const message = error instanceof Error ? error.message : String(error);
+		if (workflowNodeAbortReason(options.nodeAbortSignal) !== undefined) {
+			appendWorkflowActivationFailed(options.host, run.id, {
+				activationId: activation.id,
+				error: message,
+			});
+			appendLifecycleActivationAborted(options, activation, node, workflowNodeAbortReason(options.nodeAbortSignal));
+			throw error;
+		}
 		appendWorkflowActivationFailed(options.host, run.id, {
 			activationId: activation.id,
 			error: message,
@@ -252,6 +340,22 @@ function appendLifecycleActivationCompleted(
 	});
 }
 
+function appendLifecycleActivationAborted(
+	options: WorkflowRunnerOptions,
+	activation: WorkflowActivation,
+	node: WorkflowNode,
+	reason: string | undefined,
+): void {
+	const lifecycle = options.lifecycle;
+	if (!lifecycle) return;
+	appendWorkflowAttemptActivationAborted(options.host, {
+		attemptId: lifecycle.attemptId,
+		activationId: activation.id,
+		nodeId: node.id,
+		reason: reason ?? "workflow activation aborted",
+	});
+}
+
 function appendLifecycleActivationFailed(
 	options: WorkflowRunnerOptions,
 	activation: WorkflowActivation,
@@ -272,6 +376,15 @@ function modelOverrideFromAudit(modelAudit: WorkflowModelResolutionAudit | undef
 		return `${modelAudit.resolvedModel}:${modelAudit.thinkingLevel}`;
 	}
 	return modelAudit.resolvedModel;
+}
+
+function workflowNodeAbortReason(signal: AbortSignal | undefined): string | undefined {
+	if (!signal?.aborted) return undefined;
+	const reason: unknown = signal.reason;
+	if (reason instanceof Error) return reason.message;
+	if (typeof reason === "string" && reason.length > 0) return reason;
+	if (reason !== undefined && reason !== null) return String(reason);
+	return "workflow activation aborted";
 }
 
 async function resolvePromptForActivation(

@@ -63,6 +63,7 @@ edges:
 		expect(freeze.staticCheckReport.status).toBe("passed");
 		expect(freeze.sourceMapping.nodes.build).toMatchObject({ sourceBlock: "workflow:0" });
 		expect(freeze.portableDefaults.models.roles.builder).toBe("openai/gpt-4o");
+		expect(freeze.checkpointPolicy).toEqual({ stopDeadlineMs: 50 });
 	});
 
 	it("rejects resource references that escape the same-name resource directory", async () => {
@@ -142,6 +143,158 @@ edges: []
 
 		await expect(freezeWorkflowArtifact(artifact)).rejects.toThrow(
 			".omhflow frontmatter must define checkpoint.stopDeadlineMs for production freeze",
+		);
+	});
+
+	it("rejects script nodes without inline code or file resources before production freeze", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+nodes:
+  baseline:
+    type: script
+edges: []
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+
+		await expect(freezeWorkflowArtifact(artifact)).rejects.toThrow(
+			'workflow script node "baseline" must define inline code or a script file before production freeze',
+		);
+	});
+
+	it("rejects review and human nodes without prompt sources before production freeze", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+nodes:
+  approve:
+    type: human
+  review:
+    type: review
+edges:
+  - from: approve
+    to: review
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+
+		await expect(freezeWorkflowArtifact(artifact)).rejects.toThrow(
+			'workflow human node "approve" must define a prompt before production freeze',
+		);
+	});
+
+	it("rejects invalid state permission scopes before production freeze", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+nodes:
+  build:
+    type: script
+    script:
+      inline: |
+        return { summary: "built" };
+    writes:
+      - state/build
+edges: []
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+
+		await expect(freezeWorkflowArtifact(artifact)).rejects.toThrow(
+			'workflow node "build" write scope must be a JSON pointer: state/build',
+		);
+	});
+
+	it("rejects prompt state reads that are not declared in node permissions before production freeze", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+nodes:
+  review:
+    type: review
+    prompt:
+      state: /reviewPrompt
+    reads:
+      - /other
+    gates:
+      - finish
+edges: []
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+
+		await expect(freezeWorkflowArtifact(artifact)).rejects.toThrow(
+			'workflow node "review" prompt reads "/reviewPrompt" outside declared read scopes',
+		);
+	});
+
+	it("rejects waitFor references to unknown nodes before production freeze", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+nodes:
+  review:
+    type: review
+    waitFor:
+      - missing
+edges: []
+`),
+		);
+
+		await expect(
+			(async () => {
+				const artifact = await loadWorkflowArtifact(flowPath);
+				await freezeWorkflowArtifact(artifact);
+			})(),
+		).rejects.toThrow('node "review" waitFor references unknown node "missing"');
+	});
+
+	it("rejects migration frontier targets that are absent from the frozen graph", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+migrations:
+  - from: weak-review
+    to: strong-review
+    frontierMapping:
+      weakReview: strongReview
+nodes:
+  build:
+    type: script
+edges: []
+`),
+		);
+
+		await expect(
+			(async () => {
+				const artifact = await loadWorkflowArtifact(flowPath);
+				await freezeWorkflowArtifact(artifact);
+			})(),
+		).rejects.toThrow(
+			'migration "weak-review" -> "strong-review" maps frontier "weakReview" to unknown node "strongReview"',
 		);
 	});
 });

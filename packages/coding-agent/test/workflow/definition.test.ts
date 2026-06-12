@@ -50,6 +50,48 @@ describe("workflow definition parsing", () => {
 		expect(definition.nodes[1]?.model).toEqual({ role: "reviewer", unavailable: "fail" });
 	});
 
+	it("parses review fallback verdicts for Humanize-style default continue gates", () => {
+		const definition = parseWorkflowDefinition(
+			`
+name: review-fallback
+version: 1
+nodes:
+  review:
+    type: review
+    prompt: Review the result.
+    gates:
+      - CONTINUE
+      - COMPLETE
+    fallbackVerdict: CONTINUE
+edges: []
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+
+		expect(definition.nodes[0]?.fallbackVerdict).toBe("CONTINUE");
+	});
+
+	it("rejects review fallback verdicts outside declared gates", () => {
+		expect(() =>
+			parseWorkflowDefinition(
+				`
+name: review-fallback
+version: 1
+nodes:
+  review:
+    type: review
+    prompt: Review the result.
+    gates:
+      - CONTINUE
+      - COMPLETE
+    fallbackVerdict: RETRY
+edges: []
+`,
+				{ sourcePath: "workflow.yml" },
+			),
+		).toThrow('nodes.review.fallbackVerdict must be one of the declared gates for review node "review"');
+	});
+
 	it("rejects edges that reference unknown nodes", () => {
 		const source = `
 name: invalid-workflow
@@ -149,6 +191,28 @@ edges: []
 		});
 	});
 
+	it("accepts shell script nodes for long-running program execution", () => {
+		const source = `
+name: shell-script-source
+version: 1
+nodes:
+  build:
+    type: script
+    script:
+      language: sh
+      inline: |
+        printf '{"summary":"build complete"}\\n'
+edges: []
+`;
+
+		const definition = parseWorkflowDefinition(source, { sourcePath: "script.yml" });
+
+		expect(definition.nodes[0]?.script).toEqual({
+			language: "sh",
+			code: 'printf \'{"summary":"build complete"}\\n\'\n',
+		});
+	});
+
 	it("rejects unsupported script languages", () => {
 		const source = `
 name: invalid-script-language
@@ -163,7 +227,7 @@ edges: []
 `;
 
 		expect(() => parseWorkflowDefinition(source, { sourcePath: "script.yml" })).toThrow(
-			"script.yml: nodes.score.script.language must be js or py",
+			"script.yml: nodes.score.script.language must be js, py, or sh",
 		);
 	});
 

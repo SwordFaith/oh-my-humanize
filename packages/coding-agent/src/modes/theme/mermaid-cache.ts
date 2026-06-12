@@ -16,7 +16,7 @@ export function resolveMermaidAscii(source: string): string | null {
 		return cache.get(normalizedSource) ?? null;
 	}
 
-	const ascii = normalizedSource ? renderMermaidAsciiSafe(normalizedSource) : null;
+	const ascii = normalizedSource ? renderMermaidAsciiSafe(normalizedSource, { useAscii: false }) : null;
 	cache.set(normalizedSource, ascii);
 	return ascii;
 }

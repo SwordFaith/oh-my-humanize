@@ -4,18 +4,14 @@ import type {
 	WorkflowAttemptActivationRecord,
 	WorkflowAttemptActivationStatus,
 	WorkflowAttemptStatus,
+	WorkflowChangeRequestApplicationRecord,
 	WorkflowChangeRequestRecord,
 	WorkflowCheckpointSnapshot,
 	WorkflowRunAttemptSnapshot,
 	WorkflowRunFamilySnapshot,
 } from "./lifecycle";
 import type { WorkflowResolvedPrompt } from "./prompt-source";
-import type {
-	WorkflowActivationRecord,
-	WorkflowGraphPatchAppliedRecord,
-	WorkflowGraphPatchProposalRecord,
-	WorkflowRunSnapshot,
-} from "./run-store";
+import type { WorkflowActivationRecord, WorkflowGraphPatchProposalRecord, WorkflowRunSnapshot } from "./run-store";
 
 export interface WorkflowInspection {
 	runId: string;
@@ -24,7 +20,6 @@ export interface WorkflowInspection {
 	state: Record<string, unknown>;
 	graphRevisions: WorkflowInspectionGraphRevision[];
 	pendingGraphPatchProposals: WorkflowInspectionGraphPatchProposal[];
-	appliedGraphPatches: WorkflowInspectionGraphPatchApplication[];
 	activations: WorkflowInspectionActivation[];
 	modelAssignments: WorkflowInspectionModelAssignment[];
 }
@@ -42,6 +37,7 @@ export interface WorkflowLifecycleInspectionAttempt {
 	id: string;
 	freezeId: string;
 	startNodeId: string;
+	startNodeIds?: string[];
 	status: WorkflowAttemptStatus;
 	checkpointId?: string;
 	runtimeBindingSnapshot: RuntimeBindingSnapshot;
@@ -83,6 +79,15 @@ export interface WorkflowLifecycleInspectionChangeRequest {
 	frontierMapping: Record<string, string>;
 	approvedBy?: string;
 	rejectedBy?: string;
+	applications: WorkflowLifecycleInspectionChangeApplication[];
+}
+
+export interface WorkflowLifecycleInspectionChangeApplication {
+	target: WorkflowChangeRequestApplicationRecord["target"];
+	actor: string;
+	reason?: string;
+	freezeId?: string;
+	draftId?: string;
 }
 
 export interface WorkflowInspectionGraph {
@@ -111,15 +116,6 @@ export interface WorkflowInspectionGraphPatchProposal {
 	id: string;
 	actor: WorkflowGraphPatchProposalRecord["actor"];
 	reason?: string;
-	impact: WorkflowInspectionGraphPatchImpact;
-}
-
-export interface WorkflowInspectionGraphPatchApplication {
-	proposalId?: string;
-	actor: WorkflowGraphPatchAppliedRecord["actor"];
-	reason?: string;
-	graphRevisionId: string;
-	parentGraphRevisionId?: string;
 	impact: WorkflowInspectionGraphPatchImpact;
 }
 
@@ -182,19 +178,6 @@ export function buildWorkflowInspection(run: WorkflowRunSnapshot): WorkflowInspe
 			reason: proposal.reason,
 			impact: compactPatchImpact(proposal.preview),
 		})),
-		appliedGraphPatches: run.appliedGraphPatches.map(patch => {
-			const inspectionPatch: WorkflowInspectionGraphPatchApplication = {
-				actor: patch.actor,
-				graphRevisionId: patch.graphRevisionId,
-				impact: compactPatchImpact(patch.preview),
-			};
-			if (patch.proposalId !== undefined) inspectionPatch.proposalId = patch.proposalId;
-			if (patch.reason !== undefined) inspectionPatch.reason = patch.reason;
-			if (patch.parentGraphRevisionId !== undefined) {
-				inspectionPatch.parentGraphRevisionId = patch.parentGraphRevisionId;
-			}
-			return inspectionPatch;
-		}),
 		activations: run.activations.map(activation => ({
 			id: activation.id,
 			nodeId: activation.nodeId,
@@ -252,6 +235,7 @@ function compactLifecycleAttempt(attempt: WorkflowRunAttemptSnapshot): WorkflowL
 		}, {}),
 		activations: attempt.activations.map(compactLifecycleActivation),
 	};
+	if (attempt.startNodeIds !== undefined) inspection.startNodeIds = [...attempt.startNodeIds];
 	if (attempt.checkpointId !== undefined) inspection.checkpointId = attempt.checkpointId;
 	if (attempt.summary !== undefined) inspection.summary = attempt.summary;
 	if (attempt.error !== undefined) inspection.error = attempt.error;
@@ -293,11 +277,25 @@ function compactLifecycleChangeRequest(request: WorkflowChangeRequestRecord): Wo
 		reason: request.reason,
 		operationCount: request.operations.length,
 		frontierMapping: request.frontierMapping,
+		applications: request.applications.map(compactLifecycleChangeApplication),
 	};
 	if (request.attemptId !== undefined) inspection.attemptId = request.attemptId;
 	if (request.checkpointId !== undefined) inspection.checkpointId = request.checkpointId;
 	if (request.approvedBy !== undefined) inspection.approvedBy = request.approvedBy;
 	if (request.rejectedBy !== undefined) inspection.rejectedBy = request.rejectedBy;
+	return inspection;
+}
+
+function compactLifecycleChangeApplication(
+	application: WorkflowChangeRequestApplicationRecord,
+): WorkflowLifecycleInspectionChangeApplication {
+	const inspection: WorkflowLifecycleInspectionChangeApplication = {
+		target: application.target,
+		actor: application.actor,
+	};
+	if (application.reason !== undefined) inspection.reason = application.reason;
+	if (application.freezeId !== undefined) inspection.freezeId = application.freezeId;
+	if (application.draftId !== undefined) inspection.draftId = application.draftId;
 	return inspection;
 }
 
@@ -308,10 +306,7 @@ function compactEdge(from: string, to: string, condition: string | undefined): W
 }
 
 function pendingGraphPatchProposals(run: WorkflowRunSnapshot): WorkflowGraphPatchProposalRecord[] {
-	const appliedProposalIds = new Set(
-		run.appliedGraphPatches.flatMap(patch => (patch.proposalId === undefined ? [] : [patch.proposalId])),
-	);
-	return run.graphPatchProposals.filter(proposal => !appliedProposalIds.has(proposal.id));
+	return run.graphPatchProposals;
 }
 
 function compactPatchImpact(preview: WorkflowGraphPatchProposalRecord["preview"]): WorkflowInspectionGraphPatchImpact {

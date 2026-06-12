@@ -54,6 +54,27 @@ function createNeverClosingFetch(events: unknown[]): FetchImpl {
 	return mockFetch as typeof fetch;
 }
 
+function createSseResponseFromChunks(chunks: string[]): Response {
+	const encoder = new TextEncoder();
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+			controller.close();
+		},
+	});
+	return new Response(stream, {
+		status: 200,
+		headers: { "content-type": "text/event-stream" },
+	});
+}
+
+function createChunkedSseFetch(chunks: string[]): FetchImpl {
+	async function mockFetch(_input: string | URL | Request, _init?: RequestInit): Promise<Response> {
+		return createSseResponseFromChunks(chunks);
+	}
+	return mockFetch as typeof fetch;
+}
+
 function completionChunk(extra: Record<string, unknown>): unknown {
 	return {
 		id: "chatcmpl-terminal",
@@ -154,5 +175,30 @@ describe("terminal frame without connection close", () => {
 		expect(result.usage.input).toBe(10);
 		expect(result.usage.output).toBe(5);
 		expect(Date.now() - startedAt).toBeLessThan(2_000);
+	}, 10_000);
+
+	it("openai-responses: ignores SSE comment keepalives between named events", async () => {
+		const completed = JSON.stringify({
+			type: "response.completed",
+			response: {
+				id: "resp_keepalive",
+				status: "completed",
+				usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+			},
+		});
+		const fetchMock = createChunkedSseFetch([
+			"event: response.in_progress\n:\n\n",
+			`event: response.completed\ndata: ${completed}\n\n`,
+		]);
+
+		const result = await streamOpenAIResponses(responsesModel, baseContext(), {
+			apiKey: "test-key",
+			fetch: fetchMock,
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.responseId).toBe("resp_keepalive");
+		expect(result.usage.totalTokens).toBe(2);
 	}, 10_000);
 });

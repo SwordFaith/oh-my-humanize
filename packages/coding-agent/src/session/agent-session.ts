@@ -243,6 +243,7 @@ import type {
 	WorkflowAgentTaskRunner,
 	WorkflowHumanInputRunner,
 	WorkflowScriptEvalRunner,
+	WorkflowShellScriptRunner,
 } from "../workflow/session-runtime";
 import type { AuthStorage } from "./auth-storage";
 import type { ClientBridge, ClientBridgePermissionOption, ClientBridgePermissionOutcome } from "./client-bridge";
@@ -457,6 +458,8 @@ export interface AgentSessionConfig {
 	workflowAgentTaskRunner?: WorkflowAgentTaskRunner;
 	/** Runtime adapter used by workflow script nodes to dispatch eval cells. */
 	workflowScriptEvalRunner?: WorkflowScriptEvalRunner;
+	/** Runtime adapter used by workflow shell script nodes to dispatch long-running commands. */
+	workflowShellScriptRunner?: WorkflowShellScriptRunner;
 	/** Runtime adapter used by workflow human nodes to collect user input. */
 	workflowHumanInputRunner?: WorkflowHumanInputRunner;
 }
@@ -1018,6 +1021,7 @@ export class AgentSession {
 	#onSseEvent: SimpleStreamOptions["onSseEvent"] | undefined;
 	#workflowAgentTaskRunner: WorkflowAgentTaskRunner | undefined;
 	#workflowScriptEvalRunner: WorkflowScriptEvalRunner | undefined;
+	#workflowShellScriptRunner: WorkflowShellScriptRunner | undefined;
 	#workflowHumanInputRunner: WorkflowHumanInputRunner | undefined;
 	#convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	#rebuildSystemPrompt:
@@ -1220,6 +1224,7 @@ export class AgentSession {
 		this.#onPayload = config.onPayload;
 		this.#workflowAgentTaskRunner = config.workflowAgentTaskRunner;
 		this.#workflowScriptEvalRunner = config.workflowScriptEvalRunner;
+		this.#workflowShellScriptRunner = config.workflowShellScriptRunner;
 		this.#workflowHumanInputRunner = config.workflowHumanInputRunner;
 		this.rawSseDebugBuffer = config.rawSseDebugBuffer ?? new RawSseDebugBuffer();
 		// Avoid wrapping in an `async` closure when no user callback is configured: the
@@ -3488,6 +3493,10 @@ export class AgentSession {
 
 	getWorkflowScriptEvalRunner(): WorkflowScriptEvalRunner | undefined {
 		return this.#workflowScriptEvalRunner;
+	}
+
+	getWorkflowShellScriptRunner(): WorkflowShellScriptRunner | undefined {
+		return this.#workflowShellScriptRunner;
 	}
 
 	getWorkflowHumanInputRunner(): WorkflowHumanInputRunner | undefined {

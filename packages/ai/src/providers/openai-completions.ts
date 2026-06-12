@@ -76,6 +76,12 @@ import {
 	hasCopilotVisionInput,
 	resolveGitHubCopilotBaseUrl,
 } from "./github-copilot-headers";
+import {
+	canUseConfiguredAuthorizationHeader,
+	hasAuthorizationHeader,
+	MODEL_AUTHORIZATION_HEADER_API_KEY,
+	setBearerAuthorizationHeader,
+} from "./openai-auth-headers";
 import { createInitialResponsesAssistantMessage } from "./openai-responses-shared";
 import { transformMessages } from "./transform-messages";
 import {
@@ -1112,6 +1118,11 @@ async function createClient(
 	getCapturedErrorResponse: () => CapturedHttpErrorResponse | undefined;
 	clearCapturedErrorResponse: () => void;
 }> {
+	let headers = { ...model.headers };
+	Object.assign(headers, extraHeaders);
+	if (!apiKey && canUseConfiguredAuthorizationHeader(model.provider) && hasAuthorizationHeader(headers)) {
+		apiKey = MODEL_AUTHORIZATION_HEADER_API_KEY;
+	}
 	if (!apiKey) {
 		if (!$env.OPENAI_API_KEY) {
 			throw new Error(
@@ -1122,7 +1133,6 @@ async function createClient(
 	}
 	const rawApiKey = apiKey;
 
-	let headers = { ...model.headers };
 	if (model.provider === "openrouter") {
 		// App attribution — opts the agent into OpenRouter's public rankings and per-app
 		// analytics. `HTTP-Referer` is the unique app identifier; without it nothing is
@@ -1141,7 +1151,6 @@ async function createClient(
 		headers["X-OpenRouter-Cache"] = "true";
 		headers["X-OpenRouter-Cache-TTL"] = "3600";
 	}
-	Object.assign(headers, extraHeaders);
 	if (model.provider === "kimi-code") {
 		headers = { ...getKimiCommonHeaders(), ...headers };
 	}
@@ -1162,6 +1171,9 @@ async function createClient(
 		copilotPremiumRequests = copilot.premiumRequests;
 		baseUrl = resolveGitHubCopilotBaseUrl(model.baseUrl, rawApiKey) ?? model.baseUrl;
 	}
+	setBearerAuthorizationHeader(headers, apiKey, {
+		overrideExisting: apiKey !== MODEL_AUTHORIZATION_HEADER_API_KEY,
+	});
 	// Azure OpenAI requires /deployments/{id}/chat/completions?api-version=YYYY-MM-DD.
 	// The generic openai-completions path adds neither, producing silent 404s.
 	let azureDefaultQuery: Record<string, string> | undefined;

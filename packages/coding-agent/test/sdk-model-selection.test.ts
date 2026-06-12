@@ -95,6 +95,18 @@ describe("createAgentSession deferred model pattern resolution", () => {
 		expect(modelFallbackMessage).toBeUndefined();
 	});
 
+	test("applies runtimeApiKey after deferred modelPattern resolves", async () => {
+		const { session } = await createAgentSession({
+			...(await buildSessionOptions("runtime-provider/runtime-model")),
+			runtimeApiKey: "CLI_RUNTIME_KEY",
+		});
+
+		if (!session.model) {
+			throw new Error("Expected runtime provider model to resolve");
+		}
+		expect(await session.modelRegistry.getApiKey(session.model)).toBe("CLI_RUNTIME_KEY");
+	});
+
 	test("does not silently fallback when explicit modelPattern is unresolved", async () => {
 		const { session, modelFallbackMessage } = await createAgentSession(
 			await buildSessionOptions("missing-provider/missing-model"),

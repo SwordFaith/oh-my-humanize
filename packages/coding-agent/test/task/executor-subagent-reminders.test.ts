@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { AgentBusyError, type AgentTelemetryConfig, type Tracer } from "@oh-my-pi/pi-agent-core";
-import { type AssistantMessage, Effort } from "@oh-my-pi/pi-ai";
+import { type Api, type AssistantMessage, Effort, type Model } from "@oh-my-pi/pi-ai";
+import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ExtensionActions, LoadExtensionsResult } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { CreateAgentSessionResult } from "@oh-my-pi/pi-coding-agent/sdk";
@@ -86,6 +87,21 @@ function createSessionResult(session: AgentSession): CreateAgentSessionResult {
 		setToolUIContext: () => {},
 		eventBus: new EventBus(),
 	};
+}
+
+function createModel(provider: string, id: string): Model<Api> {
+	return buildModel({
+		id,
+		name: id,
+		api: "openai-responses",
+		provider,
+		baseUrl: `https://${provider}.example.test/v1`,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 8192,
+	});
 }
 
 function mockCreateAgentSession(session: AgentSession) {
@@ -413,6 +429,43 @@ describe("runSubprocess yield reminders", () => {
 		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.thinkingLevel).toBe(cases[0].expectedThinkingLevel);
 		expect(createAgentSessionSpy.mock.calls[1]?.[0]?.thinkingLevel).toBe(cases[1].expectedThinkingLevel);
 	});
+
+	it("keeps exact workflow model overrides even when auth fallback would choose the parent model", async () => {
+		vi.clearAllMocks();
+		const workflowModel = createModel("rust-cat", "gpt-5.5");
+		const parentModel = createModel("openai", "gpt-5.4");
+		const modelRegistry = {
+			refresh: async () => {},
+			getAvailable: () => [workflowModel, parentModel],
+			getApiKey: async (model: Model<Api>) => (model.provider === "openai" ? "sk-test" : undefined),
+		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		const session = createMockSession(({ emit }) => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-exact-model",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		const createAgentSessionSpy = mockCreateAgentSession(session);
+
+		await runSubprocess({
+			...baseOptions,
+			id: "subagent-exact-model",
+			modelOverride: "rust-cat/gpt-5.5",
+			modelOverrideAuthFallback: false,
+			parentActiveModelPattern: "openai/gpt-5.4",
+			modelRegistry,
+		});
+
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.model?.provider).toBe("rust-cat");
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.model?.id).toBe("gpt-5.5");
+	});
+
 	it("fails after 3 reminders when yield is never called for a structured task", async () => {
 		const prompts: string[] = [];
 		const session = createMockSession(({ text, promptIndex, emit, state }) => {

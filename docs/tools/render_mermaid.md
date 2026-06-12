@@ -1,6 +1,6 @@
 # render_mermaid
 
-> Convert Mermaid source into terminal-friendly ASCII/Unicode text.
+> Convert Mermaid source into terminal-friendly Unicode/ASCII text.
 
 ## Source
 - Entry: `packages/coding-agent/src/tools/render-mermaid.ts`
@@ -24,7 +24,7 @@
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `useAscii` | `boolean` | No | `true` for plain ASCII, `false`/omitted for Unicode box-drawing output. Passed through unchanged. |
+| `useAscii` | `boolean` | No | `true` for plain ASCII, `false`/omitted for Unicode box-drawing output. Defaults to `false`. |
 | `paddingX` | `number` | No | Horizontal spacing. `Math.floor`, then `Math.max(0, value)`. |
 | `paddingY` | `number` | No | Vertical spacing. `Math.floor`, then `Math.max(0, value)`. |
 | `boxBorderPadding` | `number` | No | Inner box padding. `Math.floor`, then `Math.max(0, value)`. |
@@ -43,7 +43,7 @@ No image path, SVG, PNG, or binary payload is returned. Stored artifacts are pla
 
 ## Flow
 1. `RenderMermaidTool.execute()` in `packages/coding-agent/src/tools/render-mermaid.ts` receives `mermaid` and optional `config`.
-2. `sanitizeRenderConfig()` normalizes `paddingX`, `paddingY`, and `boxBorderPadding` to non-negative integers; `useAscii` is passed through.
+2. `sanitizeRenderConfig()` normalizes `paddingX`, `paddingY`, and `boxBorderPadding` to non-negative integers; omitted `useAscii` defaults to `false`.
 3. The tool calls `renderMermaidAscii()` from `@oh-my-pi/pi-utils`.
 4. `packages/utils/src/mermaid-ascii.ts` forwards directly to `renderMermaidASCII()` from the `beautiful-mermaid` package.
 5. The tool optionally asks the session for an artifact slot with `allocateOutputArtifact("render_mermaid")`.
@@ -77,6 +77,6 @@ No image path, SVG, PNG, or binary payload is returned. Stored artifacts are pla
 - Artifact write failures from `Bun.write()` are not caught in the tool and will fail the call.
 
 ## Notes
-- The tool summary string says `Render a Mermaid diagram to an image`, but the implementation and prompt both produce text, not images.
+- This tool produces text diagrams, not images.
 - Despite the name, this tool does not use Puppeteer, browser rendering, Mermaid CLI, or native bindings; rendering stays in-process through the JS package wrapper.
 - `docs/render-mermaid.md` covers operator-facing behavior and enablement; keep this file focused on the tool contract and runtime path.

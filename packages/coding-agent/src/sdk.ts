@@ -197,6 +197,7 @@ import { EventBus } from "./utils/event-bus";
 import { buildNamedToolChoice } from "./utils/tool-choice";
 import { createEvalToolScriptRunner } from "./workflow/eval-tool-runtime";
 import { createAskToolHumanInputRunner } from "./workflow/human-tool-runtime";
+import { createShellScriptRunner } from "./workflow/shell-script-runtime";
 import { createTaskToolAgentRunner } from "./workflow/task-tool-runtime";
 import { buildWorkspaceTree, type WorkspaceTree } from "./workspace-tree";
 
@@ -402,6 +403,8 @@ export interface CreateAgentSessionOptions {
 	/** Raw model pattern string (e.g. from --model CLI flag) to resolve after extensions load.
 	 * Used when model lookup is deferred because extension-provided models aren't registered yet. */
 	modelPattern?: string;
+	/** Runtime API key supplied by the CLI for the selected model provider. Not persisted. */
+	runtimeApiKey?: string;
 	/** Thinking selector. Default: from settings, else unset */
 	thinkingLevel?: ConfiguredThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
@@ -1948,6 +1951,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 		}
 
+		if (options.runtimeApiKey && model) {
+			authStorage.setRuntimeApiKey(model.provider, options.runtimeApiKey);
+		}
+		const runtimeApiKeyProvider = model?.provider;
+
 		// Discover custom commands (TypeScript slash commands)
 		const customCommandsResult: CustomCommandsLoadResult = options.disableExtensionDiscovery
 			? { commands: [], errors: [] }
@@ -2422,6 +2430,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				// Retry steps (ctx carries an auth error) drive the central a/b/c
 				// policy — force-refresh the same account, then rotate to a sibling —
 				// and may legitimately yield no key when every account is exhausted.
+				if (options.runtimeApiKey && runtimeApiKeyProvider === provider) {
+					return options.runtimeApiKey;
+				}
 				if (ctx?.error !== undefined) {
 					return createApiKeyResolver(modelRegistry, provider, { sessionId: agent.sessionId })(ctx);
 				}
@@ -2510,6 +2521,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			onResponse,
 			workflowAgentTaskRunner: createTaskToolAgentRunner(toolSession),
 			workflowScriptEvalRunner: createEvalToolScriptRunner(toolSession),
+			workflowShellScriptRunner: createShellScriptRunner(toolSession),
 			workflowHumanInputRunner: createAskToolHumanInputRunner(toolSession, () => toolContextStore.getContext()),
 			convertToLlm: convertToLlmFinal,
 			rebuildSystemPrompt,

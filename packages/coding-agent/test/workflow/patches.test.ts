@@ -331,6 +331,6 @@ edges:
 		expect(reconstructed[0]?.graphPatchProposals.map(entry => [entry.id, entry.actor, entry.reason])).toEqual([
 			["proposal-1", "agent", "request finish branch"],
 		]);
-		expect(reconstructed[0]?.appliedGraphPatches).toEqual([]);
+		expect(Object.hasOwn(reconstructed[0] ?? {}, "appliedGraphPatches")).toBe(false);
 	});
 });

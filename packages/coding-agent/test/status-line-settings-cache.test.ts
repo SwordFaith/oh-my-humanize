@@ -91,6 +91,23 @@ describe("StatusLineComponent effective settings cache", () => {
 		}
 	});
 
+	it("keeps default unicode powerline-thin separators on the border drawing baseline", () => {
+		const component = makeComponent({
+			preset: "custom",
+			leftSegments: ["pi", "model"],
+			rightSegments: ["session_name"],
+			separator: "powerline-thin",
+			sessionAccent: false,
+			segmentOptions: { model: { showThinkingLevel: false } },
+		});
+
+		const border = stripVTControlCharacters(component.getTopBorder(100).content);
+
+		expect(border).toContain("┤");
+		expect(border).not.toContain(" > ");
+		expect(border).not.toMatch(/[>▶]─|─[<◀]/u);
+	});
+
 	it("invalidates on updateSettings and reflects hook visibility changes", () => {
 		const component = makeComponent({
 			preset: "custom",

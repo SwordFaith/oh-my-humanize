@@ -60,6 +60,7 @@ export async function finalizeErrorMessage(
 			message = `${message}\n${capturedMessage}`;
 		}
 	}
+	message = appendRequestContext(message, rawRequestDump);
 	return appendRawHttpRequestDumpFor400(message, error, rawRequestDump);
 }
 
@@ -95,6 +96,37 @@ function sanitizeDump(dump: RawHttpRequestDump): RawHttpRequestDump {
 		...dump,
 		headers: redactHeaders(dump.headers),
 	};
+}
+
+function appendRequestContext(message: string, dump: RawHttpRequestDump | undefined): string {
+	if (!dump) return message;
+	if (!shouldAppendRequestContext(message)) return message;
+	const details = [
+		`provider=${dump.provider}`,
+		`api=${dump.api}`,
+		`model=${dump.model}`,
+		dump.url ? `url=${dump.url}` : undefined,
+	].filter((detail): detail is string => detail !== undefined);
+	if (details.length === 0) return message;
+	const context = `request-context: ${details.join(" ")}`;
+	return message.includes(context) ? message : `${message}\n${context}`;
+}
+
+function shouldAppendRequestContext(message: string): boolean {
+	if (message === "Connection error.") return true;
+	return isTransportParseError(message) || isHttpStatusError(message);
+}
+
+function isTransportParseError(message: string): boolean {
+	return (
+		/\bJSON Parse error\b/i.test(message) ||
+		/\bUnexpected EOF\b/i.test(message) ||
+		/\bstream closed before\b/i.test(message)
+	);
+}
+
+function isHttpStatusError(message: string): boolean {
+	return /\b[45]\d\d status code\b/i.test(message) || /\bHTTP [45]\d\d\b/i.test(message);
 }
 
 function redactHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {

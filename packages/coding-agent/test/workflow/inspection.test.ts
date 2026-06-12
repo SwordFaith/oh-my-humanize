@@ -10,6 +10,7 @@ import {
 	createWorkflowCheckpoint,
 	proposeWorkflowChangeRequest,
 	reconstructWorkflowFamilies,
+	recordWorkflowChangeRequestApplied,
 	recordWorkflowFreeze,
 	requestWorkflowAttemptStop,
 	restartWorkflowAttempt,
@@ -19,7 +20,6 @@ import {
 import {
 	appendWorkflowActivationCompleted,
 	appendWorkflowActivationStarted,
-	appendWorkflowGraphPatchApplied,
 	appendWorkflowGraphPatchProposed,
 	reconstructWorkflowRuns,
 	startWorkflowRun,
@@ -115,7 +115,6 @@ describe("workflow inspection model", () => {
 			state: {},
 			graphRevisions: [{ id: "run-1:graph-0", nodeCount: 2, edgeCount: 1 }],
 			pendingGraphPatchProposals: [],
-			appliedGraphPatches: [],
 			activations: [
 				{
 					id: "activation-1",
@@ -146,12 +145,11 @@ describe("workflow inspection model", () => {
 		});
 	});
 
-	it("summarizes graph patch proposal and application audit records", () => {
+	it("summarizes active-run graph patch proposals without application audit records", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
 		const pendingPatch = [{ op: "add_node" as const, node: { id: "human-review", type: "human" as const } }];
-		const appliedPatch = [{ op: "add_node" as const, node: { id: "scoreboard", type: "script" as const } }];
 		const preview = graphPatchPreview();
 
 		appendWorkflowGraphPatchProposed(host, run.id, {
@@ -161,23 +159,6 @@ describe("workflow inspection model", () => {
 			preview,
 			reason: "request human gate",
 		});
-		appendWorkflowGraphPatchProposed(host, run.id, {
-			proposalId: "proposal-applied",
-			actor: "agent",
-			patch: appliedPatch,
-			preview,
-			reason: "request scoreboard",
-		});
-		appendWorkflowGraphPatchApplied(host, run.id, {
-			proposalId: "proposal-applied",
-			actor: "supervisor",
-			patch: appliedPatch,
-			preview,
-			graphRevisionId: "run-1:graph-1",
-			parentGraphRevisionId: run.currentGraphRevisionId,
-			reason: "approved scoreboard",
-		});
-
 		const reconstructed = reconstructWorkflowRuns(host.getBranch())[0]!;
 		const inspection = buildWorkflowInspection(reconstructed);
 
@@ -201,28 +182,7 @@ describe("workflow inspection model", () => {
 				},
 			},
 		]);
-		expect(inspection.appliedGraphPatches).toEqual([
-			{
-				proposalId: "proposal-applied",
-				actor: "supervisor",
-				reason: "approved scoreboard",
-				graphRevisionId: "run-1:graph-1",
-				parentGraphRevisionId: "run-1:graph-0",
-				impact: {
-					addedNodes: 1,
-					removedNodes: 0,
-					changedNodes: 1,
-					addedEdges: 1,
-					removedEdges: 0,
-					changedEdges: 0,
-					promptSourceChanges: 0,
-					modelChanges: 1,
-					permissionChanges: 0,
-					modelRoleChanges: 0,
-					warnings: 1,
-				},
-			},
-		]);
+		expect(Object.hasOwn(inspection, "appliedGraphPatches")).toBe(false);
 	});
 
 	it("summarizes lifecycle family lineage, checkpoints, changes, and bindings", () => {
@@ -279,6 +239,13 @@ describe("workflow inspection model", () => {
 			sourceMapping: { review: "verify" },
 		});
 		recordWorkflowFreeze(host, freezeB, { familyId: "family-1" });
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: request.id,
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
+			reason: "strict freeze passed",
+		});
 		restartWorkflowAttempt(host, {
 			familyId: "family-1",
 			attemptId: "attempt-2",
@@ -328,6 +295,14 @@ describe("workflow inspection model", () => {
 					approvedBy: "human:sihao",
 					operationCount: 1,
 					frontierMapping: { review: "verify" },
+					applications: [
+						{
+							actor: "human:sihao",
+							target: "freeze",
+							freezeId: "flowfreeze:b",
+							reason: "strict freeze passed",
+						},
+					],
 				},
 			],
 		});

@@ -3,7 +3,7 @@ import { parseWorkflowCondition, WorkflowConditionError } from "./condition";
 
 export type WorkflowNodeType = "agent" | "script" | "human" | "review";
 export type WorkflowModelUnavailablePolicy = "fallback-to-parent" | "fail";
-export type WorkflowScriptLanguage = "js" | "py";
+export type WorkflowScriptLanguage = "js" | "py" | "sh";
 
 export interface WorkflowModelContext {
 	role?: string;
@@ -26,6 +26,27 @@ export interface WorkflowEdge {
 	from: string;
 	to: string;
 	condition?: WorkflowCondition;
+}
+
+export type WorkflowResourceKind = "prompt" | "script" | "data";
+
+export interface WorkflowResourceDeclaration {
+	path: string;
+	kind?: WorkflowResourceKind;
+	required?: boolean;
+}
+
+export type WorkflowStateSchema = Record<string, unknown>;
+
+export interface WorkflowCapabilityContract {
+	tools?: string[];
+	agents?: string[];
+}
+
+export interface WorkflowMigrationRule {
+	from: string;
+	to: string;
+	frontierMapping: Record<string, string>;
 }
 
 export type WorkflowPromptActivationSelector = "parent" | "latest-completed";
@@ -79,6 +100,7 @@ export interface WorkflowNode {
 	promptSource?: WorkflowPromptSource;
 	script?: WorkflowScriptSource;
 	gates?: string[];
+	fallbackVerdict?: string;
 	reads?: string[];
 	writes?: string[];
 	waitFor?: string[];
@@ -91,6 +113,10 @@ export interface WorkflowDefinition {
 	models: WorkflowModels;
 	nodes: WorkflowNode[];
 	edges: WorkflowEdge[];
+	stateSchema?: WorkflowStateSchema;
+	resources?: WorkflowResourceDeclaration[];
+	capabilities?: WorkflowCapabilityContract;
+	migrations?: WorkflowMigrationRule[];
 }
 
 export interface ParseWorkflowDefinitionOptions {
@@ -118,9 +144,20 @@ export function parseWorkflowDefinition(
 	const models = parseModels(root.models, options.sourcePath);
 	const nodes = parseNodes(root.nodes, options.sourcePath);
 	const edges = parseEdges(root.edges, options.sourcePath);
+	const stateSchema = parseStateSchema(root.stateSchema, "stateSchema", options.sourcePath);
+	const resources = parseResourceDeclarations(root.resources, "resources", options.sourcePath);
+	const capabilities = parseCapabilityContract(root.capabilities, "capabilities", options.sourcePath);
+	const migrations = parseMigrationRules(root.migrations, "migrations", options.sourcePath);
 	validateEdgeReferences(nodes, edges, options.sourcePath);
+	validateWaitForReferences(nodes, options.sourcePath);
 	validatePromptSourceReferences(nodes, options.sourcePath);
-	return { name, version, sourcePath: options.sourcePath, models, nodes, edges };
+	validateMigrationTargets(nodes, migrations, options.sourcePath);
+	const definition: WorkflowDefinition = { name, version, sourcePath: options.sourcePath, models, nodes, edges };
+	if (stateSchema !== undefined) definition.stateSchema = stateSchema;
+	if (resources !== undefined) definition.resources = resources;
+	if (capabilities !== undefined) definition.capabilities = capabilities;
+	if (migrations !== undefined) definition.migrations = migrations;
+	return definition;
 }
 
 function parseYaml(source: string, sourcePath?: string): unknown {
@@ -158,10 +195,12 @@ function parseNodes(value: unknown, sourcePath?: string): WorkflowNode[] {
 		const prompt = parsePromptSource(node.prompt, `${path}.prompt`, sourcePath);
 		const script = parseScriptSource(node.script, `${path}.script`, sourcePath);
 		const gates = parseOptionalStringList(node.gates, `${path}.gates`, sourcePath);
+		const fallbackVerdict = parseOptionalString(node.fallbackVerdict, `${path}.fallbackVerdict`, sourcePath);
+		validateFallbackVerdict(id, type, gates, fallbackVerdict, path, sourcePath);
 		const reads = parseOptionalStringList(node.reads, `${path}.reads`, sourcePath);
 		const writes = parseOptionalStringList(node.writes, `${path}.writes`, sourcePath);
 		const waitFor = parseOptionalStringList(node.waitFor, `${path}.waitFor`, sourcePath);
-		return compactNode({ id, type, agent, model, ...prompt, script, gates, reads, writes, waitFor });
+		return compactNode({ id, type, agent, model, ...prompt, script, gates, fallbackVerdict, reads, writes, waitFor });
 	});
 }
 
@@ -196,6 +235,75 @@ function parseEdges(value: unknown, sourcePath?: string): WorkflowEdge[] {
 	});
 }
 
+function parseStateSchema(value: unknown, path: string, sourcePath?: string): WorkflowStateSchema | undefined {
+	if (value === undefined) return undefined;
+	const raw = expectRecord(value, path, sourcePath);
+	return structuredClone(raw);
+}
+
+function parseResourceDeclarations(
+	value: unknown,
+	path: string,
+	sourcePath?: string,
+): WorkflowResourceDeclaration[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value)) {
+		throw new WorkflowDefinitionError(`${path} must be an array of resource declarations`, sourcePath);
+	}
+	return value.map((entry, index) => {
+		if (typeof entry === "string") return { path: expectString(entry, `${path}.${index}`, sourcePath) };
+		const raw = expectRecord(entry, `${path}.${index}`, sourcePath);
+		const declaration: WorkflowResourceDeclaration = {
+			path: expectString(raw.path, `${path}.${index}.path`, sourcePath),
+		};
+		const kind = parseResourceKind(raw.kind, `${path}.${index}.kind`, sourcePath);
+		if (kind !== undefined) declaration.kind = kind;
+		if (raw.required !== undefined) {
+			if (typeof raw.required !== "boolean") {
+				throw new WorkflowDefinitionError(`${path}.${index}.required must be a boolean`, sourcePath);
+			}
+			declaration.required = raw.required;
+		}
+		return declaration;
+	});
+}
+
+function parseResourceKind(value: unknown, path: string, sourcePath?: string): WorkflowResourceKind | undefined {
+	if (value === undefined) return undefined;
+	if (value === "prompt" || value === "script" || value === "data") return value;
+	throw new WorkflowDefinitionError(`${path} must be prompt, script, or data`, sourcePath);
+}
+
+function parseCapabilityContract(
+	value: unknown,
+	path: string,
+	sourcePath?: string,
+): WorkflowCapabilityContract | undefined {
+	if (value === undefined) return undefined;
+	const raw = expectRecord(value, path, sourcePath);
+	const tools = parseOptionalStringList(raw.tools, `${path}.tools`, sourcePath);
+	const agents = parseOptionalStringList(raw.agents, `${path}.agents`, sourcePath);
+	const contract: WorkflowCapabilityContract = {};
+	if (tools !== undefined) contract.tools = tools;
+	if (agents !== undefined) contract.agents = agents;
+	return Object.keys(contract).length > 0 ? contract : undefined;
+}
+
+function parseMigrationRules(value: unknown, path: string, sourcePath?: string): WorkflowMigrationRule[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value)) {
+		throw new WorkflowDefinitionError(`${path} must be an array of migration rules`, sourcePath);
+	}
+	return value.map((entry, index) => {
+		const raw = expectRecord(entry, `${path}.${index}`, sourcePath);
+		return {
+			from: expectString(raw.from, `${path}.${index}.from`, sourcePath),
+			to: expectString(raw.to, `${path}.${index}.to`, sourcePath),
+			frontierMapping: parseStringRecord(raw.frontierMapping, `${path}.${index}.frontierMapping`, sourcePath),
+		};
+	});
+}
+
 function parseConditionSource(source: string, path: string, sourcePath?: string): WorkflowCondition {
 	const trimmed = source.trim();
 	try {
@@ -221,6 +329,20 @@ function validateEdgeReferences(nodes: WorkflowNode[], edges: WorkflowEdge[], so
 	}
 }
 
+function validateWaitForReferences(nodes: WorkflowNode[], sourcePath?: string): void {
+	const nodeIds = new Set(nodes.map(node => node.id));
+	for (const node of nodes) {
+		for (const dependency of node.waitFor ?? []) {
+			if (!nodeIds.has(dependency)) {
+				throw new WorkflowDefinitionError(
+					`node "${node.id}" waitFor references unknown node "${dependency}"`,
+					sourcePath,
+				);
+			}
+		}
+	}
+}
+
 function validatePromptSourceReferences(nodes: WorkflowNode[], sourcePath?: string): void {
 	const nodeIds = new Set(nodes.map(node => node.id));
 	for (const node of nodes) {
@@ -231,6 +353,45 @@ function validatePromptSourceReferences(nodes: WorkflowNode[], sourcePath?: stri
 				sourcePath,
 			);
 		}
+	}
+}
+
+function validateMigrationTargets(
+	nodes: WorkflowNode[],
+	migrations: WorkflowMigrationRule[] | undefined,
+	sourcePath?: string,
+): void {
+	if (migrations === undefined) return;
+	const nodeIds = new Set(nodes.map(node => node.id));
+	for (const migration of migrations) {
+		for (const [frontier, target] of Object.entries(migration.frontierMapping)) {
+			if (!nodeIds.has(target)) {
+				throw new WorkflowDefinitionError(
+					`migration "${migration.from}" -> "${migration.to}" maps frontier "${frontier}" to unknown node "${target}"`,
+					sourcePath,
+				);
+			}
+		}
+	}
+}
+
+function validateFallbackVerdict(
+	id: string,
+	type: WorkflowNodeType,
+	gates: string[] | undefined,
+	fallbackVerdict: string | undefined,
+	path: string,
+	sourcePath?: string,
+): void {
+	if (fallbackVerdict === undefined) return;
+	if (type !== "review") {
+		throw new WorkflowDefinitionError(`${path}.fallbackVerdict is only valid for review nodes`, sourcePath);
+	}
+	if (!gates?.includes(fallbackVerdict)) {
+		throw new WorkflowDefinitionError(
+			`${path}.fallbackVerdict must be one of the declared gates for review node "${id}"`,
+			sourcePath,
+		);
 	}
 }
 
@@ -318,8 +479,8 @@ function parseScriptSource(value: unknown, path: string, sourcePath?: string): W
 
 function parseScriptLanguage(value: unknown, path: string, sourcePath?: string): WorkflowScriptLanguage | undefined {
 	if (value === undefined) return undefined;
-	if (value === "js" || value === "py") return value;
-	throw new WorkflowDefinitionError(`${path} must be js or py`, sourcePath);
+	if (value === "js" || value === "py" || value === "sh") return value;
+	throw new WorkflowDefinitionError(`${path} must be js, py, or sh`, sourcePath);
 }
 
 function parseUnavailable(
@@ -354,6 +515,7 @@ function compactNode(node: WorkflowNode): WorkflowNode {
 	if (node.promptSource !== undefined) result.promptSource = node.promptSource;
 	if (node.script !== undefined) result.script = node.script;
 	if (node.gates !== undefined) result.gates = node.gates;
+	if (node.fallbackVerdict !== undefined) result.fallbackVerdict = node.fallbackVerdict;
 	if (node.reads !== undefined) result.reads = node.reads;
 	if (node.writes !== undefined) result.writes = node.writes;
 	if (node.waitFor !== undefined) result.waitFor = node.waitFor;

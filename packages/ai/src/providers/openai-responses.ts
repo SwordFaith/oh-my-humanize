@@ -52,6 +52,12 @@ import {
 } from "./github-copilot-headers";
 import { compactGrammarDefinition } from "./grammar";
 import {
+	canUseConfiguredAuthorizationHeader,
+	hasAuthorizationHeader,
+	MODEL_AUTHORIZATION_HEADER_API_KEY,
+	setBearerAuthorizationHeader,
+} from "./openai-auth-headers";
+import {
 	appendResponsesToolResultMessages,
 	applyCommonResponsesSamplingParams,
 	applyResponsesReasoningParams,
@@ -594,6 +600,10 @@ function createClient(
 	copilotPremiumRequests: number | undefined;
 	baseUrl: string | undefined;
 } {
+	const headers = { ...(model.headers ?? {}), ...(extraHeaders ?? {}) };
+	if (!apiKey && canUseConfiguredAuthorizationHeader(model.provider) && hasAuthorizationHeader(headers)) {
+		apiKey = MODEL_AUTHORIZATION_HEADER_API_KEY;
+	}
 	if (!apiKey) {
 		if (!$env.OPENAI_API_KEY) {
 			throw new Error(
@@ -603,8 +613,6 @@ function createClient(
 		apiKey = $env.OPENAI_API_KEY;
 	}
 	const rawApiKey = apiKey;
-
-	const headers = { ...(model.headers ?? {}), ...(extraHeaders ?? {}) };
 	let copilotPremiumRequests: number | undefined;
 
 	let baseUrl = model.baseUrl;
@@ -622,11 +630,14 @@ function createClient(
 		copilotPremiumRequests = copilot.premiumRequests;
 		baseUrl = resolveGitHubCopilotBaseUrl(model.baseUrl, rawApiKey) ?? model.baseUrl;
 	}
+	setBearerAuthorizationHeader(headers, apiKey, {
+		overrideExisting: apiKey !== MODEL_AUTHORIZATION_HEADER_API_KEY,
+	});
 	if (sessionId && model.provider === "openai") {
 		headers.session_id ??= sessionId;
 		headers["x-client-request-id"] ??= sessionId;
 	}
-	const baseFetch = fetchOverride ?? fetch;
+	const baseFetch = sanitizeOpenAIResponsesSseFetch(fetchOverride ?? fetch);
 	return {
 		client: new OpenAI({
 			apiKey,
@@ -639,6 +650,72 @@ function createClient(
 		copilotPremiumRequests,
 		baseUrl,
 	};
+}
+
+function sanitizeOpenAIResponsesSseFetch(baseFetch: FetchImpl): FetchImpl {
+	const wrapped: FetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+		const response = await baseFetch(input, init);
+		const contentType = response.headers.get("content-type") ?? "";
+		if (!response.body || !contentType.toLowerCase().includes("text/event-stream")) return response;
+		return new Response(sanitizeOpenAIResponsesSseBody(response.body), {
+			status: response.status,
+			statusText: response.statusText,
+			headers: response.headers,
+		});
+	};
+	return wrapped;
+}
+
+function sanitizeOpenAIResponsesSseBody(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+	const decoder = new TextDecoder();
+	const encoder = new TextEncoder();
+	const reader = body.getReader();
+	let pending = "";
+	return new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			while (true) {
+				const boundary = findOpenAIResponsesSseFrameBoundary(pending);
+				if (boundary !== undefined) {
+					const frame = pending.slice(0, boundary.start);
+					pending = pending.slice(boundary.end);
+					const sanitized = sanitizeOpenAIResponsesSseFrame(frame);
+					if (sanitized !== undefined) {
+						controller.enqueue(encoder.encode(`${sanitized}\n\n`));
+						return;
+					}
+					continue;
+				}
+				const chunk = await reader.read();
+				if (chunk.done) {
+					pending += decoder.decode();
+					const sanitized = pending.length > 0 ? sanitizeOpenAIResponsesSseFrame(pending) : undefined;
+					pending = "";
+					if (sanitized !== undefined) controller.enqueue(encoder.encode(`${sanitized}\n\n`));
+					controller.close();
+					return;
+				}
+				pending += decoder.decode(chunk.value, { stream: true });
+			}
+		},
+		cancel(reason) {
+			return reader.cancel(reason);
+		},
+	});
+}
+
+function findOpenAIResponsesSseFrameBoundary(text: string): { start: number; end: number } | undefined {
+	const lf = text.indexOf("\n\n");
+	const crlf = text.indexOf("\r\n\r\n");
+	if (lf === -1 && crlf === -1) return undefined;
+	if (lf === -1) return { start: crlf, end: crlf + 4 };
+	if (crlf === -1 || lf < crlf) return { start: lf, end: lf + 2 };
+	return { start: crlf, end: crlf + 4 };
+}
+
+function sanitizeOpenAIResponsesSseFrame(frame: string): string | undefined {
+	const lines = frame.split(/\r?\n/u).filter(line => !line.startsWith(":"));
+	if (!lines.some(line => line.startsWith("data:"))) return undefined;
+	return lines.join("\n");
 }
 
 function getOpenAIResponsesPromptCacheKey(

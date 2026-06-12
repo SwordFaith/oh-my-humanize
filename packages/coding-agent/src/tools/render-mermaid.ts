@@ -19,9 +19,9 @@ const renderMermaidSchema = z.object({
 type RenderMermaidParams = z.infer<typeof renderMermaidSchema>;
 
 function sanitizeRenderConfig(config: MermaidAsciiRenderOptions | undefined): MermaidAsciiRenderOptions | undefined {
-	if (!config) return undefined;
+	if (!config) return { useAscii: false };
 	return {
-		useAscii: config.useAscii,
+		useAscii: config.useAscii ?? false,
 		boxBorderPadding:
 			config.boxBorderPadding === undefined ? undefined : Math.max(0, Math.floor(config.boxBorderPadding)),
 		paddingX: config.paddingX === undefined ? undefined : Math.max(0, Math.floor(config.paddingX)),
@@ -36,7 +36,7 @@ export class RenderMermaidTool implements AgentTool<typeof renderMermaidSchema, 
 	readonly name = "render_mermaid";
 	readonly approval = "read" as const;
 	readonly label = "RenderMermaid";
-	readonly summary = "Render a Mermaid diagram to an image";
+	readonly summary = "Render a Mermaid diagram to terminal text";
 	readonly description: string;
 	readonly parameters = renderMermaidSchema;
 	readonly strict = true;

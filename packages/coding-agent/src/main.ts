@@ -8,7 +8,7 @@ import * as fsSync from "node:fs";
 import * as os from "node:os";
 import { createInterface } from "node:readline/promises";
 import { EventLoopKeepalive } from "@oh-my-pi/pi-agent-core";
-import type { ImageContent } from "@oh-my-pi/pi-ai";
+import type { Api, ImageContent, Model } from "@oh-my-pi/pi-ai";
 import {
 	$env,
 	getLogPath,
@@ -339,12 +339,19 @@ export function createAcpSessionFactory(args: AcpSessionFactoryOptions): AcpSess
 			hasUI: false,
 			enableMCP: false,
 		});
-		if (args.parsedArgs.apiKey && !args.baseOptions.model && nextSession.model) {
-			args.authStorage.setRuntimeApiKey(nextSession.model.provider, args.parsedArgs.apiKey);
-		}
+		applyCliRuntimeApiKey(args.authStorage, args.parsedArgs.apiKey, nextSession.model);
 		applyExtensionFlags(nextSession.extensionRunner, args.rawArgs);
 		return nextSession;
 	};
+}
+
+export function applyCliRuntimeApiKey(
+	authStorage: AuthStorage,
+	apiKey: string | undefined,
+	model: Model<Api> | undefined,
+): void {
+	if (!apiKey || !model) return;
+	authStorage.setRuntimeApiKey(model.provider, apiKey);
 }
 
 async function runInteractiveMode(
@@ -1175,9 +1182,8 @@ export async function runRootCommand(
 			);
 			process.exit(1);
 		}
-		if (sessionOptions.model) {
-			authStorage.setRuntimeApiKey(sessionOptions.model.provider, parsedArgs.apiKey);
-		}
+		sessionOptions.runtimeApiKey = parsedArgs.apiKey;
+		applyCliRuntimeApiKey(authStorage, parsedArgs.apiKey, sessionOptions.model);
 	}
 
 	const createAgentSessionImpl = deps.createAgentSession ?? createAgentSession;
@@ -1249,9 +1255,7 @@ export async function runRootCommand(
 			eventBus,
 			preloadedExtensions: extensionsResult,
 		});
-		if (parsedArgs.apiKey && !sessionOptions.model && session.model) {
-			authStorage.setRuntimeApiKey(session.model.provider, parsedArgs.apiKey);
-		}
+		applyCliRuntimeApiKey(authStorage, parsedArgs.apiKey, session.model);
 
 		if (modelFallbackMessage) {
 			notifs.push({ kind: "warn", message: modelFallbackMessage });

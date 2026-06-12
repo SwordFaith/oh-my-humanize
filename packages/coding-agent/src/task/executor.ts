@@ -203,6 +203,7 @@ export interface ExecutorOptions {
 	 */
 	detached?: boolean;
 	modelOverride?: string | string[];
+	modelOverrideAuthFallback?: boolean;
 	/**
 	 * Active model selector of the parent session, used as an auth-aware fallback
 	 * if the resolved subagent model has no working credentials. See #985.
@@ -1775,7 +1776,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			} = await awaitAbortable(
 				resolveModelOverrideWithAuthFallback(
 					modelPatterns,
-					options.parentActiveModelPattern,
+					options.modelOverrideAuthFallback === false ? undefined : options.parentActiveModelPattern,
 					modelRegistry,
 					settings,
 				),

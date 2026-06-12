@@ -39,6 +39,7 @@ export interface WorkflowRunAttemptSnapshot {
 	familyId: string;
 	freezeId: string;
 	startNodeId: string;
+	startNodeIds?: string[];
 	status: WorkflowAttemptStatus;
 	runtimeBindingSnapshot: RuntimeBindingSnapshot;
 	checkpointId?: string;
@@ -97,6 +98,17 @@ export interface WorkflowChangeRequestRecord {
 	approvalReason?: string;
 	rejectedBy?: string;
 	rejectionReason?: string;
+	applications: WorkflowChangeRequestApplicationRecord[];
+}
+
+export type WorkflowChangeRequestApplicationTarget = "draft" | "freeze";
+
+export interface WorkflowChangeRequestApplicationRecord {
+	target: WorkflowChangeRequestApplicationTarget;
+	actor: string;
+	reason?: string;
+	freezeId?: string;
+	draftId?: string;
 }
 
 export interface StartWorkflowFamilyOptions {
@@ -113,6 +125,7 @@ export interface StartWorkflowAttemptOptions {
 	attemptId: string;
 	freezeId: string;
 	startNodeId: string;
+	startNodeIds?: string[];
 	runtimeBindingSnapshot: RuntimeBindingSnapshot;
 }
 
@@ -170,6 +183,15 @@ export interface RejectWorkflowChangeRequestOptions {
 	reason?: string;
 }
 
+export interface RecordWorkflowChangeRequestAppliedOptions {
+	changeRequestId: string;
+	actor: string;
+	target: WorkflowChangeRequestApplicationTarget;
+	reason?: string;
+	freezeId?: string;
+	draftId?: string;
+}
+
 export interface RequestWorkflowAttemptStopOptions {
 	attemptId: string;
 	deadlineMs: number;
@@ -210,6 +232,7 @@ type WorkflowLifecycleEvent =
 	| WorkflowChangeRequestProposedEvent
 	| WorkflowChangeRequestApprovedEvent
 	| WorkflowChangeRequestRejectedEvent
+	| WorkflowChangeRequestAppliedEvent
 	| WorkflowStopRequestedEvent
 	| WorkflowCheckpointCreatedEvent
 	| WorkflowAttemptCompletedEvent
@@ -233,6 +256,7 @@ interface WorkflowAttemptStartedEvent {
 	attemptId: string;
 	freezeId: string;
 	startNodeId: string;
+	startNodeIds?: string[];
 }
 
 interface WorkflowAttemptRestartedEvent {
@@ -242,6 +266,7 @@ interface WorkflowAttemptRestartedEvent {
 	checkpointId: string;
 	freezeId: string;
 	startNodeId: string;
+	startNodeIds?: string[];
 }
 
 interface WorkflowRuntimeBindingSnapshotCreatedEvent {
@@ -297,6 +322,12 @@ interface WorkflowChangeRequestRejectedEvent {
 	changeRequestId: string;
 	actor: string;
 	reason?: string;
+}
+
+interface WorkflowChangeRequestAppliedEvent {
+	event: "change_request_applied";
+	changeRequestId: string;
+	application: WorkflowChangeRequestApplicationRecord;
 }
 
 interface WorkflowStopRequestedEvent {
@@ -358,15 +389,18 @@ export function startWorkflowAttempt(
 	host: WorkflowLifecycleStoreHost,
 	options: StartWorkflowAttemptOptions,
 ): WorkflowRunAttemptSnapshot {
-	appendLifecycleEvent(host, {
+	assertWorkflowAttemptIdAvailable(host, options.attemptId);
+	const event: WorkflowAttemptStartedEvent = {
 		event: "attempt_started",
 		familyId: options.familyId,
 		attemptId: options.attemptId,
 		freezeId: options.freezeId,
 		startNodeId: options.startNodeId,
-	});
+	};
+	if (options.startNodeIds !== undefined) event.startNodeIds = [...options.startNodeIds];
+	appendLifecycleEvent(host, event);
 	appendRuntimeBindingSnapshot(host, options.attemptId, options.runtimeBindingSnapshot);
-	return {
+	const attempt: WorkflowRunAttemptSnapshot = {
 		id: options.attemptId,
 		familyId: options.familyId,
 		freezeId: options.freezeId,
@@ -375,22 +409,27 @@ export function startWorkflowAttempt(
 		runtimeBindingSnapshot: clone(options.runtimeBindingSnapshot),
 		activations: [],
 	};
+	if (options.startNodeIds !== undefined) attempt.startNodeIds = [...options.startNodeIds];
+	return attempt;
 }
 
 export function restartWorkflowAttempt(
 	host: WorkflowLifecycleStoreHost,
 	options: RestartWorkflowAttemptOptions,
 ): WorkflowRunAttemptSnapshot {
-	appendLifecycleEvent(host, {
+	assertWorkflowAttemptIdAvailable(host, options.attemptId);
+	const event: WorkflowAttemptRestartedEvent = {
 		event: "attempt_restarted_from_checkpoint",
 		familyId: options.familyId,
 		attemptId: options.attemptId,
 		checkpointId: options.checkpointId,
 		freezeId: options.freezeId,
 		startNodeId: options.startNodeId,
-	});
+	};
+	if (options.startNodeIds !== undefined) event.startNodeIds = [...options.startNodeIds];
+	appendLifecycleEvent(host, event);
 	appendRuntimeBindingSnapshot(host, options.attemptId, options.runtimeBindingSnapshot);
-	return {
+	const attempt: WorkflowRunAttemptSnapshot = {
 		id: options.attemptId,
 		familyId: options.familyId,
 		freezeId: options.freezeId,
@@ -400,6 +439,15 @@ export function restartWorkflowAttempt(
 		runtimeBindingSnapshot: clone(options.runtimeBindingSnapshot),
 		activations: [],
 	};
+	if (options.startNodeIds !== undefined) attempt.startNodeIds = [...options.startNodeIds];
+	return attempt;
+}
+
+function assertWorkflowAttemptIdAvailable(host: WorkflowLifecycleStoreHost, attemptId: string): void {
+	const existing = reconstructWorkflowFamilies(host.getBranch()).some(family =>
+		family.attempts.some(attempt => attempt.id === attemptId),
+	);
+	if (existing) throw new Error(`Workflow attempt already exists: ${attemptId}`);
 }
 
 export function appendWorkflowAttemptActivationStarted(
@@ -466,6 +514,7 @@ export function proposeWorkflowChangeRequest(
 		reason: options.reason,
 		operations: clone(options.operations),
 		frontierMapping: clone(options.frontierMapping ?? {}),
+		applications: [],
 	};
 	if (options.attemptId !== undefined) request.attemptId = options.attemptId;
 	if (options.checkpointId !== undefined) request.checkpointId = options.checkpointId;
@@ -497,6 +546,25 @@ export function rejectWorkflowChangeRequest(
 	};
 	if (options.reason !== undefined) event.reason = options.reason;
 	appendLifecycleEvent(host, event);
+}
+
+export function recordWorkflowChangeRequestApplied(
+	host: WorkflowLifecycleStoreHost,
+	options: RecordWorkflowChangeRequestAppliedOptions,
+): WorkflowChangeRequestApplicationRecord {
+	const application: WorkflowChangeRequestApplicationRecord = {
+		target: options.target,
+		actor: options.actor,
+	};
+	if (options.reason !== undefined) application.reason = options.reason;
+	if (options.freezeId !== undefined) application.freezeId = options.freezeId;
+	if (options.draftId !== undefined) application.draftId = options.draftId;
+	appendLifecycleEvent(host, {
+		event: "change_request_applied",
+		changeRequestId: options.changeRequestId,
+		application: clone(application),
+	});
+	return application;
 }
 
 export function requestWorkflowAttemptStop(
@@ -581,7 +649,9 @@ export function reconstructWorkflowFamilies(entries: WorkflowLifecycleBranchEntr
 		if (event.event === "flow_frozen") {
 			const familyId = event.familyId ?? currentFamilyId;
 			const family = familyId ? families.get(familyId) : undefined;
-			if (family) family.freezes.push(clone(event.freeze));
+			if (family && !family.freezes.some(freeze => freeze.id === event.freeze.id)) {
+				family.freezes.push(clone(event.freeze));
+			}
 			continue;
 		}
 		if (event.event === "attempt_started" || event.event === "attempt_restarted_from_checkpoint") {
@@ -596,6 +666,7 @@ export function reconstructWorkflowFamilies(entries: WorkflowLifecycleBranchEntr
 				runtimeBindingSnapshot: emptyRuntimeBindingSnapshot(event.attemptId),
 				activations: [],
 			};
+			if (event.startNodeIds !== undefined) attempt.startNodeIds = [...event.startNodeIds];
 			if (event.event === "attempt_restarted_from_checkpoint") {
 				attempt.checkpointId = event.checkpointId;
 			}
@@ -673,6 +744,12 @@ export function reconstructWorkflowFamilies(entries: WorkflowLifecycleBranchEntr
 				request.rejectedBy = event.actor;
 				if (event.reason !== undefined) request.rejectionReason = event.reason;
 			}
+			continue;
+		}
+		if (event.event === "change_request_applied") {
+			const request = changeRequests.get(event.changeRequestId);
+			if (!request) continue;
+			request.applications.push(clone(event.application));
 			continue;
 		}
 		if (event.event === "stop_requested") {

@@ -225,6 +225,15 @@
 - Fixed image generation ignoring `/login`-stored OpenRouter and Google API keys: provider selection and requests now resolve through the model registry (with env-var fallback) instead of environment variables only.
 - Fixed detached (`task` async spawn) progress snapshots repainting commit-eligible rows after the block leaves the live transcript region; later partial snapshots are dropped while the final completion snapshot still applies.
 - Fixed five consumers treating Zod tool-parameter schemas as plain JSON Schema objects, leaking schema-instance internals (`def`, `shape`, methods stringified as `undefined`) or silently reading nothing: `/dump` and the RPC `get_state` `dumpTools` payload now convert parameters through the same wire-schema conversion providers receive; context-usage token estimation no longer stringifies the Zod `def` tree (overcounting tool schema tokens in the status line); tool-discovery search indexing recovers `schemaKeys` from Zod tools (previously empty, weakening BM25 ranking); and the extension inspector panel renders Zod tool arguments instead of "(no arguments)".
+- Added a TUI workflow graph renderer for `/workflow` lifecycle events, including focused node status, mutable lineage controls, parallel lane layout, and explicit loopback routes.
+
+### Fixed
+
+- Fixed workflow change-request parsing so added script nodes can declare `script.language: sh`, matching `.omhflow` shell-script support.
+- Fixed workflow shell script nodes so structured JSON output lines are not truncated by the bash display column cap before workflow state parsing.
+- Fixed workflow lifecycle starts to reject duplicate run and attempt ids before launching nodes, and made foreground starts plus checkpoint restarts register active stop controllers so `/workflow stop` prevents downstream scheduling consistently across foreground, background, and restarted attempts.
+- Fixed retrying parallel workflow joins so a later loop iteration cannot join one freshly completed branch with another branch's stale completion from a previous iteration.
+- Fixed workflow graph edge annotations to avoid composed arrow glyphs whose line and head can render on different visual baselines in terminal fonts.
 
 ## [15.11.3] - 2026-06-11
 

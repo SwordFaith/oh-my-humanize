@@ -98,7 +98,6 @@ describe("HTML export workflow inspection support", () => {
 					state: { score: 0.92 },
 					graphRevisions: [{ id: "graph-0", nodeCount: 1, edgeCount: 0 }],
 					pendingGraphPatchProposals: [],
-					appliedGraphPatches: [],
 					activations: [
 						{
 							id: "activation-1",
@@ -215,6 +214,7 @@ describe("HTML export workflow inspection support", () => {
 		expect(template).toContain("renderWorkflowOverview");
 		expect(template).toContain("workflow-overview");
 		expect(template).toContain("workflowInspections");
+		expect(template).toContain("workflowLifecycleInspections");
 	});
 });
 

@@ -15,7 +15,7 @@ renderMermaid:
 
 - Tool name: `render_mermaid`
 - Input: Mermaid source in the required `mermaid` field
-- Output: rendered ASCII/Unicode text, not SVG or PNG
+- Output: rendered Unicode/ASCII text, not SVG or PNG
 - Storage: when artifact storage is available, the full render is also saved as an `artifact://...`
 
 There are no model-specific or environment-variable prerequisites. Once enabled, any model that can call built-in tools can use it.
@@ -43,7 +43,7 @@ Available `config` fields:
 
 ## Current limitations
 
-`RenderMermaid` uses the `beautiful-mermaid` ASCII renderer. It works best for flowcharts and small diagrams.
+`RenderMermaid` uses the `beautiful-mermaid` terminal renderer. It works best for flowcharts and small diagrams.
 
 Complex sequence diagrams, especially with `alt` / `else` blocks, can become very wide in a terminal. That is current renderer behavior, not a provider or model configuration problem.
 

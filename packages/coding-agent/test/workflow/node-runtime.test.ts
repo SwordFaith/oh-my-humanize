@@ -122,6 +122,23 @@ describe("workflow node runtime adapters", () => {
 		]);
 	});
 
+	it("passes abort signals to runtime host adapters when provided", async () => {
+		const definition = parseWorkflowDefinition(scriptHumanWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes[0]!;
+		const controller = new AbortController();
+		let signal: AbortSignal | undefined;
+		const host: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => {
+				signal = input.signal;
+				return { summary: "script finished" };
+			},
+		};
+
+		await executeWorkflowNode(node, activation("summarize"), host, { signal: controller.signal });
+
+		expect(signal).toBe(controller.signal);
+	});
+
 	it("dispatches review nodes and maps valid verdicts into state patches", async () => {
 		const definition = parseWorkflowDefinition(reviewWorkflow, { sourcePath: "workflow.yml" });
 		const node = definition.nodes[0]!;

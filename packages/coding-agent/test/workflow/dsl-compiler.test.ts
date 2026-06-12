@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { freezeWorkflowArtifact } from "../../src/workflow/freeze";
+import type { WorkflowNodeRuntimeHost } from "../../src/workflow/node-runtime";
 import { loadWorkflowArtifact } from "../../src/workflow/package-loader";
+import { runWorkflow } from "../../src/workflow/runner";
 
 const tempDirs: string[] = [];
 const workflowTestTempRoot = path.resolve(import.meta.dir, "../../../..", "temp", "workflow-tests");
@@ -44,9 +46,13 @@ modules:
       - node:
           id: integrate
           type: script
+          script:
+            inline: |
+              return { summary: "integrated" };
       - node:
           id: review
           type: review
+          prompt: Review the integrated feature.
           gates:
             - finish
 sequence:
@@ -54,12 +60,21 @@ sequence:
       - node:
           id: tryTiling
           type: script
+          script:
+            inline: |
+              return { summary: "tried tiling" };
       - node:
           id: tryFusion
           type: script
+          script:
+            inline: |
+              return { summary: "tried fusion" };
     join:
       id: evaluate
       type: script
+      script:
+        inline: |
+          return { summary: "evaluated candidates" };
   - use: integrateFeature
 \`\`\`
 `,
@@ -128,6 +143,262 @@ edges: []
 			".omhflow must contain exactly one fenced workflow block",
 		);
 	});
+
+	it("compiles workflow templates and carries static contracts into the freeze", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "templated", "prompts"), { recursive: true });
+		await Bun.write(path.join(dir, "templated", "prompts", "brief.md"), "Optimize the hot path.\n");
+		const flowPath = path.join(dir, "templated.omhflow");
+		await Bun.write(
+			flowPath,
+			flowSource(`
+stateSchema:
+  version: 1
+  shape:
+    decision: object
+resources:
+  - path: prompts/brief.md
+    kind: prompt
+capabilities:
+  tools:
+    - eval
+  agents:
+    - task
+migrations:
+  - from: search
+    to: integrate
+    frontierMapping:
+      evaluate: integrate
+sequence:
+  - template:
+      kind: parallel_search
+      branches:
+        - id: tryTiling
+          type: script
+          script:
+            inline: |
+              return { summary: "tried tiling" };
+        - id: tryFusion
+          type: script
+          script:
+            inline: |
+              return { summary: "tried fusion" };
+      join:
+        id: evaluate
+        type: script
+        script:
+          inline: |
+            return { summary: "evaluated candidates" };
+  - template:
+      kind: retry_until
+      body:
+        id: integrate
+        type: script
+        script:
+          inline: |
+            return { summary: "integrated" };
+      review:
+        id: integrationReview
+        type: review
+        prompt: Review integration progress.
+        gates:
+          - retry
+          - finish
+      retryWhen: state.verdict == "retry"
+  - template:
+      kind: review_gate
+      id: strongReview
+      agent: task
+      prompt: Perform the strong review.
+      gates:
+        - finish
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+		const freeze = await freezeWorkflowArtifact(artifact);
+
+		expect(artifact.definition.nodes.map(node => node.id)).toEqual([
+			"tryTiling",
+			"tryFusion",
+			"evaluate",
+			"integrate",
+			"integrationReview",
+			"strongReview",
+		]);
+		expect(artifact.definition.edges.map(edge => [edge.from, edge.to, edge.condition?.source])).toEqual([
+			["tryTiling", "evaluate", undefined],
+			["tryFusion", "evaluate", undefined],
+			["evaluate", "integrate", undefined],
+			["integrate", "integrationReview", undefined],
+			["integrationReview", "integrate", 'state.verdict == "retry"'],
+			["integrationReview", "strongReview", '!(state.verdict == "retry")'],
+		]);
+		expect(artifact.definition.resources).toEqual([{ path: "prompts/brief.md", kind: "prompt" }]);
+		expect(artifact.definition.capabilities).toEqual({ tools: ["eval"], agents: ["task"] });
+		expect(artifact.definition.migrations).toEqual([
+			{ from: "search", to: "integrate", frontierMapping: { evaluate: "integrate" } },
+		]);
+		expect(artifact.definition.stateSchema).toEqual({ version: 1, shape: { decision: "object" } });
+		expect(freeze.resourceSnapshots.map(snapshot => snapshot.path)).toEqual(["prompts/brief.md"]);
+		expect(freeze.staticCheckReport.checks.map(check => check.name)).toContain("contracts");
+	});
+
+	it("does not continue past retry_until until the retry condition is false", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "retry-flow"), { recursive: true });
+		const flowPath = path.join(dir, "retry-flow.omhflow");
+		await Bun.write(
+			flowPath,
+			flowSource(`
+sequence:
+  - template:
+      kind: retry_until
+      body:
+        id: integrate
+        type: script
+        script:
+          inline: |
+            return { summary: "integrated" };
+      review:
+        id: integrationReview
+        type: review
+        prompt: Review integration progress.
+        gates:
+          - retry
+          - finish
+      retryWhen: state.verdict == "retry"
+  - node:
+      id: downstream
+      type: script
+      script:
+        inline: |
+          return { summary: "downstream" };
+`),
+		);
+		const artifact = await loadWorkflowArtifact(flowPath);
+		const calls: string[] = [];
+		let reviewCount = 0;
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => {
+				calls.push(input.node.id);
+				return { summary: input.node.id };
+			},
+			runReviewNode: async input => {
+				calls.push(input.node.id);
+				reviewCount += 1;
+				return {
+					summary: `review ${reviewCount}`,
+					verdict: reviewCount === 1 ? "retry" : "finish",
+				};
+			},
+		};
+
+		await runWorkflow({
+			host: createRunHost(),
+			definition: artifact.definition,
+			runId: "retry-flow-run",
+			startNodeId: "integrate",
+			runtimeHost,
+		});
+
+		expect(calls).toEqual(["integrate", "integrationReview", "integrate", "integrationReview", "downstream"]);
+	});
+
+	it("retries every parallel body entry before continuing past a review gate", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "parallel-retry-flow"), { recursive: true });
+		const flowPath = path.join(dir, "parallel-retry-flow.omhflow");
+		await Bun.write(
+			flowPath,
+			flowSource(`
+sequence:
+  - template:
+      kind: retry_until
+      body:
+        parallel:
+          - node:
+              id: auditApiDocs
+              type: script
+              script:
+                inline: |
+                  return { summary: "api docs" };
+          - node:
+              id: auditTutorials
+              type: script
+              script:
+                inline: |
+                  return { summary: "tutorials" };
+        join:
+          id: consolidateAudit
+          type: script
+          script:
+            inline: |
+              return { summary: "consolidated" };
+      review:
+        id: consistencyReview
+        type: review
+        prompt: Review documentation audit consistency.
+        gates:
+          - continue
+          - finish
+      retryWhen: state.verdict == "continue"
+  - node:
+      id: patchDocs
+      type: script
+      script:
+        inline: |
+          return { summary: "patched docs" };
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+		const calls: string[] = [];
+		let reviewCount = 0;
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => {
+				calls.push(input.node.id);
+				return { summary: input.node.id };
+			},
+			runReviewNode: async input => {
+				calls.push(input.node.id);
+				reviewCount += 1;
+				return {
+					summary: `review ${reviewCount}`,
+					verdict: reviewCount === 1 ? "continue" : "finish",
+				};
+			},
+		};
+
+		await runWorkflow({
+			host: createRunHost(),
+			definition: artifact.definition,
+			runId: "parallel-retry-flow-run",
+			startNodeId: "auditApiDocs",
+			startNodeIds: ["auditApiDocs", "auditTutorials"],
+			runtimeHost,
+		});
+
+		expect(artifact.definition.edges.map(edge => [edge.from, edge.to, edge.condition?.source])).toEqual([
+			["auditApiDocs", "consolidateAudit", undefined],
+			["auditTutorials", "consolidateAudit", undefined],
+			["consolidateAudit", "consistencyReview", undefined],
+			["consistencyReview", "auditApiDocs", 'state.verdict == "continue"'],
+			["consistencyReview", "auditTutorials", 'state.verdict == "continue"'],
+			["consistencyReview", "patchDocs", '!(state.verdict == "continue")'],
+		]);
+		expect(calls).toEqual([
+			"auditApiDocs",
+			"auditTutorials",
+			"consolidateAudit",
+			"consistencyReview",
+			"auditApiDocs",
+			"auditTutorials",
+			"consolidateAudit",
+			"consistencyReview",
+			"patchDocs",
+		]);
+	});
 });
 
 function flowSource(workflowBlock: string): string {
@@ -147,4 +418,15 @@ changePolicy:
 ${workflowBlock.trim()}
 \`\`\`
 `;
+}
+
+function createRunHost() {
+	const entries: Array<{ type: "custom"; customType: string; data?: unknown }> = [];
+	return {
+		appendCustomEntry: (customType: string, data?: unknown) => {
+			entries.push({ type: "custom", customType, data });
+			return `entry-${entries.length}`;
+		},
+		getBranch: () => entries,
+	};
 }

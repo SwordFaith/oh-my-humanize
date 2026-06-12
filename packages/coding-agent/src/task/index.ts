@@ -331,6 +331,10 @@ function spawnParamsFor(params: TaskParams, item: TaskItem): TaskParams {
 	} else if ("isolated" in params) {
 		spawn.isolated = params.isolated;
 	}
+	if (params.modelOverride !== undefined) spawn.modelOverride = params.modelOverride;
+	if (params.modelOverrideAuthFallback !== undefined) {
+		spawn.modelOverrideAuthFallback = params.modelOverrideAuthFallback;
+	}
 	return spawn;
 }
 
@@ -1154,6 +1158,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				id: agentId,
 				taskDepth,
 				modelOverride,
+				modelOverrideAuthFallback: params.modelOverrideAuthFallback,
 				parentActiveModelPattern,
 				thinkingLevel: thinkingLevelOverride,
 				outputSchema: effectiveOutputSchema,
