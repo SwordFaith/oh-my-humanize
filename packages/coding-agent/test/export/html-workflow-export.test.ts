@@ -3,8 +3,7 @@ import { Buffer } from "node:buffer";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { exportSessionToHtml } from "../../src/export/html";
-import { TEMPLATE } from "../../src/export/html/template.generated";
+import { exportSessionToHtml, getTemplate } from "../../src/export/html";
 import { SessionManager } from "../../src/session/session-manager";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
 import type { FlowFreeze } from "../../src/workflow/freeze";
@@ -212,9 +211,10 @@ describe("HTML export workflow inspection support", () => {
 	});
 
 	it("includes a workflow overview renderer in the generated template", () => {
-		expect(TEMPLATE).toContain("renderWorkflowOverview");
-		expect(TEMPLATE).toContain("workflow-overview");
-		expect(TEMPLATE).toContain("workflowInspections");
+		const template = getTemplate();
+		expect(template).toContain("renderWorkflowOverview");
+		expect(template).toContain("workflow-overview");
+		expect(template).toContain("workflowInspections");
 	});
 });
 
