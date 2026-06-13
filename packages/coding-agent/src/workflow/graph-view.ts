@@ -60,6 +60,7 @@ export interface WorkflowGraphSubflowView {
 export interface WorkflowGraphActiveAgentView {
 	activationId: string;
 	focusAgentId: string;
+	generation?: number;
 	nodeId: string;
 	label: string;
 	role: string;
@@ -853,19 +854,23 @@ function formatActiveWorkflowAgents(
 	if (!currentAttempt) return [];
 	if (options.liveAttemptIds !== undefined && !options.liveAttemptIds.has(currentAttempt.id)) return [];
 	const nodesById = new Map(nodes.map(node => [node.id, node]));
+	const generationByNodeId = new Map<string, number>();
 	const activeAgents: WorkflowGraphActiveAgentView[] = [];
 	for (const activation of currentAttempt.activations) {
+		const generation = (generationByNodeId.get(activation.nodeId) ?? 0) + 1;
+		generationByNodeId.set(activation.nodeId, generation);
 		if (activation.status !== "running") continue;
 		const node = nodesById.get(activation.nodeId);
 		if (!node || !workflowNodeIsAgentLike(node)) continue;
 		const view: WorkflowGraphActiveAgentView = {
 			activationId: activation.id,
-			focusAgentId: workflowAgentTaskIdForNode(node.id),
+			focusAgentId: formatWorkflowAgentFocusTarget(node.id, generation),
 			nodeId: node.id,
 			label: formatWorkflowNodeDisplayName(node.id),
 			role: formatWorkflowNodeRole(node),
 			status: "running",
 		};
+		if (generation > 1) view.generation = generation;
 		if (activation.output?.summary !== undefined) view.summary = activation.output.summary;
 		activeAgents.push(view);
 	}
@@ -877,8 +882,18 @@ function workflowNodeIsAgentLike(node: WorkflowNode): boolean {
 }
 
 function formatActiveWorkflowAgent(agent: WorkflowGraphActiveAgentView): string {
+	const generation = formatActiveWorkflowAgentGeneration(agent);
 	const summary = agent.summary === undefined ? "" : ` - ${formatSingleLineWorkflowDetail(agent.summary)}`;
-	return `${agent.role} · ${agent.label} live${summary} (focus ${agent.focusAgentId})`;
+	return `${agent.role} · ${agent.label} live${generation}${summary} (focus ${agent.focusAgentId})`;
+}
+
+export function formatActiveWorkflowAgentGeneration(agent: WorkflowGraphActiveAgentView): string {
+	return agent.generation === undefined ? "" : ` · round ${agent.generation}`;
+}
+
+function formatWorkflowAgentFocusTarget(nodeId: string, generation: number): string {
+	const base = workflowAgentTaskIdForNode(nodeId);
+	return generation === 1 ? base : `${base}-${generation}`;
 }
 
 function formatCheckpointFrontier(checkpoint: WorkflowGraphCheckpointView): string {

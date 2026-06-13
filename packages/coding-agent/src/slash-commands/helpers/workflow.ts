@@ -21,7 +21,12 @@ import type {
 	WorkflowTemplatePromptSource,
 } from "../../workflow/definition";
 import { type FlowFreeze, freezeWorkflowArtifact } from "../../workflow/freeze";
-import { buildWorkflowGraphView, renderWorkflowGraphText, type WorkflowGraphView } from "../../workflow/graph-view";
+import {
+	buildWorkflowGraphView,
+	formatActiveWorkflowAgentGeneration,
+	renderWorkflowGraphText,
+	type WorkflowGraphView,
+} from "../../workflow/graph-view";
 import {
 	buildWorkflowInspection,
 	buildWorkflowLifecycleInspection,
@@ -2642,7 +2647,8 @@ function formatWorkflowManager(
 		lines.push("- Agent Hub watches live transcripts; interrupt/restart if an intervened node does not settle.");
 		for (const agent of graphView.activeAgents) {
 			const summary = formatWorkflowDetail(agent.summary);
-			lines.push(`- ${agent.role} · ${agent.label} live${summary} (focus ${agent.focusAgentId})`);
+			const generation = formatActiveWorkflowAgentGeneration(agent);
+			lines.push(`- ${agent.role} · ${agent.label} live${generation}${summary} (focus ${agent.focusAgentId})`);
 		}
 		const focusTargets = graphView.activeAgents.map(agent => agent.focusAgentId).join(" or ");
 		lines.push(`- focus live agent: open Agent Hub with double-left or the observe key, then focus ${focusTargets}`);

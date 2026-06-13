@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed looped workflow active-agent hints so repeated running nodes show the current round and Agent Hub focus target instead of reusing the first-round node id.
 - Fixed `/workflow stop` and synchronous `/workflow restart` to flush lifecycle events at checkpoint/restart boundaries before returning.
 - Fixed workflow-only sessions so stop/checkpoint boundaries force lifecycle entries onto disk, making printed `omp --resume <id>` commands resolvable even before any user/assistant transcript messages exist.
 - Fixed workflow manager and graph active-agent hints so persisted running activations from a resumed session are not presented as live Agent Hub targets when no local workflow runner is attached.

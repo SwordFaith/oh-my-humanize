@@ -2,6 +2,7 @@ import { type Component, type NativeScrollbackLiveRegion, replaceTabs, truncateT
 import { renderOutputBlock } from "../../tui/output-block";
 import type { State } from "../../tui/types";
 import {
+	formatActiveWorkflowAgentGeneration,
 	formatWorkflowSubflow,
 	renderWorkflowGraphDiagram,
 	type WorkflowGraphNodeStatus,
@@ -141,8 +142,9 @@ function workflowGraphActiveAgentLines(view: WorkflowGraphView, width: number): 
 	for (const agent of view.activeAgents ?? []) {
 		const summary =
 			agent.summary === undefined ? "" : ` - ${sanitizeWorkflowAgentSummary(agent.summary, Math.floor(width / 2))}`;
+		const generation = theme.fg("muted", formatActiveWorkflowAgentGeneration(agent));
 		const focus = theme.fg("muted", ` focus ${agent.focusAgentId}`);
-		const line = `${theme.fg("accent", "●")} ${agent.role}${theme.fg("muted", ` · ${agent.label}`)} ${theme.fg("accent", "live")}${summary}${focus}`;
+		const line = `${theme.fg("accent", "●")} ${agent.role}${theme.fg("muted", ` · ${agent.label}`)} ${theme.fg("accent", "live")}${generation}${summary}${focus}`;
 		lines.push(truncateToWidth(replaceTabs(line), Math.max(20, width)));
 	}
 	return lines;

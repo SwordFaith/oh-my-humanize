@@ -193,6 +193,76 @@ describe("workflow graph view rendering", () => {
 		expect(text).not.toContain("Focus agent: /agents");
 	});
 
+	it("labels repeated loop activations with the current round and focus target", () => {
+		const freeze = createFreeze({
+			name: "loop-observability",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "buildRound", type: "agent", agent: "task" },
+				{ id: "reviewRound", type: "review", agent: "task" },
+			],
+			edges: [
+				{ from: "buildRound", to: "reviewRound" },
+				{ from: "reviewRound", to: "buildRound", condition: { source: 'state.review.verdict == "continue"' } },
+			],
+		});
+		const view = buildWorkflowGraphView({
+			id: "loop-observability-family",
+			freezes: [freeze],
+			attempts: [
+				{
+					id: "attempt-1",
+					familyId: "loop-observability-family",
+					freezeId: freeze.id,
+					startNodeId: "buildRound",
+					status: "running",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-build-1",
+							nodeId: "buildRound",
+							parentActivationIds: [],
+							status: "completed",
+						},
+						{
+							id: "activation-review-1",
+							nodeId: "reviewRound",
+							parentActivationIds: ["activation-build-1"],
+							status: "completed",
+							output: { summary: "CONTINUE" },
+						},
+						{
+							id: "activation-build-2",
+							nodeId: "buildRound",
+							parentActivationIds: ["activation-review-1"],
+							status: "running",
+						},
+					],
+				},
+			],
+			checkpoints: [],
+			changeRequests: [],
+		});
+
+		expect(view.activeAgents).toEqual([
+			{
+				activationId: "activation-build-2",
+				focusAgentId: "buildRound-2",
+				generation: 2,
+				nodeId: "buildRound",
+				label: "Build round",
+				role: "Builder",
+				status: "running",
+			},
+		]);
+
+		const text = renderWorkflowGraphText(view);
+
+		expect(text).toContain("- Builder · Build round live · round 2 (focus buildRound-2)");
+		expect(text).toContain("Open Agent Hub: double-left or observe key; focus buildRound-2");
+	});
+
 	it("keeps default graph labels human-facing instead of showing runtime adapter names", () => {
 		const view = createView({
 			name: "human-facing-labels",
@@ -680,6 +750,7 @@ describe("workflow graph view rendering", () => {
 				label: "Build round",
 				role: "Builder",
 				status: "running",
+				generation: 3,
 				summary: "editing implementation",
 			},
 		];
@@ -689,7 +760,7 @@ describe("workflow graph view rendering", () => {
 
 		expect(text).toContain("active agents");
 		expect(text).toContain("Agent Hub watches live transcripts; Interrupt stops a stuck workflow node.");
-		expect(text).toContain("● Builder · Build round live - editing implementation");
+		expect(text).toContain("● Builder · Build round live · round 3 - editing implementation");
 		expect(text).toContain("focus buildRound");
 		expect(text).not.toContain("activation-build");
 	});
