@@ -16,10 +16,11 @@
 ### Fixed
 
 - Fixed the workflow graph monitor so `/workflow` graph panels are marked as live TUI regions from their first row, keeping dynamic workflow status out of native scrollback while timestamped monitor snapshots remain in the workflow cache.
+- Fixed workflow checkpoint restarts and graph rendering so reused activation ids from older attempts do not shadow the checkpoint attempt's completed activations.
 - Fixed workflow state schemas so `.omhflow` `stateSchema.version: 1` declarations are enforced during activation output validation, state patch application, run-history reconstruction, and freeze static-check reporting instead of being preserved as passive metadata.
 - Fixed draft-based workflow refreezes so restart frontier mappings are preserved automatically when a generated draft is frozen, and repeated manual freeze applications are idempotent.
 - Fixed workflow lifecycle APIs so change applications and changed-freeze restarts cannot bypass proposal approval, stop/checkpoint requirements, supervisor policy, or applied freeze records outside the slash-command path.
-- Fixed workflow review nodes so standard reviewer JSON can still drive custom Humanize-style gates: declared gates are extracted from reviewer summaries before pass/fail mapping, and `fallbackVerdict` is used when correctness output cannot map to any declared gate.
+- Fixed workflow review nodes so standard reviewer JSON and generic task-yield review text can still drive custom Humanize-style gates: declared gates are extracted from reviewer summaries and yielded text fields before pass/fail mapping, and `fallbackVerdict` is used when correctness output cannot map to any declared gate.
 - Fixed imported `.omhflow` subflow exit conditions to namespace `outputs.<nodeId>` references before connecting the subflow to caller steps.
 - Fixed workflow graph patch proposals to reject edge conditions that reference missing output nodes or undeclared review verdict gates before a mutable flow can be refrozen.
 - Added `skills.enableAgentsUser` and `skills.enableAgentsProject` settings (default on) so the canonical OMP-native `~/.agent[s]/skills` and project-walkup `.agent[s]/skills` are configurable independently from the third-party Claude/Codex/Pi toggles.

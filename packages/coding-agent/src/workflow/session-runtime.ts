@@ -383,6 +383,10 @@ function parseReviewObject(
 		};
 	}
 
+	if (fallbackVerdict !== undefined) {
+		return { verdict: fallbackVerdict, summary: reviewFallbackSummaryFromObject(parsed, fallbackSummary) };
+	}
+
 	throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a string verdict`);
 }
 
@@ -415,10 +419,12 @@ function reviewVerdictFromObjectText(
 	gates: string[] | undefined,
 ): { verdict: string; summary: string } | undefined {
 	if (!gates?.length) return undefined;
-	const summary = reviewSummaryFromObject(parsed, fallbackSummary);
-	const finalLine = lastNonEmptyLine(summary);
-	if (finalLine === undefined || !gates.includes(finalLine)) return undefined;
-	return { verdict: finalLine, summary };
+	for (const summary of reviewTextCandidatesFromObject(parsed, fallbackSummary)) {
+		const finalLine = lastNonEmptyLine(summary);
+		if (finalLine === undefined || !gates.includes(finalLine)) continue;
+		return { verdict: finalLine, summary };
+	}
+	return undefined;
 }
 
 function reviewSummaryFromObject(parsed: Record<string, unknown>, fallbackSummary: string): string {
@@ -426,6 +432,25 @@ function reviewSummaryFromObject(parsed: Record<string, unknown>, fallbackSummar
 		if (typeof source === "string" && source.length > 0) return source;
 	}
 	return fallbackSummary;
+}
+
+function reviewFallbackSummaryFromObject(parsed: Record<string, unknown>, fallbackSummary: string): string {
+	return reviewTextCandidatesFromObject(parsed, fallbackSummary)[0] ?? fallbackSummary;
+}
+
+function reviewTextCandidatesFromObject(parsed: Record<string, unknown>, fallbackSummary: string): string[] {
+	const candidates: string[] = [];
+	for (const source of [parsed.summary, parsed.explanation]) {
+		if (typeof source === "string" && source.length > 0) candidates.push(source);
+	}
+	for (const source of Object.values(parsed)) {
+		if (typeof source !== "string" || source.length === 0 || candidates.includes(source)) continue;
+		candidates.push(source);
+	}
+	if (fallbackSummary.length > 0 && !candidates.includes(fallbackSummary)) {
+		candidates.push(fallbackSummary);
+	}
+	return candidates;
 }
 
 function verdictFromReviewerCorrectness(

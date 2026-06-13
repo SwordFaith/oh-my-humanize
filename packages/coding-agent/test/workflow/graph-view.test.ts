@@ -250,6 +250,121 @@ describe("workflow graph view rendering", () => {
 		expect(renderWorkflowGraphText(view)).toContain("Checkpoint frontier: checkpoint-1 weakReview to strongReview");
 	});
 
+	it("renders checkpointed activations from the checkpoint attempt when ids were reused", () => {
+		const freeze = createFreeze({
+			name: "checkpoint-duplicate-ids",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "prepare", type: "script" },
+				{ id: "implement", type: "agent" },
+				{ id: "review", type: "review" },
+			],
+			edges: [
+				{ from: "prepare", to: "implement" },
+				{ from: "implement", to: "review" },
+			],
+		});
+
+		const view = buildWorkflowGraphView({
+			id: "checkpoint-duplicate-ids-family",
+			freezes: [freeze],
+			attempts: [
+				{
+					id: "attempt-old",
+					familyId: "checkpoint-duplicate-ids-family",
+					freezeId: freeze.id,
+					startNodeId: "prepare",
+					status: "completed",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-1",
+							nodeId: "prepare",
+							parentActivationIds: [],
+							status: "completed",
+							output: { summary: "old prepare" },
+						},
+						{
+							id: "activation-2",
+							nodeId: "implement",
+							parentActivationIds: ["activation-1"],
+							status: "completed",
+							output: { summary: "old implementation summary" },
+						},
+					],
+				},
+				{
+					id: "attempt-checkpoint",
+					familyId: "checkpoint-duplicate-ids-family",
+					freezeId: freeze.id,
+					startNodeId: "prepare",
+					status: "stopped",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-1",
+							nodeId: "prepare",
+							parentActivationIds: [],
+							status: "completed",
+							output: { summary: "checkpoint prepare" },
+						},
+						{
+							id: "activation-2",
+							nodeId: "implement",
+							parentActivationIds: ["activation-1"],
+							status: "completed",
+							output: { summary: "checkpoint implementation summary" },
+						},
+					],
+				},
+				{
+					id: "attempt-restart",
+					familyId: "checkpoint-duplicate-ids-family",
+					freezeId: freeze.id,
+					startNodeId: "review",
+					status: "failed",
+					checkpointId: "checkpoint-1",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-3",
+							nodeId: "review",
+							parentActivationIds: ["activation-1", "activation-2"],
+							status: "failed",
+							error: "review failed",
+						},
+					],
+				},
+			],
+			checkpoints: [
+				{
+					id: "checkpoint-1",
+					familyId: "checkpoint-duplicate-ids-family",
+					attemptId: "attempt-checkpoint",
+					completedActivationIds: ["activation-1", "activation-2"],
+					abortedActivationIds: [],
+					frontierNodeIds: ["review"],
+					state: {},
+					sourceMapping: { review: "review" },
+				},
+			],
+			changeRequests: [],
+		});
+
+		const implement = view.nodes.find(node => node.id === "implement");
+		const review = view.nodes.find(node => node.id === "review");
+
+		expect(implement).toMatchObject({
+			status: "checkpointed",
+			summary: "checkpoint implementation summary",
+		});
+		expect(review).toMatchObject({
+			status: "failed",
+			error: "review failed",
+		});
+	});
+
 	it("re-renders live TUI graph components from provider updates at the same width", async () => {
 		const theme = await getThemeByName("dark");
 		if (!theme) throw new Error("dark theme fixture is required");

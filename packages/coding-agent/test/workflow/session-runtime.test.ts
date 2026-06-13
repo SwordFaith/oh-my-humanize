@@ -534,6 +534,37 @@ describe("session workflow runtime host", () => {
 		});
 	});
 
+	it("extracts declared Humanize gates from generic review text yielded by task agents", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "review");
+		if (!node) throw new Error("expected review node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: JSON.stringify({
+					review:
+						"README contract exists and covers purpose, acceptance criteria, and Humanize mapping.\nCONTINUE",
+				}),
+			}),
+		});
+
+		const output = await host.runReviewNode?.({
+			node,
+			activation: activation(node.id),
+			agent: node.agent,
+			prompt: node.prompt,
+			model: node.model,
+			gates: ["CONTINUE", "COMPLETE", "STOP"],
+			fallbackVerdict: "CONTINUE",
+		});
+
+		expect(output).toEqual({
+			summary: "README contract exists and covers purpose, acceptance criteria, and Humanize mapping.\nCONTINUE",
+			verdict: "CONTINUE",
+		});
+	});
+
 	it("maps unmatched Humanize-style review text to an explicit fallback verdict", async () => {
 		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
 		const node = definition.nodes.find(candidate => candidate.id === "review");

@@ -585,7 +585,7 @@ function buildWorkflowGraphNodeStatuses(
 	const checkpointedActivationIds = new Set(currentCheckpoint?.completedActivationIds ?? []);
 	if (currentCheckpoint) {
 		for (const activationId of currentCheckpoint.completedActivationIds) {
-			const activation = findWorkflowLifecycleActivation(family, activationId);
+			const activation = findWorkflowCheckpointActivation(family, currentCheckpoint, activationId);
 			if (!activation) continue;
 			const nodeId = currentCheckpoint.sourceMapping[activation.nodeId] ?? activation.nodeId;
 			statuses.set(nodeId, {
@@ -606,9 +606,13 @@ function buildWorkflowGraphNodeStatuses(
 		}
 	}
 	if (currentAttempt) {
+		const currentAttemptOwnsCheckpoint = currentAttempt.id === currentCheckpoint?.attemptId;
 		for (const activation of currentAttempt.activations) {
 			statuses.set(activation.nodeId, {
-				status: checkpointedActivationIds.has(activation.id) ? "checkpointed" : activation.status,
+				status:
+					currentAttemptOwnsCheckpoint && checkpointedActivationIds.has(activation.id)
+						? "checkpointed"
+						: activation.status,
 				summary: activation.output?.summary,
 				error: activation.error,
 				reason: activation.reason,
@@ -687,15 +691,14 @@ function findWorkflowCheckpointForAttempt(
 	return family.checkpoints.filter(checkpoint => checkpoint.attemptId === attempt.id).at(-1);
 }
 
-function findWorkflowLifecycleActivation(
+function findWorkflowCheckpointActivation(
 	family: WorkflowRunFamilySnapshot,
+	checkpoint: WorkflowCheckpointSnapshot,
 	activationId: string,
 ): WorkflowAttemptActivationRecord | undefined {
-	for (const attempt of family.attempts) {
-		const activation = attempt.activations.find(candidate => candidate.id === activationId);
-		if (activation) return activation;
-	}
-	return undefined;
+	return family.attempts
+		.find(attempt => attempt.id === checkpoint.attemptId)
+		?.activations.find(candidate => candidate.id === activationId);
 }
 
 function isFocusedWorkflowGraphNode(status: WorkflowGraphNodeStatus): boolean {

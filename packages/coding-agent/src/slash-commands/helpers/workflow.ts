@@ -1711,21 +1711,21 @@ function checkpointCompletedActivations(
 	family: WorkflowRunFamilySnapshot,
 	checkpoint: WorkflowCheckpointSnapshot,
 ): WorkflowActivation[] {
+	const attempt = family.attempts.find(candidate => candidate.id === checkpoint.attemptId);
+	if (attempt === undefined) return [];
 	const completedIds = new Set(checkpoint.completedActivationIds);
 	const activations: WorkflowActivation[] = [];
-	for (const attempt of family.attempts) {
-		for (const activation of attempt.activations) {
-			if (!completedIds.has(activation.id) || activation.status !== "completed") continue;
-			const completed: WorkflowActivation = {
-				id: activation.id,
-				nodeId: activation.nodeId,
-				graphRevisionId: `${attempt.id}:checkpoint`,
-				status: "completed",
-				parentActivationIds: activation.parentActivationIds,
-			};
-			if (activation.output !== undefined) completed.output = activation.output;
-			activations.push(completed);
-		}
+	for (const activation of attempt.activations) {
+		if (!completedIds.has(activation.id) || activation.status !== "completed") continue;
+		const completed: WorkflowActivation = {
+			id: activation.id,
+			nodeId: activation.nodeId,
+			graphRevisionId: `${attempt.id}:checkpoint`,
+			status: "completed",
+			parentActivationIds: activation.parentActivationIds,
+		};
+		if (activation.output !== undefined) completed.output = activation.output;
+		activations.push(completed);
 	}
 	return activations;
 }

@@ -2037,6 +2037,141 @@ edges: []
 		]);
 	});
 
+	it("restarts from the checkpoint attempt when activation ids were reused by older attempts", async () => {
+		const entries: CapturedEntry[] = [];
+		const definition = parseWorkflowDefinition(
+			`
+name: checkpoint-parent-output-restart
+version: 1
+nodes:
+  prepare:
+    type: script
+  implement:
+    type: script
+  review:
+    type: review
+    agent: task
+    reads:
+      - /summary
+    prompt:
+      output:
+        node: implement
+        path: /summary
+        activation: parent
+    gates:
+      - COMPLETE
+edges:
+  - from: prepare
+    to: implement
+  - from: implement
+    to: review
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+		const freeze = createFreeze("flowfreeze:checkpoint-parent-output", definition);
+		const host = createHostFromEntries(entries);
+		startWorkflowFamily(host, { familyId: "family-checkpoint-parent-output" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-checkpoint-parent-output" });
+		startWorkflowAttempt(host, {
+			familyId: "family-checkpoint-parent-output",
+			attemptId: "attempt-old",
+			freezeId: freeze.id,
+			startNodeId: "prepare",
+			runtimeBindingSnapshot: binding("binding-old"),
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-old",
+			activationId: "activation-1",
+			nodeId: "prepare",
+			parentActivationIds: [],
+		});
+		appendWorkflowAttemptActivationCompleted(host, {
+			attemptId: "attempt-old",
+			activationId: "activation-1",
+			output: { summary: "old prepare" },
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-old",
+			activationId: "activation-2",
+			nodeId: "implement",
+			parentActivationIds: ["activation-1"],
+		});
+		appendWorkflowAttemptActivationCompleted(host, {
+			attemptId: "attempt-old",
+			activationId: "activation-2",
+			output: { summary: "old implementation summary" },
+		});
+		completeWorkflowAttempt(host, { attemptId: "attempt-old", summary: "old attempt completed" });
+		startWorkflowAttempt(host, {
+			familyId: "family-checkpoint-parent-output",
+			attemptId: "attempt-checkpoint",
+			freezeId: freeze.id,
+			startNodeId: "prepare",
+			runtimeBindingSnapshot: binding("binding-checkpoint"),
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-checkpoint",
+			activationId: "activation-1",
+			nodeId: "prepare",
+			parentActivationIds: [],
+		});
+		appendWorkflowAttemptActivationCompleted(host, {
+			attemptId: "attempt-checkpoint",
+			activationId: "activation-1",
+			output: { summary: "checkpoint prepare" },
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-checkpoint",
+			activationId: "activation-2",
+			nodeId: "implement",
+			parentActivationIds: ["activation-1"],
+		});
+		appendWorkflowAttemptActivationCompleted(host, {
+			attemptId: "attempt-checkpoint",
+			activationId: "activation-2",
+			output: { summary: "checkpoint implementation summary" },
+		});
+		requestWorkflowAttemptStop(host, {
+			attemptId: "attempt-checkpoint",
+			deadlineMs: 1,
+			reason: "checkpoint for review restart",
+		});
+		createWorkflowCheckpoint(host, {
+			checkpointId: "checkpoint-parent-output",
+			familyId: "family-checkpoint-parent-output",
+			attemptId: "attempt-checkpoint",
+			completedActivationIds: ["activation-1", "activation-2"],
+			abortedActivationIds: [],
+			frontierNodeIds: ["review"],
+			state: {},
+			sourceMapping: { review: "review" },
+		});
+		const receivedPrompts: string[] = [];
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runReviewNode: async input => {
+				receivedPrompts.push(input.prompt ?? "");
+				return { summary: "complete", verdict: "COMPLETE" };
+			},
+		};
+		const { output, runtime } = createRuntime(entries, runtimeHost);
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				"/workflow restart checkpoint-parent-output --freeze-id flowfreeze:checkpoint-parent-output",
+				runtime,
+			),
+		).toEqual({ consumed: true });
+
+		const family = reconstructWorkflowFamilies(entries)[0];
+		expect(receivedPrompts).toEqual(["checkpoint implementation summary"]);
+		expect(output.some(entry => entry.includes("Workflow restart attempt: attempt-3"))).toBeTrue();
+		expect(family?.attempts.at(-1)).toMatchObject({
+			id: "attempt-3",
+			status: "completed",
+			checkpointId: "checkpoint-parent-output",
+		});
+	});
+
 	it("stops a live background workflow attempt before scheduling downstream nodes", async () => {
 		const dir = await createTempDir();
 		await fs.mkdir(path.join(dir, "live-stop"), { recursive: true });
