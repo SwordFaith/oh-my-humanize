@@ -65,6 +65,7 @@ function createContext(): {
 		ensureLoadingAnimation: Spy;
 		handleBtwCommand: Spy;
 		handleBtwEscape: Spy;
+		handleHotkeysCommand: Spy;
 		handleOmfgEscape: Spy;
 		hasActiveBtw: Spy;
 		hasActiveOmfg: Spy;
@@ -73,6 +74,7 @@ function createContext(): {
 		requestRender: Spy;
 		resetDisplay: Spy;
 		shutdown: Spy;
+		showStatus: Spy;
 		startPendingSubmission: StartPendingSubmissionSpy;
 		updatePendingMessagesDisplay: Spy;
 	};
@@ -94,10 +96,12 @@ function createContext(): {
 	const handleBtwCommand = vi.fn(async () => {});
 	const handleBtwEscape = vi.fn(() => true);
 	const hasActiveBtw = vi.fn(() => false);
+	const handleHotkeysCommand = vi.fn();
 	const handleOmfgEscape = vi.fn(() => true);
 	const hasActiveOmfg = vi.fn(() => false);
 	const updatePendingMessagesDisplay = vi.fn();
 	const prompt = vi.fn();
+	const showStatus = vi.fn();
 	const startPendingSubmission = vi.fn(
 		(input: {
 			text: string;
@@ -192,6 +196,8 @@ function createContext(): {
 		showDebugSelector: vi.fn(),
 		toggleTodoExpansion: vi.fn(),
 		showAgentHub: vi.fn(),
+		showStatus,
+		handleHotkeysCommand,
 		unfocusSession: vi.fn(async () => {}),
 		focusParentSession: vi.fn(async () => {}),
 		handleSTTToggle: vi.fn(),
@@ -224,6 +230,7 @@ function createContext(): {
 			flushSync: ctx.sessionManager.flushSync as Spy,
 			handleBtwCommand,
 			handleBtwEscape,
+			handleHotkeysCommand,
 			hasActiveBtw,
 			handleOmfgEscape,
 			hasActiveOmfg,
@@ -232,6 +239,7 @@ function createContext(): {
 			requestRender,
 			resetDisplay,
 			shutdown: ctx.shutdown as Spy,
+			showStatus,
 			startPendingSubmission,
 			updatePendingMessagesDisplay,
 		},
@@ -443,6 +451,28 @@ describe("InputController escape behavior", () => {
 
 		expect(ctx.unfocusSession).toHaveBeenCalledTimes(1);
 		expect(ctx.focusParentSession).not.toHaveBeenCalled();
+	});
+
+	it("runs main-session slash commands while viewing a focused subagent", async () => {
+		const { ctx, editor, spies } = createContext();
+		const focusedPrompt = vi.fn(async () => {});
+		Object.defineProperty(ctx, "focusedAgentId", { value: "Worker", configurable: true });
+		Object.defineProperty(ctx, "viewSession", {
+			value: {
+				isStreaming: false,
+				queuedMessageCount: 0,
+				prompt: focusedPrompt,
+			},
+			configurable: true,
+		});
+		const controller = new InputController(ctx);
+
+		controller.setupEditorSubmitHandler();
+		await editor.onSubmit?.("/hotkeys");
+
+		expect(spies.handleHotkeysCommand).toHaveBeenCalledTimes(1);
+		expect(focusedPrompt).not.toHaveBeenCalled();
+		expect(editor.getText()).toBe("");
 	});
 	it("opens the tree selector and clears the display on default double-Esc", () => {
 		const { ctx, editor, spies } = createContext();

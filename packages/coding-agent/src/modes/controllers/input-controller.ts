@@ -691,8 +691,26 @@ export class InputController {
 			}
 			return;
 		}
-		if (text.startsWith("/") || text.startsWith("!") || text.startsWith("$")) {
-			this.ctx.showStatus("Commands run in the main session — press ←← to return first");
+		if (text.startsWith("/")) {
+			const slashResult = await executeBuiltinSlashCommand(text, {
+				ctx: this.ctx,
+			});
+			if (slashResult === true) {
+				this.ctx.updatePendingMessagesDisplay();
+				this.ctx.ui.requestRender();
+				return;
+			}
+			if (typeof slashResult === "string") {
+				this.ctx.editor.setText(slashResult);
+				this.ctx.showStatus("Command prepared a main-session prompt — press ←← to return before sending");
+				this.ctx.ui.requestRender();
+				return;
+			}
+			this.ctx.showStatus("Unknown main-session command while viewing an agent — press ←← to return first");
+			return; // editor text not cleared: Editor does not auto-clear on submit
+		}
+		if (text.startsWith("!") || text.startsWith("$")) {
+			this.ctx.showStatus("Local commands run in the main session — press ←← to return first");
 			return; // editor text not cleared: Editor does not auto-clear on submit
 		}
 		const images = this.ctx.pendingImages.length > 0 ? [...this.ctx.pendingImages] : undefined;

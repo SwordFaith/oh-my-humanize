@@ -45,7 +45,7 @@ export class SessionFocusController {
 		this.#attachedSession = session;
 		this.#registryUnsubscribe ??= this.registry.onChange(e => this.#onRegistryEvent(e));
 		await this.#attach(session);
-		this.ctx.showStatus(`Viewing agent ${id} — Esc returns to main, ←← hops to parent`);
+		this.ctx.showStatus(`Viewing agent ${id} — type to steer, / controls main, Esc returns, ←← hops parent`);
 	}
 
 	/** Focus the focused agent's parent agent, falling back to the main session. No-op when unfocused. */
