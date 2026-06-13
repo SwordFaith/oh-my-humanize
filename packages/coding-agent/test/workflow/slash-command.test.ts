@@ -943,6 +943,70 @@ edges: []
 		});
 	});
 
+	it("treats declared bash capability as available when the workflow runtime can execute shell script nodes", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "bash-capability-binding"), { recursive: true });
+		await Bun.write(
+			path.join(dir, "bash-capability-binding.omhflow"),
+			`---
+name: bash-capability-binding-demo
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 50
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Bash Capability Binding Demo
+
+\`\`\`yaml workflow
+capabilities:
+  tools:
+    - bash
+nodes:
+  build:
+    type: script
+    script:
+      language: sh
+      inline: |
+        printf '{"summary":"built"}\\n'
+edges: []
+\`\`\`
+`,
+		);
+		const entries: CapturedEntry[] = [];
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => ({ summary: `ran ${input.node.id}` }),
+		};
+		const { output, runtime } = createRuntime(entries, runtimeHost, {
+			availableModels: [openAiModel],
+			activeModel: openAiModel,
+		});
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				`/workflow start ${path.join(dir, "bash-capability-binding.omhflow")} --run-id run-bash-binding --family-id family-bash-binding --max-activations 0`,
+				runtime,
+			),
+		).toEqual({ consumed: true });
+
+		const families = reconstructWorkflowFamilies(entries);
+		expect(families[0]?.attempts[0]?.runtimeBindingSnapshot).toMatchObject({
+			id: "run-bash-binding:binding-1",
+			tools: ["bash"],
+			unavailable: [],
+		});
+
+		expect(await executeAcpBuiltinSlashCommand("/workflow manager --family-id family-bash-binding", runtime)).toEqual(
+			{
+				consumed: true,
+			},
+		);
+		expect(output.at(-1)).toContain("tools=bash");
+		expect(output.at(-1)).not.toContain("unavailable: tool:bash");
+	});
+
 	it("records plugin, extension, and skill capability binding diagnostics", async () => {
 		const dir = await createTempDir();
 		await fs.mkdir(path.join(dir, "portable-capabilities"), { recursive: true });

@@ -1491,7 +1491,7 @@ async function createRuntimeBindingSnapshot(
 		skills: (definition.capabilities?.skills?.length ?? 0) > 0,
 	});
 	for (const node of definition.nodes) {
-		if (node.type === "script") tools.add("eval");
+		if (node.type === "script") tools.add(runtimeBindingScriptToolForNode(node));
 		if (node.type === "human") tools.add("ask");
 		if (node.type === "agent" || node.type === "review") tools.add("task");
 		if (node.agent) agents.add(node.agent);
@@ -1628,7 +1628,9 @@ function recordRuntimeBindingTool(
 	unavailable: string[],
 ): void {
 	if (node.type === "script" && runtimeHost.runScriptNode === undefined) {
-		pushUnique(unavailable, "tool:eval: workflow runtime host does not support script nodes");
+		const tool = runtimeBindingScriptToolForNode(node);
+		const kind = tool === "bash" ? "shell script" : "script";
+		pushUnique(unavailable, `tool:${tool}: workflow runtime host does not support ${kind} nodes`);
 	}
 	if (node.type === "human" && runtimeHost.runHumanNode === undefined) {
 		pushUnique(unavailable, "tool:ask: workflow runtime host does not support human nodes");
@@ -1646,9 +1648,10 @@ function recordRuntimeBindingDeclaredTool(
 	runtimeHost: WorkflowNodeRuntimeHost,
 	unavailable: string[],
 ): void {
-	if (tool === "eval") {
+	if (tool === "eval" || tool === "bash") {
 		if (runtimeHost.runScriptNode === undefined) {
-			pushUnique(unavailable, "tool:eval: workflow runtime host does not support script nodes");
+			const kind = tool === "bash" ? "shell script" : "script";
+			pushUnique(unavailable, `tool:${tool}: workflow runtime host does not support ${kind} nodes`);
 		}
 		return;
 	}
@@ -1665,6 +1668,10 @@ function recordRuntimeBindingDeclaredTool(
 		return;
 	}
 	pushUnique(unavailable, `tool:${tool}: workflow runtime host cannot resolve declared tool`);
+}
+
+function runtimeBindingScriptToolForNode(node: WorkflowNode): "bash" | "eval" {
+	return node.script?.language === "sh" ? "bash" : "eval";
 }
 
 function recordRuntimeBindingDeclaredAgent(
