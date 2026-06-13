@@ -270,6 +270,7 @@ function compileArtifactDefinitionInput(
 				resources: compiled.resources,
 				capabilities: compiled.capabilities,
 				migrations: compiled.migrations,
+				subflows: compiled.subflows,
 			},
 			entryNodeIds: compiled.entries,
 			exits: compiled.exits,
@@ -391,6 +392,8 @@ function parseImportPath(rawImport: unknown, label: string, flowPath: string): s
 function artifactToExternalModule(artifact: WorkflowArtifact, importingResourceDir: string): WorkflowDslExternalModule {
 	const resourcePrefix = toPortablePath(path.relative(importingResourceDir, artifact.resourceDir));
 	const module: WorkflowDslExternalModule = {
+		name: artifact.definition.name,
+		version: artifact.definition.version,
 		nodes: Object.fromEntries(artifact.definition.nodes.map(node => [node.id, workflowNodeToRawRecord(node)])),
 		edges: artifact.definition.edges.map(edge => {
 			const rawEdge: Record<string, unknown> = { from: edge.from, to: edge.to };
@@ -419,8 +422,11 @@ function workflowResourceDirForFlowPath(flowPath: string): string {
 
 function workflowCapabilitiesToRawRecord(capabilities: WorkflowCapabilityContract): Record<string, unknown> {
 	const raw: Record<string, unknown> = {};
-	if (capabilities.agents !== undefined) raw.agents = [...capabilities.agents];
 	if (capabilities.tools !== undefined) raw.tools = [...capabilities.tools];
+	if (capabilities.agents !== undefined) raw.agents = [...capabilities.agents];
+	if (capabilities.plugins !== undefined) raw.plugins = [...capabilities.plugins];
+	if (capabilities.extensions !== undefined) raw.extensions = [...capabilities.extensions];
+	if (capabilities.skills !== undefined) raw.skills = [...capabilities.skills];
 	return raw;
 }
 

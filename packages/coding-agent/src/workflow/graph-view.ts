@@ -23,6 +23,7 @@ export interface WorkflowGraphView {
 	latestFreezeId?: string;
 	currentAttempt?: WorkflowGraphAttemptView;
 	changes: WorkflowGraphChangeCounts;
+	subflows?: WorkflowGraphSubflowView[];
 	nodes: WorkflowGraphNodeView[];
 	edges: WorkflowGraphEdgeView[];
 	checkpoint?: WorkflowGraphCheckpointView;
@@ -41,6 +42,17 @@ export interface WorkflowGraphChangeCounts {
 	approved: number;
 	proposed: number;
 	rejected: number;
+}
+
+export interface WorkflowGraphSubflowView {
+	alias: string;
+	name: string;
+	version: number;
+	namespace: string;
+	nodeCount: number;
+	entryNodeIds: string[];
+	exitNodeIds: string[];
+	resourcePrefix?: string;
 }
 
 export interface WorkflowGraphNodeView {
@@ -123,6 +135,18 @@ export function buildWorkflowGraphView(family: WorkflowRunFamilySnapshot): Workf
 		lineage: family.changeRequests.map(formatLineage),
 		actions: formatWorkflowGraphActions(family, currentAttempt, currentCheckpoint),
 	};
+	if (currentFreeze?.definition.subflows !== undefined) {
+		view.subflows = currentFreeze.definition.subflows.map(subflow => ({
+			alias: subflow.alias,
+			name: subflow.name,
+			version: subflow.version,
+			namespace: subflow.namespace,
+			nodeCount: subflow.nodeIds.length,
+			entryNodeIds: [...subflow.entryNodeIds],
+			exitNodeIds: [...subflow.exitNodeIds],
+			...(subflow.resourcePrefix !== undefined ? { resourcePrefix: subflow.resourcePrefix } : {}),
+		}));
+	}
 	if (family.objective !== undefined) view.objective = family.objective;
 	if (latestFreeze?.id !== undefined) view.latestFreezeId = latestFreeze.id;
 	if (currentAttempt !== undefined) {
@@ -159,6 +183,10 @@ export function renderWorkflowGraphText(view: WorkflowGraphView, options: Workfl
 	lines.push(
 		`Changes: ${view.changes.approved} approved, ${view.changes.proposed} proposed, ${view.changes.rejected} rejected`,
 	);
+	if (view.subflows !== undefined && view.subflows.length > 0) {
+		lines.push("Subflows:");
+		for (const subflow of view.subflows) lines.push(`- ${formatWorkflowSubflow(subflow)}`);
+	}
 	lines.push("Diagram:");
 	lines.push(...renderWorkflowGraphDiagram(view, options));
 	if (view.checkpoint !== undefined) {
@@ -716,6 +744,11 @@ function formatWorkflowNodeKind(node: WorkflowNode): string {
 function formatCheckpointFrontier(checkpoint: WorkflowGraphCheckpointView): string {
 	if (checkpoint.frontier.length === 0) return "none";
 	return checkpoint.frontier.map(entry => `${entry.from} to ${entry.to}`).join(", ");
+}
+
+export function formatWorkflowSubflow(subflow: WorkflowGraphSubflowView): string {
+	const resources = subflow.resourcePrefix === undefined ? "" : ` resources=${subflow.resourcePrefix}`;
+	return `${subflow.alias} -> ${subflow.name}@${subflow.version} namespace=${subflow.namespace} nodes=${subflow.nodeCount} entries=${subflow.entryNodeIds.join(",")} exits=${subflow.exitNodeIds.join(",")}${resources}`;
 }
 
 function formatLineage(request: WorkflowChangeRequestRecord): WorkflowGraphLineageView {

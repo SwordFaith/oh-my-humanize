@@ -11,6 +11,7 @@
 - Added persistent TUI workflow monitoring: `/workflow` graph updates now replace a live monitor panel and write timestamped JSON snapshots under the agent workflow cache as observed graph state changes for later audit.
 - Added full workflow lifecycle audit details to HTML session exports, including restart lineage, activation timelines, checkpoint frontier mappings, change operations, and binding diagnostics.
 - Added workflow capability declarations for plugins, extensions, and skills, with runtime binding diagnostics that reuse the existing oh-my-pi plugin, marketplace, extension, and skill infrastructure.
+- Added imported `.omhflow` subflow metadata to workflow graph views, so composed flows such as KDA calling Humanize show the reusable subflow boundary explicitly in the TUI and text graph output.
 - Added file-backed workflow prompt templates with explicit inline/state/output/human bindings, so `.omhflow` nodes can compose review state, prior outputs, and static prompt assets without building prompts in code.
 - Added immutable workflow lifecycle support for `.omhflow` artifacts: strict freeze manifests, runtime binding snapshots, family/attempt/checkpoint/change-request events, lifecycle-aware `/workflow` commands, and HTML export audit data.
 - Added structured `.omhflow` DSL modules, sequences, parallel joins, workflow manager listing/rejection commands, deterministic workflow benchmark coverage, and stricter checkpoint frontier validation for lifecycle restarts.
@@ -23,6 +24,8 @@
 - Fixed workflow state schemas so `.omhflow` `stateSchema.version: 1` declarations are enforced during activation output validation, state patch application, run-history reconstruction, and freeze static-check reporting instead of being preserved as passive metadata.
 - Fixed draft-based workflow refreezes so restart frontier mappings are preserved automatically when a generated draft is frozen, and repeated manual freeze applications are idempotent.
 - Fixed workflow lifecycle APIs so change applications and changed-freeze restarts cannot bypass proposal approval, stop/checkpoint requirements, supervisor policy, or applied freeze records outside the slash-command path.
+- Fixed workflow lifecycle guards so family-scoped change applications cannot land while an attempt is still active, and checkpoints require a stopped attempt with no running activations.
+- Fixed imported `.omhflow` capability propagation and HTML workflow exports so plugin, extension, and skill bindings are preserved across subflows and shown in binding diagnostics.
 - Fixed workflow review nodes so standard reviewer JSON and generic task-yield review text can still drive custom Humanize-style gates: declared gates are extracted from reviewer summaries and yielded text fields before pass/fail mapping, and `fallbackVerdict` is used when correctness output cannot map to any declared gate.
 - Fixed imported `.omhflow` subflow exit conditions to namespace `outputs.<nodeId>` references before connecting the subflow to caller steps.
 - Fixed workflow graph patch proposals to reject edge conditions that reference missing output nodes or undeclared review verdict gates before a mutable flow can be refrozen.

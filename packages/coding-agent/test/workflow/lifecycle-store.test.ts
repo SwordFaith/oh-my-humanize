@@ -366,6 +366,128 @@ describe("workflow lifecycle event store", () => {
 		expect(host.entries).toHaveLength(entryCount);
 	});
 
+	it("rejects family-scoped change application while an attempt is active", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build", "review"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		startWorkflowAttempt(host, {
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-1",
+			familyId: "family-1",
+			actor: "human:sihao",
+			origin: "human",
+			reason: "upgrade review",
+			operations: [{ op: "add_node", node: { id: "strongReview", type: "review" } }],
+			frontierMapping: { review: "strongReview" },
+		});
+		approveWorkflowChangeRequest(host, { changeRequestId: "change-1", actor: "human:sihao" });
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			recordWorkflowChangeRequestApplied(host, {
+				changeRequestId: "change-1",
+				actor: "human:sihao",
+				target: "draft",
+				draftId: "draft-1",
+			}),
+		).toThrow("Workflow change request cannot be applied while family has an active attempt: attempt-1 (running)");
+		expect(host.entries).toHaveLength(entryCount);
+	});
+
+	it("rejects stop requests for missing or inactive attempts", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		startWorkflowAttempt(host, {
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		completeWorkflowAttempt(host, { attemptId: "attempt-1" });
+		const entryCount = host.entries.length;
+
+		expect(() => requestWorkflowAttemptStop(host, { attemptId: "missing", deadlineMs: 10 })).toThrow(
+			"Workflow attempt not found for stop: missing",
+		);
+		expect(() => requestWorkflowAttemptStop(host, { attemptId: "attempt-1", deadlineMs: 10 })).toThrow(
+			"Workflow attempt cannot be stopped: attempt-1 (completed)",
+		);
+		expect(host.entries).toHaveLength(entryCount);
+	});
+
+	it("rejects checkpoints until the attempt is stopped and all activations have settled", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build", "review"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		startWorkflowAttempt(host, {
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-1",
+			activationId: "activation-1",
+			nodeId: "build",
+			parentActivationIds: [],
+		});
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			createWorkflowCheckpoint(host, {
+				checkpointId: "checkpoint-1",
+				familyId: "family-1",
+				attemptId: "missing",
+				completedActivationIds: [],
+				abortedActivationIds: [],
+				frontierNodeIds: ["review"],
+				state: {},
+				sourceMapping: { review: "review" },
+			}),
+		).toThrow("Workflow checkpoint attempt not found: missing");
+		expect(() =>
+			createWorkflowCheckpoint(host, {
+				checkpointId: "checkpoint-1",
+				familyId: "family-1",
+				attemptId: "attempt-1",
+				completedActivationIds: [],
+				abortedActivationIds: [],
+				frontierNodeIds: ["review"],
+				state: {},
+				sourceMapping: { review: "review" },
+			}),
+		).toThrow("Workflow checkpoint requires a stop request before saving attempt: attempt-1 (running)");
+		requestWorkflowAttemptStop(host, { attemptId: "attempt-1", deadlineMs: 10 });
+		expect(() =>
+			createWorkflowCheckpoint(host, {
+				checkpointId: "checkpoint-1",
+				familyId: "family-1",
+				attemptId: "attempt-1",
+				completedActivationIds: [],
+				abortedActivationIds: [],
+				frontierNodeIds: ["review"],
+				state: {},
+				sourceMapping: { review: "review" },
+			}),
+		).toThrow("Workflow checkpoint attempt still has running activations: activation-1");
+		expect(host.entries).toHaveLength(entryCount + 1);
+	});
+
 	it("rejects restart into a changed freeze until the approved change has been applied", () => {
 		const host = createHost();
 		const freezeA = createFreeze("flowfreeze:a", ["build", "review"]);

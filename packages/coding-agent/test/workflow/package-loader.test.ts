@@ -81,6 +81,12 @@ capabilities:
     - task
   tools:
     - eval
+  plugins:
+    - humanize-loop
+  extensions:
+    - humanize-extension
+  skills:
+    - grill-me
 resources:
   - path: prompts/review.md
     kind: prompt
@@ -177,8 +183,23 @@ sequence:
 		]);
 		expect(artifact.definition.capabilities).toEqual({
 			agents: ["profiler", "task"],
+			extensions: ["humanize-extension"],
+			plugins: ["humanize-loop"],
+			skills: ["grill-me"],
 			tools: ["eval"],
 		});
+		expect(artifact.definition.subflows).toEqual([
+			{
+				alias: "humanize",
+				name: "humanize-rlcr",
+				version: 1,
+				namespace: "humanize__",
+				nodeIds: ["humanize__planQuiz", "humanize__implementRound", "humanize__codexSummaryReview"],
+				entryNodeIds: ["humanize__planQuiz"],
+				exitNodeIds: ["humanize__codexSummaryReview"],
+				resourcePrefix: "humanize",
+			},
+		]);
 		expect(artifact.definition.resources).toEqual([{ path: "humanize/prompts/review.md", kind: "prompt" }]);
 		expect(artifact.definition.nodes.find(node => node.id === "humanize__codexSummaryReview")?.promptSource).toEqual({
 			kind: "file",

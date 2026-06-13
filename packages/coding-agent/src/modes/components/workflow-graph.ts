@@ -2,6 +2,7 @@ import type { Component, NativeScrollbackLiveRegion } from "@oh-my-pi/pi-tui";
 import { renderOutputBlock } from "../../tui/output-block";
 import type { State } from "../../tui/types";
 import {
+	formatWorkflowSubflow,
 	renderWorkflowGraphDiagram,
 	type WorkflowGraphNodeStatus,
 	type WorkflowGraphView,
@@ -62,6 +63,9 @@ export class WorkflowGraphComponent implements Component, NativeScrollbackLiveRe
 				contentPaddingLeft: 2,
 				sections: [
 					{ lines: workflowGraphHeaderLines(view) },
+					...(view.subflows !== undefined && view.subflows.length > 0
+						? [{ label: "subflows", lines: workflowGraphSubflowLines(view) }]
+						: []),
 					{
 						label: "diagram",
 						lines: colorWorkflowDiagram(renderWorkflowGraphDiagram(view, { width: safeWidth - 8 })),
@@ -123,6 +127,10 @@ function workflowGraphControlLines(view: WorkflowGraphView): string[] {
 	lines.push(theme.fg("muted", "actions"));
 	for (const action of view.actions) lines.push(`  ${action}`);
 	return lines;
+}
+
+function workflowGraphSubflowLines(view: WorkflowGraphView): string[] {
+	return (view.subflows ?? []).map(subflow => formatWorkflowSubflow(subflow));
 }
 
 function colorWorkflowDiagram(lines: string[]): string[] {

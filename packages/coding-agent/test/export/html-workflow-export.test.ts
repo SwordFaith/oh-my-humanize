@@ -244,6 +244,9 @@ describe("HTML export workflow inspection support", () => {
 					resolvedModels: { verifier: "openai/gpt-4o" },
 					tools: ["eval"],
 					agents: [],
+					plugins: ["humanize-loop"],
+					extensions: ["humanize-extension"],
+					skills: ["grill-me"],
 					unavailable: [],
 					warnings: ["used deterministic verifier"],
 				},
@@ -301,7 +304,12 @@ describe("HTML export workflow inspection support", () => {
 							status: "completed",
 							checkpointId: "checkpoint-export",
 							summary: "exported lifecycle",
-							runtimeBindingSnapshot: { id: "binding-export-v2" },
+							runtimeBindingSnapshot: {
+								id: "binding-export-v2",
+								plugins: ["humanize-loop"],
+								extensions: ["humanize-extension"],
+								skills: ["grill-me"],
+							},
 						},
 					],
 					checkpoints: [
@@ -378,6 +386,9 @@ describe("HTML export workflow inspection support", () => {
 		expect(template).toContain("Change operations");
 		expect(template).toContain("Restart lineage");
 		expect(template).toContain("Binding diagnostics");
+		expect(template).toContain("Plugins");
+		expect(template).toContain("Extensions");
+		expect(template).toContain("Skills");
 	});
 });
 

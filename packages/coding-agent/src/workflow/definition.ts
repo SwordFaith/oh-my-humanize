@@ -51,6 +51,17 @@ export interface WorkflowMigrationRule {
 	frontierMapping: Record<string, string>;
 }
 
+export interface WorkflowSubflowDeclaration {
+	alias: string;
+	name: string;
+	version: number;
+	namespace: string;
+	nodeIds: string[];
+	entryNodeIds: string[];
+	exitNodeIds: string[];
+	resourcePrefix?: string;
+}
+
 export type WorkflowPromptActivationSelector = "parent" | "latest-completed";
 
 export type WorkflowPromptSource =
@@ -132,6 +143,7 @@ export interface WorkflowDefinition {
 	resources?: WorkflowResourceDeclaration[];
 	capabilities?: WorkflowCapabilityContract;
 	migrations?: WorkflowMigrationRule[];
+	subflows?: WorkflowSubflowDeclaration[];
 }
 
 export interface ParseWorkflowDefinitionOptions {
@@ -163,16 +175,19 @@ export function parseWorkflowDefinition(
 	const resources = parseResourceDeclarations(root.resources, "resources", options.sourcePath);
 	const capabilities = parseCapabilityContract(root.capabilities, "capabilities", options.sourcePath);
 	const migrations = parseMigrationRules(root.migrations, "migrations", options.sourcePath);
+	const subflows = parseSubflowDeclarations(root.subflows, "subflows", options.sourcePath);
 	validateEdgeReferences(nodes, edges, options.sourcePath);
 	validateConditionReferences(nodes, edges, options.sourcePath);
 	validateWaitForReferences(nodes, options.sourcePath);
 	validatePromptSourceReferences(nodes, options.sourcePath);
 	validateMigrationTargets(nodes, migrations, options.sourcePath);
+	validateSubflowTargets(nodes, subflows, options.sourcePath);
 	const definition: WorkflowDefinition = { name, version, sourcePath: options.sourcePath, models, nodes, edges };
 	if (stateSchema !== undefined) definition.stateSchema = stateSchema;
 	if (resources !== undefined) definition.resources = resources;
 	if (capabilities !== undefined) definition.capabilities = capabilities;
 	if (migrations !== undefined) definition.migrations = migrations;
+	if (subflows !== undefined) definition.subflows = subflows;
 	return definition;
 }
 
@@ -332,6 +347,32 @@ function parseMigrationRules(value: unknown, path: string, sourcePath?: string):
 	});
 }
 
+function parseSubflowDeclarations(
+	value: unknown,
+	path: string,
+	sourcePath?: string,
+): WorkflowSubflowDeclaration[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value)) {
+		throw new WorkflowDefinitionError(`${path} must be an array of subflow declarations`, sourcePath);
+	}
+	return value.map((entry, index) => {
+		const raw = expectRecord(entry, `${path}.${index}`, sourcePath);
+		const declaration: WorkflowSubflowDeclaration = {
+			alias: expectString(raw.alias, `${path}.${index}.alias`, sourcePath),
+			name: expectString(raw.name, `${path}.${index}.name`, sourcePath),
+			version: expectNumber(raw.version, `${path}.${index}.version`, sourcePath),
+			namespace: expectString(raw.namespace, `${path}.${index}.namespace`, sourcePath),
+			nodeIds: parseRequiredStringList(raw.nodeIds, `${path}.${index}.nodeIds`, sourcePath),
+			entryNodeIds: parseRequiredStringList(raw.entryNodeIds, `${path}.${index}.entryNodeIds`, sourcePath),
+			exitNodeIds: parseRequiredStringList(raw.exitNodeIds, `${path}.${index}.exitNodeIds`, sourcePath),
+		};
+		const resourcePrefix = parseOptionalString(raw.resourcePrefix, `${path}.${index}.resourcePrefix`, sourcePath);
+		if (resourcePrefix !== undefined) declaration.resourcePrefix = resourcePrefix;
+		return declaration;
+	});
+}
+
 function parseConditionSource(source: string, path: string, sourcePath?: string): WorkflowCondition {
 	const trimmed = source.trim();
 	try {
@@ -415,6 +456,33 @@ function validateMigrationTargets(
 			if (!nodeIds.has(target)) {
 				throw new WorkflowDefinitionError(
 					`migration "${migration.from}" -> "${migration.to}" maps frontier "${frontier}" to unknown node "${target}"`,
+					sourcePath,
+				);
+			}
+		}
+	}
+}
+
+function validateSubflowTargets(
+	nodes: WorkflowNode[],
+	subflows: WorkflowSubflowDeclaration[] | undefined,
+	sourcePath?: string,
+): void {
+	if (subflows === undefined) return;
+	const nodeIds = new Set(nodes.map(node => node.id));
+	for (const subflow of subflows) {
+		for (const nodeId of subflow.nodeIds) {
+			if (!nodeIds.has(nodeId)) {
+				throw new WorkflowDefinitionError(
+					`subflow "${subflow.alias}" references unknown node "${nodeId}"`,
+					sourcePath,
+				);
+			}
+		}
+		for (const nodeId of [...subflow.entryNodeIds, ...subflow.exitNodeIds]) {
+			if (!subflow.nodeIds.includes(nodeId)) {
+				throw new WorkflowDefinitionError(
+					`subflow "${subflow.alias}" boundary references node outside subflow "${nodeId}"`,
 					sourcePath,
 				);
 			}
@@ -632,6 +700,12 @@ function parseStringRecord(value: unknown, path: string, sourcePath?: string): R
 		result[key] = expectString(entry, `${path}.${key}`, sourcePath);
 	}
 	return result;
+}
+
+function parseRequiredStringList(value: unknown, path: string, sourcePath?: string): string[] {
+	const list = parseOptionalStringList(value, path, sourcePath);
+	if (list === undefined) throw new WorkflowDefinitionError(`${path} must be an array of strings`, sourcePath);
+	return list;
 }
 
 function parseOptionalStringList(value: unknown, path: string, sourcePath?: string): string[] | undefined {

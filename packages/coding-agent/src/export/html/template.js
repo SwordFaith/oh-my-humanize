@@ -1308,7 +1308,10 @@
           const warnings = formatWorkflowArray(binding.warnings);
           const tools = formatWorkflowArray(binding.tools);
           const agents = formatWorkflowArray(binding.agents);
-          return `${escapeHtml(String(attempt.id || 'attempt'))} binding=${escapeHtml(String(binding.id || 'none'))}<br><span class="workflow-label">Roles</span>${requested}<br><span class="workflow-label">Models</span>${resolved}<br><span class="workflow-label">Tools</span>${tools}<br><span class="workflow-label">Agents</span>${agents}<br><span class="workflow-label">Unavailable</span>${unavailable}<br><span class="workflow-label">Warnings</span>${warnings}`;
+          const plugins = formatWorkflowArray(binding.plugins);
+          const extensions = formatWorkflowArray(binding.extensions);
+          const skills = formatWorkflowArray(binding.skills);
+          return `${escapeHtml(String(attempt.id || 'attempt'))} binding=${escapeHtml(String(binding.id || 'none'))}<br><span class="workflow-label">Roles</span>${requested}<br><span class="workflow-label">Models</span>${resolved}<br><span class="workflow-label">Tools</span>${tools}<br><span class="workflow-label">Agents</span>${agents}<br><span class="workflow-label">Plugins</span>${plugins}<br><span class="workflow-label">Extensions</span>${extensions}<br><span class="workflow-label">Skills</span>${skills}<br><span class="workflow-label">Unavailable</span>${unavailable}<br><span class="workflow-label">Warnings</span>${warnings}`;
         });
         return renderWorkflowDetailSection('Binding diagnostics', renderWorkflowList(rows));
       }

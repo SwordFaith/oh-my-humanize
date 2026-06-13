@@ -118,6 +118,56 @@ describe("workflow graph view rendering", () => {
 		expect(diagram).toContain('review back to build when state.verdict == "retry"');
 	});
 
+	it("renders imported subflows as explicit graph metadata", () => {
+		const view = createView({
+			name: "kda-humanize",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			subflows: [
+				{
+					alias: "humanize",
+					name: "humanize-reference",
+					version: 1,
+					namespace: "humanize__",
+					nodeIds: ["humanize__planQuiz", "humanize__finalize"],
+					entryNodeIds: ["humanize__planQuiz"],
+					exitNodeIds: ["humanize__finalize"],
+					resourcePrefix: "humanize",
+				},
+			],
+			nodes: [
+				{ id: "draftPlan", type: "agent" },
+				{ id: "humanize__planQuiz", type: "human" },
+				{ id: "humanize__finalize", type: "script" },
+				{ id: "promotionDecision", type: "review" },
+			],
+			edges: [
+				{ from: "draftPlan", to: "humanize__planQuiz" },
+				{ from: "humanize__planQuiz", to: "humanize__finalize" },
+				{ from: "humanize__finalize", to: "promotionDecision" },
+			],
+		});
+
+		const text = renderWorkflowGraphText(view);
+
+		expect(view.subflows).toEqual([
+			{
+				alias: "humanize",
+				name: "humanize-reference",
+				version: 1,
+				namespace: "humanize__",
+				nodeCount: 2,
+				entryNodeIds: ["humanize__planQuiz"],
+				exitNodeIds: ["humanize__finalize"],
+				resourcePrefix: "humanize",
+			},
+		]);
+		expect(text).toContain("Subflows:");
+		expect(text).toContain(
+			"- humanize -> humanize-reference@1 namespace=humanize__ nodes=2 entries=humanize__planQuiz exits=humanize__finalize resources=humanize",
+		);
+	});
+
 	it("renders edge annotations without composed arrowheads", () => {
 		const view = createView({
 			name: "conditional-loop",
@@ -444,6 +494,46 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain("frontier weakReview to strongReview");
 		expect(text).not.toContain("frontier weakReview -> strongReview");
 		expect(text).not.toMatch(/[-─]+[>→▶]|[<←◀][-─]+|->|=>|→{1,}|←{1,}/u);
+	});
+
+	it("renders imported subflows in the live TUI graph component", async () => {
+		const theme = await getThemeByName("dark");
+		if (!theme) throw new Error("dark theme fixture is required");
+		setThemeInstance(theme);
+		const view = createView({
+			name: "kda-humanize-tui",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			subflows: [
+				{
+					alias: "humanize",
+					name: "humanize-reference",
+					version: 1,
+					namespace: "humanize__",
+					nodeIds: ["humanize__planQuiz", "humanize__finalize"],
+					entryNodeIds: ["humanize__planQuiz"],
+					exitNodeIds: ["humanize__finalize"],
+					resourcePrefix: "humanize",
+				},
+			],
+			nodes: [
+				{ id: "draftPlan", type: "agent" },
+				{ id: "humanize__planQuiz", type: "human" },
+				{ id: "humanize__finalize", type: "script" },
+			],
+			edges: [
+				{ from: "draftPlan", to: "humanize__planQuiz" },
+				{ from: "humanize__planQuiz", to: "humanize__finalize" },
+			],
+		});
+		const component = new WorkflowGraphComponent(view, { refreshMs: 0 });
+
+		const text = stripAnsi(component.render(120).join("\n"));
+
+		expect(text).toContain("subflows");
+		expect(text).toContain("humanize -> humanize-reference@1");
+		expect(text).toContain("nodes=2");
+		expect(text).toContain("resources=humanize");
 	});
 
 	it("writes timestamped workflow monitor snapshots under the agent cache", async () => {

@@ -8,6 +8,7 @@ export interface WorkflowDslCompileResult {
 	resources?: unknown;
 	capabilities?: unknown;
 	migrations?: unknown;
+	subflows?: unknown;
 	checkpointPolicy?: unknown;
 	changePolicy?: unknown;
 	changeRequests?: unknown;
@@ -19,6 +20,8 @@ export interface WorkflowDslCompileExit {
 }
 
 export interface WorkflowDslExternalModule {
+	name?: string;
+	version?: number;
 	nodes: Record<string, Record<string, unknown>>;
 	edges: Record<string, unknown>[];
 	entries?: string[];
@@ -78,6 +81,7 @@ export function compileWorkflowDslBlock(
 	};
 	addWorkflowContracts(compiled, block);
 	mergeExternalContracts(compiled, compiler.externalResources, compiler.externalCapabilities);
+	if (compiler.externalSubflows.length > 0) compiled.subflows = compiler.externalSubflows;
 	return compiled;
 }
 
@@ -103,6 +107,7 @@ class WorkflowDslCompiler {
 	readonly modules: Record<string, unknown>;
 	readonly externalResources: Record<string, unknown>[] = [];
 	readonly externalCapabilities: Record<string, unknown>[] = [];
+	readonly externalSubflows: Record<string, unknown>[] = [];
 	readonly externalModules: Record<string, WorkflowDslExternalModule>;
 
 	constructor(block: Record<string, unknown>, externalModules: Record<string, WorkflowDslExternalModule>) {
@@ -213,7 +218,11 @@ class WorkflowDslCompiler {
 			}
 			if (externalModule.resources) this.externalResources.push(...externalModule.resources);
 			if (externalModule.capabilities) this.externalCapabilities.push(externalModule.capabilities);
-			return externalModuleEntrypoints(externalModule, prefix, originalNodeIds);
+			const boundary = externalModuleEntrypoints(externalModule, prefix, originalNodeIds);
+			this.externalSubflows.push(
+				externalModuleSubflow(moduleName, externalModule, prefix, originalNodeIds, boundary),
+			);
+			return boundary;
 		} finally {
 			this.#externalModuleStack.delete(moduleName);
 		}
@@ -455,6 +464,27 @@ function importedEdgeCondition(edge: Record<string, unknown>): string | undefine
 	return undefined;
 }
 
+function externalModuleSubflow(
+	alias: string,
+	module: WorkflowDslExternalModule,
+	prefix: string,
+	knownNodeIds: Set<string>,
+	boundary: CompileResult,
+): Record<string, unknown> {
+	const subflow: Record<string, unknown> = {
+		alias,
+		name: module.name ?? alias,
+		version: module.version ?? 1,
+		namespace: prefix,
+		nodeIds: [...knownNodeIds].map(nodeId => `${prefix}${nodeId}`),
+		entryNodeIds: boundary.entries,
+		exitNodeIds: boundary.exits.map(exit => exit.nodeId),
+	};
+	if (module.resourcePrefix !== undefined && module.resourcePrefix !== ".")
+		subflow.resourcePrefix = module.resourcePrefix;
+	return subflow;
+}
+
 function externalModuleEntrypoints(
 	module: WorkflowDslExternalModule,
 	prefix: string,
@@ -536,6 +566,9 @@ function mergeCapabilities(base: unknown, additions: Record<string, unknown>[]):
 	for (const addition of additions) {
 		mergeCapabilityList(result, "tools", addition.tools);
 		mergeCapabilityList(result, "agents", addition.agents);
+		mergeCapabilityList(result, "plugins", addition.plugins);
+		mergeCapabilityList(result, "extensions", addition.extensions);
+		mergeCapabilityList(result, "skills", addition.skills);
 	}
 	return result;
 }

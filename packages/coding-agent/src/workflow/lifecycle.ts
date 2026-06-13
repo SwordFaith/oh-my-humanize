@@ -619,6 +619,10 @@ export function requestWorkflowAttemptStop(
 	host: WorkflowLifecycleStoreHost,
 	options: RequestWorkflowAttemptStopOptions,
 ): void {
+	const { attempt } = expectWorkflowAttempt(host, options.attemptId, "stop");
+	if (attempt.status !== "running") {
+		throw new WorkflowLifecycleError(`Workflow attempt cannot be stopped: ${attempt.id} (${attempt.status})`);
+	}
 	const event: WorkflowStopRequestedEvent = {
 		event: "stop_requested",
 		attemptId: options.attemptId,
@@ -632,6 +636,32 @@ export function createWorkflowCheckpoint(
 	host: WorkflowLifecycleStoreHost,
 	options: CreateWorkflowCheckpointOptions,
 ): WorkflowCheckpointSnapshot {
+	const family = expectWorkflowFamily(host, options.familyId);
+	const attempt = family.attempts.find(candidate => candidate.id === options.attemptId);
+	if (attempt === undefined) {
+		const attemptFamily = findWorkflowAttempt(host, options.attemptId)?.family;
+		if (attemptFamily !== undefined) {
+			throw new WorkflowLifecycleError(
+				`Workflow checkpoint attempt ${options.attemptId} does not belong to family ${options.familyId}`,
+			);
+		}
+		throw new WorkflowLifecycleError(`Workflow checkpoint attempt not found: ${options.attemptId}`);
+	}
+	if (attempt.status !== "stop_requested" && attempt.status !== "stopped") {
+		throw new WorkflowLifecycleError(
+			`Workflow checkpoint requires a stop request before saving attempt: ${attempt.id} (${attempt.status})`,
+		);
+	}
+	const runningActivations = attempt.activations
+		.filter(activation => activation.status === "running")
+		.map(activation => activation.id);
+	if (runningActivations.length > 0) {
+		throw new WorkflowLifecycleError(
+			`Workflow checkpoint attempt still has running activations: ${runningActivations.join(", ")}`,
+		);
+	}
+	validateWorkflowCheckpointActivations(attempt, options.completedActivationIds, "completed");
+	validateWorkflowCheckpointActivations(attempt, options.abortedActivationIds, "aborted");
 	const checkpoint: WorkflowCheckpointSnapshot = {
 		id: options.checkpointId,
 		familyId: options.familyId,
@@ -644,6 +674,26 @@ export function createWorkflowCheckpoint(
 	};
 	appendLifecycleEvent(host, { event: "checkpoint_created", checkpoint: clone(checkpoint) });
 	return checkpoint;
+}
+
+function validateWorkflowCheckpointActivations(
+	attempt: WorkflowRunAttemptSnapshot,
+	activationIds: string[],
+	status: "completed" | "aborted",
+): void {
+	for (const activationId of activationIds) {
+		const activation = attempt.activations.find(candidate => candidate.id === activationId);
+		if (activation === undefined) {
+			throw new WorkflowLifecycleError(
+				`Workflow checkpoint references unknown ${status} activation: ${activationId}`,
+			);
+		}
+		if (activation.status !== status) {
+			throw new WorkflowLifecycleError(
+				`Workflow checkpoint references ${status} activation with status ${activation.status}: ${activationId}`,
+			);
+		}
+	}
 }
 
 export function completeWorkflowAttempt(
@@ -709,7 +759,16 @@ export function workflowChangeApplicationError(
 		const branchDispositionError = workflowChangeBranchDispositionError(request, sourceFreeze);
 		if (branchDispositionError !== undefined) return branchDispositionError;
 	}
-	if (request.attemptId === undefined) return undefined;
+	if (request.attemptId === undefined) {
+		if (request.checkpointId !== undefined) return undefined;
+		const activeAttempt = family.attempts.find(
+			attempt => attempt.status === "running" || attempt.status === "stop_requested",
+		);
+		if (activeAttempt !== undefined) {
+			return `Workflow change request cannot be applied while family has an active attempt: ${activeAttempt.id} (${activeAttempt.status})`;
+		}
+		return undefined;
+	}
 	const attempt = family.attempts.find(candidate => candidate.id === request.attemptId);
 	const attemptCheckpoints = family.checkpoints.filter(checkpoint => checkpoint.attemptId === request.attemptId);
 	if (attemptCheckpoints.length === 0) {
@@ -873,6 +932,27 @@ function expectWorkflowFamily(host: WorkflowLifecycleStoreHost, familyId: string
 	const family = reconstructWorkflowFamilies(host.getBranch()).find(candidate => candidate.id === familyId);
 	if (family === undefined) throw new WorkflowLifecycleError(`Workflow family not found: ${familyId}`);
 	return family;
+}
+
+function expectWorkflowAttempt(
+	host: WorkflowLifecycleStoreHost,
+	attemptId: string,
+	action: string,
+): { family: WorkflowRunFamilySnapshot; attempt: WorkflowRunAttemptSnapshot } {
+	const found = findWorkflowAttempt(host, attemptId);
+	if (found === undefined) throw new WorkflowLifecycleError(`Workflow attempt not found for ${action}: ${attemptId}`);
+	return found;
+}
+
+function findWorkflowAttempt(
+	host: WorkflowLifecycleStoreHost,
+	attemptId: string,
+): { family: WorkflowRunFamilySnapshot; attempt: WorkflowRunAttemptSnapshot } | undefined {
+	for (const family of reconstructWorkflowFamilies(host.getBranch())) {
+		const attempt = family.attempts.find(candidate => candidate.id === attemptId);
+		if (attempt !== undefined) return { family, attempt };
+	}
+	return undefined;
 }
 
 function expectWorkflowChangeRequest(
