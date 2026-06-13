@@ -147,7 +147,7 @@ describe("workflow inspection model", () => {
 		});
 	});
 
-	it("summarizes active-run graph patch proposals without application audit records", () => {
+	it("omits legacy active-run graph patch proposals from inspection", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
@@ -164,26 +164,7 @@ describe("workflow inspection model", () => {
 		const reconstructed = reconstructWorkflowRuns(host.getBranch())[0]!;
 		const inspection = buildWorkflowInspection(reconstructed);
 
-		expect(inspection.pendingGraphPatchProposals).toEqual([
-			{
-				id: "proposal-pending",
-				actor: "agent",
-				reason: "request human gate",
-				impact: {
-					addedNodes: 1,
-					removedNodes: 0,
-					changedNodes: 1,
-					addedEdges: 1,
-					removedEdges: 0,
-					changedEdges: 0,
-					promptSourceChanges: 0,
-					modelChanges: 1,
-					permissionChanges: 0,
-					modelRoleChanges: 0,
-					warnings: 1,
-				},
-			},
-		]);
+		expect(inspection.pendingGraphPatchProposals).toEqual([]);
 		expect(Object.hasOwn(inspection, "appliedGraphPatches")).toBe(false);
 	});
 

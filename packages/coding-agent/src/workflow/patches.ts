@@ -7,7 +7,7 @@ import type {
 	WorkflowNodeType,
 	WorkflowPromptSource,
 } from "./definition";
-import { appendWorkflowGraphPatchProposed, type WorkflowRunSnapshot, type WorkflowRunStoreHost } from "./run-store";
+import type { WorkflowRunSnapshot, WorkflowRunStoreHost } from "./run-store";
 import { readWorkflowState } from "./state";
 
 export type WorkflowGraphPatchActor = "agent" | "supervisor" | "human";
@@ -204,24 +204,14 @@ export function proposeWorkflowGraphPatchToRun(
 	run: WorkflowRunSnapshot,
 	patch: WorkflowGraphPatchOperation[],
 	context: WorkflowGraphPatchProposalContext,
-): WorkflowGraphPatchProposal {
-	const proposal = proposeWorkflowGraphPatch(run.definition, patch, context);
-	appendWorkflowGraphPatchProposed(host, run.id, {
-		proposalId: proposal.id,
-		actor: context.actor,
-		patch,
-		preview: proposal.preview,
-		reason: context.reason,
-	});
-	run.graphPatchProposals.push({
-		id: proposal.id,
-		status: "proposed",
-		actor: context.actor,
-		patch,
-		preview: proposal.preview,
-		reason: context.reason,
-	});
-	return proposal;
+): never {
+	void host;
+	void run;
+	void patch;
+	void context;
+	throw new WorkflowGraphPatchError(
+		"workflow graph patches cannot be proposed on an active run; use a workflow change request instead",
+	);
 }
 
 export function applyWorkflowGraphPatch(

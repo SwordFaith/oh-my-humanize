@@ -177,7 +177,7 @@ edges: []
 		);
 	});
 
-	it("reconstructs graph patch proposals without active-run patch applications", () => {
+	it("ignores legacy active-run graph patch proposals during reconstruction", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
@@ -213,16 +213,7 @@ edges: []
 
 		const reconstructed = reconstructWorkflowRuns(host.getBranch());
 
-		expect(reconstructed[0]?.graphPatchProposals).toEqual([
-			{
-				id: "proposal-1",
-				status: "proposed",
-				actor: "agent",
-				patch,
-				preview,
-				reason: "add review gate",
-			},
-		]);
+		expect(reconstructed[0]?.graphPatchProposals).toEqual([]);
 		expect(Object.hasOwn(reconstructed[0] ?? {}, "appliedGraphPatches")).toBe(false);
 	});
 

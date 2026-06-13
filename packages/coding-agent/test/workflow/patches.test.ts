@@ -404,21 +404,23 @@ edges:
 		]);
 	});
 
-	it("rejects applying graph patches directly to active runs", () => {
+	it("rejects proposing or applying graph patches directly to active runs", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 		const run = startWorkflowRun(host, definition, { runId: "run-1" });
 
-		const proposal = proposeWorkflowGraphPatchToRun(host, run, patchOperations(), {
-			actor: "agent",
-			proposalId: "proposal-1",
-			reason: "request finish branch",
-		});
+		expect(() =>
+			proposeWorkflowGraphPatchToRun(host, run, patchOperations(), {
+				actor: "agent",
+				proposalId: "proposal-1",
+				reason: "request finish branch",
+			}),
+		).toThrow("workflow graph patches cannot be proposed on an active run; use a workflow change request instead");
 
 		expect(() =>
 			applyWorkflowGraphPatchToRun(host, run, patchOperations(), {
 				actor: "human",
-				proposalId: proposal.id,
+				proposalId: "proposal-1",
 				graphRevisionId: "run-1:graph-1",
 				reason: "approved finish branch",
 			}),
@@ -429,9 +431,7 @@ edges:
 		expect(run.currentGraphRevisionId).toBe("run-1:graph-0");
 		expect(run.definition.nodes.map(node => node.id)).toEqual(["build", "review"]);
 		expect(reconstructed[0]?.graphRevisions.map(revision => revision.id)).toEqual(["run-1:graph-0"]);
-		expect(reconstructed[0]?.graphPatchProposals.map(entry => [entry.id, entry.actor, entry.reason])).toEqual([
-			["proposal-1", "agent", "request finish branch"],
-		]);
+		expect(reconstructed[0]?.graphPatchProposals).toEqual([]);
 		expect(Object.hasOwn(reconstructed[0] ?? {}, "appliedGraphPatches")).toBe(false);
 	});
 });

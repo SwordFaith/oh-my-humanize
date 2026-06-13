@@ -280,14 +280,8 @@ export function reconstructWorkflowRuns(
 			continue;
 		}
 		if (event.event === "graph_patch_proposed") {
-			run.graphPatchProposals.push({
-				id: event.proposalId,
-				status: "proposed",
-				actor: event.actor,
-				patch: event.patch,
-				preview: event.preview,
-				reason: event.reason,
-			});
+			// Active-run graph patch proposals are legacy audit noise. Production mutations use
+			// lifecycle WorkflowChangeRequest records tied to freezes/checkpoints instead.
 			continue;
 		}
 		if (event.event === "activation_started") {
