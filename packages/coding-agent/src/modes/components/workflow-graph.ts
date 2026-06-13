@@ -1,4 +1,4 @@
-import type { Component } from "@oh-my-pi/pi-tui";
+import type { Component, NativeScrollbackLiveRegion } from "@oh-my-pi/pi-tui";
 import { renderOutputBlock } from "../../tui/output-block";
 import type { State } from "../../tui/types";
 import {
@@ -15,7 +15,7 @@ export interface WorkflowGraphComponentOptions {
 	refreshMs?: number;
 }
 
-export class WorkflowGraphComponent implements Component {
+export class WorkflowGraphComponent implements Component, NativeScrollbackLiveRegion {
 	#cache?: { width: number; lines: string[] };
 	#lastObservedViewSignature?: string;
 	#onViewChange?: (view: WorkflowGraphView) => void;
@@ -73,6 +73,10 @@ export class WorkflowGraphComponent implements Component {
 		);
 		this.#cache = { width: safeWidth, lines };
 		return lines;
+	}
+
+	getNativeScrollbackLiveRegionStart(): number | undefined {
+		return 0;
 	}
 
 	#currentView(): WorkflowGraphView {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { type NativeScrollbackLiveRegion, visibleWidth } from "@oh-my-pi/pi-tui";
 import { WorkflowGraphComponent } from "../../src/modes/components/workflow-graph";
 import { getThemeByName, setThemeInstance } from "../../src/modes/theme/theme";
 import type { WorkflowDefinition } from "../../src/workflow/definition";
@@ -283,6 +283,18 @@ describe("workflow graph view rendering", () => {
 		component.render(80);
 
 		expect(observed.map(changedView => changedView.nodes[0]?.status)).toEqual(["running", "completed"]);
+	});
+
+	it("marks the TUI graph component as a live monitor from its first row", async () => {
+		const theme = await getThemeByName("dark");
+		if (!theme) throw new Error("dark theme fixture is required");
+		setThemeInstance(theme);
+		const component = new WorkflowGraphComponent(singleNodeView("running"), { refreshMs: 0 });
+		component.render(80);
+		const liveRegion = component as WorkflowGraphComponent & NativeScrollbackLiveRegion;
+
+		expect(liveRegion.getNativeScrollbackLiveRegionStart()).toBe(0);
+		expect(liveRegion.getNativeScrollbackCommitSafeEnd?.()).toBeUndefined();
 	});
 
 	it("renders TUI frontier routes without arrow fragments", async () => {

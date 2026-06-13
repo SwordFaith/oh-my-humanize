@@ -282,6 +282,12 @@ class StatusContainer extends Container implements NativeScrollbackLiveRegion {
 	}
 }
 
+class WorkflowMonitorContainer extends Container implements NativeScrollbackLiveRegion {
+	getNativeScrollbackLiveRegionStart(): number | undefined {
+		return this.children.length > 0 ? 0 : undefined;
+	}
+}
+
 function disposeWorkflowMonitorComponent(component: Component | undefined): void {
 	if (component === undefined) return;
 	const disposable = component as Component & { dispose?: () => void };
@@ -527,7 +533,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.chatContainer = new TranscriptContainer();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new StatusContainer();
-		this.workflowMonitorContainer = new Container();
+		this.workflowMonitorContainer = new WorkflowMonitorContainer();
 		this.todoContainer = new Container();
 		this.subagentContainer = new Container();
 		this.btwContainer = new Container();

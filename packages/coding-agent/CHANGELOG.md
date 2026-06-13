@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Fixed the workflow graph monitor so `/workflow` graph panels are marked as live TUI regions from their first row, keeping dynamic workflow status out of native scrollback while timestamped monitor snapshots remain in the workflow cache.
 - Fixed workflow state schemas so `.omhflow` `stateSchema.version: 1` declarations are enforced during activation output validation, state patch application, run-history reconstruction, and freeze static-check reporting instead of being preserved as passive metadata.
 - Fixed draft-based workflow refreezes so restart frontier mappings are preserved automatically when a generated draft is frozen, and repeated manual freeze applications are idempotent.
 - Fixed workflow lifecycle APIs so change applications and changed-freeze restarts cannot bypass proposal approval, stop/checkpoint requirements, supervisor policy, or applied freeze records outside the slash-command path.
