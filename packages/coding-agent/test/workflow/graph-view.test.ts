@@ -189,6 +189,9 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain(
 			"Use Agent Hub to watch or intervene; interrupt a selected live agent if it does not settle.",
 		);
+		expect(text).toContain(
+			"Agent Hub Enter attaches the main prompt to a live agent; Esc returns to workflow control.",
+		);
 		expect(text).toContain("- Builder · Build round live");
 		expect(text).toContain("- Reviewer · Review round live");
 		expect(text).toContain(
@@ -197,7 +200,10 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain(
 			"Interrupt Reviewer · Review round: /workflow interrupt attempt-1 reviewRound --deadline-ms 30000",
 		);
-		expect(text).toContain("Open Agent Hub: double-left or observe key; focus buildRound or reviewRound");
+		expect(text).toContain("Open Agent Hub: double-left or observe key; watch/intervene buildRound or reviewRound");
+		expect(text).toContain(
+			"Focused prompt: Agent Hub Enter attaches to the selected agent; Esc returns to workflow control",
+		);
 		expect(text).not.toContain("Focus agent: /agents");
 	});
 
@@ -357,11 +363,11 @@ describe("workflow graph view rendering", () => {
 
 		const text = renderWorkflowGraphText(view);
 
-		expect(text).toContain("- Builder · Build round live · round 2 (focus buildRound-2)");
+		expect(text).toContain("- Builder · Build round live · round 2 (watch/intervene buildRound-2)");
 		expect(text).toContain(
 			"Interrupt Builder · Build round: /workflow interrupt attempt-1 buildRound-2 --deadline-ms 30000",
 		);
-		expect(text).toContain("Open Agent Hub: double-left or observe key; focus buildRound-2");
+		expect(text).toContain("Open Agent Hub: double-left or observe key; watch/intervene buildRound-2");
 	});
 
 	it("keeps default graph labels human-facing instead of showing runtime adapter names", () => {
@@ -923,8 +929,9 @@ describe("workflow graph view rendering", () => {
 
 		expect(text).toContain("active agents");
 		expect(text).toContain("Agent Hub watches live transcripts; interrupt a selected live agent if needed.");
+		expect(text).toContain("Enter in Agent Hub attaches the main prompt; Esc returns to workflow control.");
 		expect(text).toContain("● Builder · Build round live · round 3 - editing implementation");
-		expect(text).toContain("focus buildRound");
+		expect(text).toContain("watch/intervene buildRound");
 		expect(text).not.toContain("activation-build");
 	});
 

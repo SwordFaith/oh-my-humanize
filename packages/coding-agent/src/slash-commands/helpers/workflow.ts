@@ -5,6 +5,7 @@ import { YAML } from "bun";
 import { formatModelString } from "../../config/model-resolver";
 import { PluginManager } from "../../extensibility/plugins/manager";
 import { parseCommandArgs } from "../../utils/command-args";
+import { workflowAgentTaskIdForNode } from "../../workflow/agent-task-id";
 import { evaluateWorkflowCondition } from "../../workflow/condition";
 import type {
 	WorkflowDefinition,
@@ -1421,10 +1422,14 @@ function interruptTargetAliases(
 	attempt: WorkflowRunAttemptSnapshot,
 	activation: WorkflowRunAttemptSnapshot["activations"][number],
 ): string[] {
-	const aliases = [activation.id, activation.nodeId];
+	const displayNodeId = workflowAgentTaskIdForNode(activation.nodeId);
+	const aliases = new Set([activation.id, activation.nodeId, displayNodeId]);
 	const generation = runningNodeGeneration(attempt, activation);
-	if (generation > 1) aliases.push(`${activation.nodeId}-${generation}`);
-	return aliases;
+	if (generation > 1) {
+		aliases.add(`${activation.nodeId}-${generation}`);
+		aliases.add(`${displayNodeId}-${generation}`);
+	}
+	return [...aliases];
 }
 
 function runningNodeGeneration(
@@ -2833,10 +2838,13 @@ function formatWorkflowManager(
 		}
 	} else {
 		lines.push("- Agent Hub watches live transcripts; interrupt a selected live agent if it does not settle.");
+		lines.push("- Agent Hub Enter attaches the main prompt to a live agent; Esc returns to workflow control.");
 		for (const agent of graphView.activeAgents) {
 			const summary = formatWorkflowDetail(agent.summary);
 			const generation = formatActiveWorkflowAgentGeneration(agent);
-			lines.push(`- ${agent.role} · ${agent.label} live${generation}${summary} (focus ${agent.focusAgentId})`);
+			lines.push(
+				`- ${agent.role} · ${agent.label} live${generation}${summary} (watch/intervene ${agent.focusAgentId})`,
+			);
 		}
 		if (currentAttempt?.status === "running") {
 			for (const agent of graphView.activeAgents) {
@@ -2846,7 +2854,9 @@ function formatWorkflowManager(
 			}
 		}
 		const focusTargets = graphView.activeAgents.map(agent => agent.focusAgentId).join(" or ");
-		lines.push(`- focus live agent: open Agent Hub with double-left or the observe key, then focus ${focusTargets}`);
+		lines.push(
+			`- watch/intervene live agent: open Agent Hub with double-left or the observe key, then press Enter on ${focusTargets}`,
+		);
 		if (currentAttempt?.status === "running") {
 			lines.push(`- interrupt active attempt: /workflow stop ${currentAttempt.id} --deadline-ms 30000`);
 		}
@@ -2885,7 +2895,7 @@ function formatWorkflowManager(
 	lines.push(`- graph: /workflow graph --family-id ${family.id}`);
 	if (currentAttempt?.status === "running") {
 		if (graphView.activeAgents !== undefined && graphView.activeAgents.length > 0) {
-			lines.push("- agent hub: double-left or observe key; Enter focuses, Esc returns");
+			lines.push("- agent hub: double-left or observe key; Enter attaches prompt, Esc returns");
 		}
 		lines.push(`- interrupt: /workflow stop ${currentAttempt.id} --deadline-ms 30000`);
 	}

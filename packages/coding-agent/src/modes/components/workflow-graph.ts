@@ -143,14 +143,17 @@ function workflowGraphSubflowLines(view: WorkflowGraphView): string[] {
 }
 
 function workflowGraphActiveAgentLines(view: WorkflowGraphView, width: number): string[] {
-	const lines = [theme.fg("muted", "Agent Hub watches live transcripts; interrupt a selected live agent if needed.")];
+	const lines = [
+		theme.fg("muted", "Agent Hub watches live transcripts; interrupt a selected live agent if needed."),
+		theme.fg("muted", "Enter in Agent Hub attaches the main prompt; Esc returns to workflow control."),
+	];
 	for (const agent of view.activeAgents ?? []) {
 		const activity = workflowAgentActivityText(agent, width);
 		const model = agent.model === undefined ? "" : theme.fg("muted", ` · ${agent.model}`);
 		const tool = agent.tool === undefined ? "" : theme.fg("muted", ` · tool ${agent.tool}`);
 		const stats = agent.stats === undefined ? "" : theme.fg("muted", ` · ${agent.stats}`);
 		const generation = theme.fg("muted", formatActiveWorkflowAgentGeneration(agent));
-		const focus = theme.fg("muted", ` focus ${agent.focusAgentId}`);
+		const focus = theme.fg("muted", ` watch/intervene ${agent.focusAgentId}`);
 		const line = `${theme.fg("accent", "●")} ${agent.role}${theme.fg("muted", ` · ${agent.label}`)} ${theme.fg("accent", "live")}${generation}${model}${tool}${stats}${activity}${focus}`;
 		lines.push(truncateToWidth(replaceTabs(line), Math.max(20, width)));
 	}

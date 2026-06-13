@@ -247,6 +247,7 @@ export function renderWorkflowGraphText(view: WorkflowGraphView, options: Workfl
 	if (view.activeAgents !== undefined && view.activeAgents.length > 0) {
 		lines.push("Active agents:");
 		lines.push("Use Agent Hub to watch or intervene; interrupt a selected live agent if it does not settle.");
+		lines.push("Agent Hub Enter attaches the main prompt to a live agent; Esc returns to workflow control.");
 		for (const agent of view.activeAgents) lines.push(`- ${formatActiveWorkflowAgent(agent)}`);
 	}
 	lines.push("Diagram:");
@@ -932,7 +933,7 @@ function formatActiveWorkflowAgent(agent: WorkflowGraphActiveAgentView): string 
 	const stats = agent.stats === undefined ? "" : ` · ${agent.stats}`;
 	const activity = agent.activity === undefined ? "" : ` - ${formatSingleLineWorkflowDetail(agent.activity)}`;
 	const summary = agent.summary === undefined ? "" : ` - ${formatSingleLineWorkflowDetail(agent.summary)}`;
-	return `${agent.role} · ${agent.label} live${generation}${model}${tool}${stats}${activity}${summary} (focus ${agent.focusAgentId})`;
+	return `${agent.role} · ${agent.label} live${generation}${model}${tool}${stats}${activity}${summary} (watch/intervene ${agent.focusAgentId})`;
 }
 
 export function formatActiveWorkflowAgentGeneration(agent: WorkflowGraphActiveAgentView): string {
@@ -1050,7 +1051,10 @@ function formatWorkflowGraphActions(
 			}
 			const focusTargets = activeAgents.map(agent => agent.focusAgentId).join(" or ");
 			const targetHint = focusTargets.length === 0 ? "the selected live agent" : focusTargets;
-			actions.push(`Open Agent Hub: double-left or observe key; focus ${targetHint}`);
+			actions.push(`Open Agent Hub: double-left or observe key; watch/intervene ${targetHint}`);
+			actions.push(
+				"Focused prompt: Agent Hub Enter attaches to the selected agent; Esc returns to workflow control",
+			);
 		}
 	}
 	actions.push(`Propose change: /workflow request-change <file> --family-id ${family.id}`);

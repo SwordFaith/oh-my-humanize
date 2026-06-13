@@ -4104,8 +4104,12 @@ edges: []
 		expect(managerOutput).toContain(
 			"- Agent Hub watches live transcripts; interrupt a selected live agent if it does not settle.",
 		);
+		expect(managerOutput).toContain(
+			"- Agent Hub Enter attaches the main prompt to a live agent; Esc returns to workflow control.",
+		);
 		expect(managerOutput).toContain("- Builder · Build round live");
 		expect(managerOutput).toContain("- Reviewer · Review round live");
+		expect(managerOutput).toContain("- Builder · Build round live (watch/intervene buildRound)");
 		expect(managerOutput).toContain(
 			"- interrupt agent Builder · Build round: /workflow interrupt live-manager:attempt-1 buildRound --deadline-ms 30000",
 		);
@@ -4113,12 +4117,12 @@ edges: []
 			"- interrupt agent Reviewer · Review round: /workflow interrupt live-manager:attempt-1 reviewRound --deadline-ms 30000",
 		);
 		expect(managerOutput).toContain(
-			"- focus live agent: open Agent Hub with double-left or the observe key, then focus buildRound or reviewRound",
+			"- watch/intervene live agent: open Agent Hub with double-left or the observe key, then press Enter on buildRound or reviewRound",
 		);
 		expect(managerOutput).toContain(
 			"- interrupt active attempt: /workflow stop live-manager:attempt-1 --deadline-ms 30000",
 		);
-		expect(managerOutput).toContain("- agent hub: double-left or observe key; Enter focuses, Esc returns");
+		expect(managerOutput).toContain("- agent hub: double-left or observe key; Enter attaches prompt, Esc returns");
 		expect(managerOutput).not.toContain("agent:task");
 		expect(managerOutput).not.toContain("review:task");
 		expect(managerOutput).not.toContain("/agents");
@@ -4321,6 +4325,114 @@ edges: []
 		});
 	});
 
+	it("accepts cockpit-displayed workflow agent ids when interrupting loop rounds", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "sanitized-loop-interrupt"), { recursive: true });
+		await Bun.write(
+			path.join(dir, "sanitized-loop-interrupt.omhflow"),
+			`---
+name: sanitized-loop-interrupt
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 50
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Sanitized Loop Interrupt
+
+\`\`\`yaml workflow
+nodes:
+  build-path:
+    type: agent
+    agent: task
+    prompt: Build the current loop round.
+  reviewGate:
+    type: review
+    agent: task
+    prompt: Decide whether another build round is needed.
+    gates:
+      - CONTINUE
+      - COMPLETE
+edges:
+  - from: build-path
+    to: reviewGate
+  - from: reviewGate
+    to: build-path
+    when: outputs.reviewGate.verdict == "CONTINUE"
+\`\`\`
+`,
+		);
+		const entries: CapturedEntry[] = [];
+		const firstBuildStarted = Promise.withResolvers<void>();
+		const secondBuildStarted = Promise.withResolvers<void>();
+		const secondBuildAborted = Promise.withResolvers<void>();
+		let buildCalls = 0;
+		let secondBuildSignal: AbortSignal | undefined;
+		const runner: WorkflowAgentTaskRunner = async request => {
+			if (request.nodeId === "build-path") {
+				buildCalls += 1;
+				if (buildCalls === 1) {
+					firstBuildStarted.resolve();
+					return { exitCode: 0, output: JSON.stringify({ summary: "round 1 built" }) };
+				}
+				secondBuildSignal = request.signal;
+				request.signal?.addEventListener("abort", () => secondBuildAborted.resolve(), { once: true });
+				secondBuildStarted.resolve();
+				await secondBuildAborted.promise;
+				return {
+					exitCode: 1,
+					output: "",
+					error: request.signal?.reason ?? "workflow agent interrupted",
+				};
+			}
+			return { exitCode: 0, output: JSON.stringify({ summary: "continue", verdict: "CONTINUE" }) };
+		};
+		const { output, runtime } = createTuiRuntime(entries, dir, runner);
+
+		expect(
+			await executeBuiltinSlashCommand(
+				`/workflow start ${path.join(dir, "sanitized-loop-interrupt.omhflow")} --run-id sanitized-loop-interrupt --family-id family-sanitized-loop --background`,
+				runtime,
+			),
+		).toBe(true);
+		await firstBuildStarted.promise;
+		await secondBuildStarted.promise;
+
+		expect(await executeBuiltinSlashCommand("/workflow manager --family-id family-sanitized-loop", runtime)).toBe(
+			true,
+		);
+		const managerOutput = output.at(-1) ?? "";
+		expect(managerOutput).toContain("- Builder · Build path live · round 2 (watch/intervene build_path-2)");
+		expect(managerOutput).toContain(
+			"- interrupt agent Builder · Build path: /workflow interrupt sanitized-loop-interrupt:attempt-1 build_path-2 --deadline-ms 30000",
+		);
+
+		const interrupt = executeBuiltinSlashCommand(
+			"/workflow interrupt sanitized-loop-interrupt:attempt-1 build_path-2 --deadline-ms 1",
+			runtime,
+		);
+		await secondBuildAborted.promise;
+		expect(secondBuildSignal?.aborted).toBe(true);
+
+		expect(await interrupt).toBe(true);
+		expect(
+			output.some(entry => entry.includes("Workflow interrupted activation: activation-3 (build-path)")),
+		).toBeTrue();
+		const family = reconstructWorkflowFamilies(entries)[0];
+		expect(family?.attempts[0]?.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build-path", "completed"],
+			["reviewGate", "completed"],
+			["build-path", "aborted"],
+		]);
+		expect(family?.checkpoints[0]).toMatchObject({
+			completedActivationIds: ["activation-1", "activation-2"],
+			abortedActivationIds: ["activation-3"],
+			frontierNodeIds: ["build-path"],
+		});
+	});
+
 	it("does not present persisted running workflow activations as live Agent Hub targets", async () => {
 		const entries: CapturedEntry[] = [];
 		const freeze = createFreeze("flowfreeze:stale-agents", ["buildRound", "reviewRound"]);
@@ -4358,7 +4470,7 @@ edges: []
 		);
 		expect(output[0]).toContain("- interrupt active attempt: /workflow stop attempt-stale --deadline-ms 30000");
 		expect(output[0]).not.toContain("Agent Hub watches live transcripts");
-		expect(output[0]).not.toContain("focus live agent");
+		expect(output[0]).not.toContain("watch/intervene live agent");
 		expect(output[0]).not.toContain("agent hub: double-left");
 	});
 
