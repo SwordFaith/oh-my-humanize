@@ -188,7 +188,7 @@ describe("workflow inspection model", () => {
 	it("summarizes lifecycle family lineage, checkpoints, changes, and bindings", () => {
 		const host = createHost();
 		const freezeA = createFreeze("flowfreeze:a");
-		const freezeB = createFreeze("flowfreeze:b");
+		const freezeB = createFreeze("flowfreeze:b", ["build", "verify"]);
 
 		startWorkflowFamily(host, { familyId: "family-1", objective: "ship release" });
 		recordWorkflowFreeze(host, freezeA, { familyId: "family-1" });
@@ -343,7 +343,7 @@ function binding(id: string) {
 	};
 }
 
-function createFreeze(id: string): FlowFreeze {
+function createFreeze(id: string, nodeIds: string[] = ["build"]): FlowFreeze {
 	return {
 		id,
 		schemaVersion: "omhflow/v1",
@@ -355,7 +355,7 @@ function createFreeze(id: string): FlowFreeze {
 		canonicalGraphHash: `sha256:graph-${id}`,
 		sourceMapping: {
 			workflowBlocks: [{ id: "workflow:0", language: "yaml" }],
-			nodes: { build: { sourceBlock: "workflow:0" } },
+			nodes: Object.fromEntries(nodeIds.map(nodeId => [nodeId, { sourceBlock: "workflow:0" }])),
 		},
 		staticCheckReport: { status: "passed", checks: [{ name: "fixture", status: "passed" }] },
 		portableDefaults: { models: { roles: { builder: "openai/gpt-4o" }, defaults: { agent: "builder" } } },
@@ -363,7 +363,7 @@ function createFreeze(id: string): FlowFreeze {
 			name: id,
 			version: 1,
 			models: { roles: { builder: "openai/gpt-4o" }, defaults: { agent: "builder" } },
-			nodes: [{ id: "build", type: "agent" }],
+			nodes: nodeIds.map(nodeId => ({ id: nodeId, type: nodeId === "verify" ? "script" : "agent" })),
 			edges: [],
 		},
 	};

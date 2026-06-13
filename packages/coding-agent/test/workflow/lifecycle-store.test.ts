@@ -270,6 +270,153 @@ describe("workflow lifecycle event store", () => {
 			"attempt-1",
 		]);
 	});
+
+	it("rejects lifecycle change application until the request is approved", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-1",
+			familyId: "family-1",
+			actor: "human:sihao",
+			origin: "human",
+			reason: "add review",
+			operations: [{ op: "add_node", node: { id: "review", type: "review" } }],
+		});
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			recordWorkflowChangeRequestApplied(host, {
+				changeRequestId: "change-1",
+				actor: "human:sihao",
+				target: "draft",
+				draftId: "draft-1",
+			}),
+		).toThrow("Workflow change request is not approved: change-1 (proposed)");
+		expect(host.entries).toHaveLength(entryCount);
+	});
+
+	it("rejects supervisor approvals unless the frozen change policy grants authority", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build"], {
+			agentsCanPropose: true,
+			humansCanApprove: true,
+			supervisorsCanApprove: false,
+		});
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-1",
+			familyId: "family-1",
+			actor: "agent:planner",
+			origin: "internal-agent",
+			reason: "add review",
+			operations: [{ op: "add_node", node: { id: "review", type: "review" } }],
+		});
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			approveWorkflowChangeRequest(host, {
+				changeRequestId: "change-1",
+				actor: "supervisor:policy",
+			}),
+		).toThrow(
+			"Workflow change request approval denied: supervisor:policy requires changePolicy.supervisorsCanApprove",
+		);
+		expect(host.entries).toHaveLength(entryCount);
+	});
+
+	it("rejects attempt-scoped change application before stop and checkpoint", () => {
+		const host = createHost();
+		const freeze = createFreeze("flowfreeze:a", ["build", "review"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-1" });
+		startWorkflowAttempt(host, {
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-1",
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			actor: "agent:reviewer",
+			origin: "internal-agent",
+			reason: "insert verification before review",
+			operations: [{ op: "add_node", node: { id: "verify", type: "script" } }],
+			frontierMapping: { review: "verify" },
+		});
+		approveWorkflowChangeRequest(host, { changeRequestId: "change-1", actor: "human:sihao" });
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			recordWorkflowChangeRequestApplied(host, {
+				changeRequestId: "change-1",
+				actor: "human:sihao",
+				target: "draft",
+				draftId: "draft-1",
+			}),
+		).toThrow("Workflow change request cannot be applied before checkpointing attempt: attempt-1");
+		expect(host.entries).toHaveLength(entryCount);
+	});
+
+	it("rejects restart into a changed freeze until the approved change has been applied", () => {
+		const host = createHost();
+		const freezeA = createFreeze("flowfreeze:a", ["build", "review"]);
+		const freezeB = createFreeze("flowfreeze:b", ["build", "verify"]);
+
+		startWorkflowFamily(host, { familyId: "family-1" });
+		recordWorkflowFreeze(host, freezeA, { familyId: "family-1" });
+		startWorkflowAttempt(host, {
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			freezeId: freezeA.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		requestWorkflowAttemptStop(host, { attemptId: "attempt-1", deadlineMs: 10 });
+		createWorkflowCheckpoint(host, {
+			checkpointId: "checkpoint-1",
+			familyId: "family-1",
+			attemptId: "attempt-1",
+			completedActivationIds: [],
+			abortedActivationIds: [],
+			frontierNodeIds: ["review"],
+			state: {},
+			sourceMapping: { review: "verify" },
+		});
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-1",
+			familyId: "family-1",
+			checkpointId: "checkpoint-1",
+			actor: "human:sihao",
+			origin: "human",
+			reason: "restart at verification",
+			operations: [{ op: "add_node", node: { id: "verify", type: "script" } }],
+			frontierMapping: { review: "verify" },
+		});
+		approveWorkflowChangeRequest(host, { changeRequestId: "change-1", actor: "human:sihao" });
+		recordWorkflowFreeze(host, freezeB, { familyId: "family-1" });
+		const entryCount = host.entries.length;
+
+		expect(() =>
+			restartWorkflowAttempt(host, {
+				familyId: "family-1",
+				attemptId: "attempt-2",
+				checkpointId: "checkpoint-1",
+				freezeId: freezeB.id,
+				startNodeId: "verify",
+				runtimeBindingSnapshot: binding("binding-2"),
+			}),
+		).toThrow("Workflow restart freeze is not applied to checkpoint checkpoint-1: flowfreeze:b");
+		expect(host.entries).toHaveLength(entryCount);
+	});
 });
 
 function binding(id: string) {
@@ -284,7 +431,11 @@ function binding(id: string) {
 	};
 }
 
-function createFreeze(id: string, nodeIds: string[]): FlowFreeze {
+function createFreeze(
+	id: string,
+	nodeIds: string[],
+	changePolicy: FlowFreeze["changePolicy"] = { agentsCanPropose: true, humansCanApprove: true },
+): FlowFreeze {
 	return {
 		id,
 		schemaVersion: "omhflow/v1",
@@ -305,6 +456,7 @@ function createFreeze(id: string, nodeIds: string[]): FlowFreeze {
 		portableDefaults: {
 			models: { roles: { builder: "openai/gpt-4o" }, defaults: { agent: "builder" } },
 		},
+		changePolicy,
 		definition: {
 			name: id,
 			version: 1,

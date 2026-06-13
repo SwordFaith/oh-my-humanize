@@ -1925,6 +1925,11 @@ edges: []
 			consumed: true,
 		});
 		expect(
+			await executeAcpBuiltinSlashCommand("/workflow apply-change change-1 --freeze-id flowfreeze:b", runtime),
+		).toEqual({
+			consumed: true,
+		});
+		expect(
 			await executeAcpBuiltinSlashCommand(
 				"/workflow restart attempt-1:checkpoint-1 --freeze-id flowfreeze:b",
 				runtime,
@@ -2942,6 +2947,26 @@ edges: []
 			state: {},
 			sourceMapping: { weakReview: "weakReview" },
 		});
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-migration",
+			familyId: "family-migration",
+			checkpointId: "checkpoint-migration",
+			actor: "human:sihao",
+			origin: "human",
+			reason: "apply migration frontier mapping",
+			operations: [{ op: "add_node", node: { id: "strongReview", type: "script" } }],
+			frontierMapping: { weakReview: "strongReview" },
+		});
+		approveWorkflowChangeRequest(host, {
+			changeRequestId: "change-migration",
+			actor: "human:sihao",
+		});
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: "change-migration",
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
+		});
 		const calls: string[] = [];
 		const runtimeHost: WorkflowNodeRuntimeHost = {
 			runScriptNode: async input => {
@@ -3024,6 +3049,26 @@ edges:
 			frontierNodeIds: ["leftReview", "rightReview"],
 			state: {},
 			sourceMapping: { leftReview: "leftReview", rightReview: "rightReview" },
+		});
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-parallel-frontier",
+			familyId: "family-parallel-frontier",
+			checkpointId: "checkpoint-parallel",
+			actor: "human:sihao",
+			origin: "human",
+			reason: "apply parallel frontier restart mapping",
+			operations: [],
+			frontierMapping: { leftReview: "leftReview", rightReview: "rightReview" },
+		});
+		approveWorkflowChangeRequest(host, {
+			changeRequestId: "change-parallel-frontier",
+			actor: "human:sihao",
+		});
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: "change-parallel-frontier",
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
 		});
 		const calls: string[] = [];
 		const runtimeHost: WorkflowNodeRuntimeHost = {
@@ -3255,7 +3300,17 @@ edges:
 			operations: [{ op: "add_node", node: { id: "integrate", type: "script" } }],
 			frontierMapping: { evaluate: "integrate" },
 		});
+		approveWorkflowChangeRequest(host, {
+			changeRequestId: "change-integrate",
+			actor: "human:sihao",
+		});
 		recordWorkflowFreeze(host, freezeB, { familyId: "family-optimizer" });
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: "change-integrate",
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
+		});
 		restartWorkflowAttempt(host, {
 			familyId: "family-optimizer",
 			attemptId: "attempt-integrate",
@@ -3281,11 +3336,9 @@ edges:
 		expect(output[0]).toContain("- latest checkpoint: checkpoint-search frontier=evaluate");
 		expect(output[0]).toContain("Change review:");
 		expect(output[0]).toContain(
-			"- change-integrate proposed internal-agent actor=agent:evaluator ops=1 - promote positive optimization",
+			"- change-integrate approved internal-agent actor=agent:evaluator ops=1 approvedBy=human:sihao applied=freeze:flowfreeze:b:human:sihao - promote positive optimization",
 		);
 		expect(output[0]).toContain("  op: add_node integrate");
-		expect(output[0]).toContain("  approve: /workflow approve-change change-integrate --actor human");
-		expect(output[0]).toContain("  reject: /workflow reject-change change-integrate --actor human --reason <reason>");
 		expect(output[0]).toContain("Runtime bindings:");
 		expect(output[0]).toContain(
 			"- attempt-search binding-search tools=task agents=task models=builder=openai/gpt-4o",
@@ -3373,6 +3426,12 @@ edges:
 			actor: "human:sihao",
 		});
 		recordWorkflowFreeze(host, freezeB, { familyId: "family-mutable" });
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: "change-strong-review",
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: freezeB.id,
+		});
 		restartWorkflowAttempt(host, {
 			familyId: "family-mutable",
 			attemptId: "attempt-strong",
@@ -3429,7 +3488,7 @@ edges:
 		expect(output[0]).toContain("Checkpoint frontier: checkpoint-weak runValidation to runValidation");
 		expect(output[0]).toContain("Mutable lineage:");
 		expect(output[0]).toContain(
-			"- change-strong-review approved by human:sihao - replace weak review with strong review",
+			"- change-strong-review approved by human:sihao applied=freeze:flowfreeze:strong:human:sihao - replace weak review with strong review",
 		);
 	});
 

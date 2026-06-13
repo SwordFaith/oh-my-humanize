@@ -4,18 +4,26 @@ import * as path from "node:path";
 import { freezeWorkflowArtifact } from "../../src/workflow/freeze";
 import { buildWorkflowLifecycleInspection } from "../../src/workflow/inspection";
 import {
+	appendWorkflowAttemptActivationCompleted,
+	appendWorkflowAttemptActivationStarted,
 	approveWorkflowChangeRequest,
+	completeWorkflowAttempt,
 	createWorkflowCheckpoint,
 	proposeWorkflowChangeRequest,
 	type RuntimeBindingSnapshot,
 	reconstructWorkflowFamilies,
+	recordWorkflowChangeRequestApplied,
 	recordWorkflowFreeze,
 	requestWorkflowAttemptStop,
+	restartWorkflowAttempt,
+	startWorkflowAttempt,
+	startWorkflowFamily,
 	type WorkflowLifecycleStoreHost,
 } from "../../src/workflow/lifecycle";
 import type { WorkflowNodeRuntimeHost } from "../../src/workflow/node-runtime";
 import { loadWorkflowArtifact } from "../../src/workflow/package-loader";
 import { runWorkflow } from "../../src/workflow/runner";
+import type { WorkflowSchedulerResult } from "../../src/workflow/scheduler";
 
 interface CapturedEntry {
 	type: "custom";
@@ -166,13 +174,19 @@ sequence:
 			runId: "optimizer-search-run",
 			startNodeId: "start",
 			runtimeHost,
-			lifecycle: {
-				familyId: "family-optimizer",
-				attemptId: "attempt-search",
-				objective: "optimize inference kernels",
-				freeze: searchFreeze,
-				runtimeBindingSnapshot: binding("binding-search"),
-			},
+		});
+		startWorkflowFamily(host, {
+			familyId: "family-optimizer",
+			objective: "optimize inference kernels",
+		});
+		recordWorkflowFreeze(host, searchFreeze, { familyId: "family-optimizer" });
+		recordWorkflowAttemptActivations(host, {
+			familyId: "family-optimizer",
+			attemptId: "attempt-search",
+			freezeId: searchFreeze.id,
+			startNodeId: "start",
+			runtimeBindingSnapshot: binding("binding-search"),
+			scheduler: searchResult.scheduler,
 		});
 		proposeWorkflowChangeRequest(host, {
 			changeRequestId: "change-promote-tiling",
@@ -204,22 +218,33 @@ sequence:
 			sourceMapping: { evaluate: "integrate" },
 		});
 		recordWorkflowFreeze(host, integrationFreeze, { familyId: "family-optimizer" });
-		await runWorkflow({
+		recordWorkflowChangeRequestApplied(host, {
+			changeRequestId: "change-promote-tiling",
+			actor: "human:sihao",
+			target: "freeze",
+			freezeId: integrationFreeze.id,
+			reason: "strict integration freeze passed",
+		});
+		const integrationResult = await runWorkflow({
 			host,
 			definition: integrationFreeze.definition,
 			runId: "optimizer-integration-run",
 			startNodeId: "integrate",
 			runtimeHost,
 			initialState: searchResult.scheduler.state,
-			lifecycle: {
-				familyId: "family-optimizer",
-				attemptId: "attempt-integrate",
-				checkpointId: "checkpoint-search",
-				freeze: integrationFreeze,
-				runtimeBindingSnapshot: binding("binding-integrate"),
-				recordFamily: false,
-				recordFreeze: false,
-			},
+		});
+		recordWorkflowAttemptActivations(host, {
+			familyId: "family-optimizer",
+			attemptId: "attempt-integrate",
+			checkpointId: "checkpoint-search",
+			freezeId: integrationFreeze.id,
+			startNodeId: "integrate",
+			runtimeBindingSnapshot: binding("binding-integrate"),
+			scheduler: integrationResult.scheduler,
+		});
+		completeWorkflowAttempt(host, {
+			attemptId: "attempt-integrate",
+			summary: "workflow completed",
 		});
 
 		const evaluate = searchFreeze.definition.nodes.find(node => node.id === "evaluate");
@@ -234,7 +259,7 @@ sequence:
 			["tryFusion", "evaluate"],
 		]);
 		expect(inspection.attempts.map(attempt => [attempt.id, attempt.status, attempt.checkpointId])).toEqual([
-			["attempt-search", "completed", undefined],
+			["attempt-search", "stopped", undefined],
 			["attempt-integrate", "completed", "checkpoint-search"],
 		]);
 		expect(inspection.attempts[0]?.activations.map(activation => [activation.nodeId, activation.summary])).toEqual([
@@ -383,14 +408,21 @@ sequence:
 			runId: "project-early-run",
 			startNodeId: "kickoff",
 			runtimeHost,
-			lifecycle: {
-				familyId: "family-project",
-				attemptId: "attempt-early",
-				objective: "adapt workflow structure across project phases",
-				freeze: earlyFreeze,
-				runtimeBindingSnapshot: binding("binding-early"),
-			},
 		});
+		startWorkflowFamily(host, {
+			familyId: "family-project",
+			objective: "adapt workflow structure across project phases",
+		});
+		recordWorkflowFreeze(host, earlyFreeze, { familyId: "family-project" });
+		recordWorkflowAttemptActivations(host, {
+			familyId: "family-project",
+			attemptId: "attempt-early",
+			freezeId: earlyFreeze.id,
+			startNodeId: "kickoff",
+			runtimeBindingSnapshot: binding("binding-early"),
+			scheduler: earlyResult.scheduler,
+		});
+		recordWorkflowFreeze(host, middleFreeze, { familyId: "family-project" });
 		checkpointTransition(host, {
 			familyId: "family-project",
 			attemptId: "attempt-early",
@@ -402,7 +434,6 @@ sequence:
 			state: earlyResult.scheduler.state,
 			nextFreezeId: middleFreeze.id,
 		});
-		recordWorkflowFreeze(host, middleFreeze, { familyId: "family-project" });
 		const middleResult = await runWorkflow({
 			host,
 			definition: middleFreeze.definition,
@@ -410,16 +441,17 @@ sequence:
 			startNodeId: "designContract",
 			runtimeHost,
 			initialState: earlyResult.scheduler.state,
-			lifecycle: {
-				familyId: "family-project",
-				attemptId: "attempt-middle",
-				checkpointId: "checkpoint-early",
-				freeze: middleFreeze,
-				runtimeBindingSnapshot: binding("binding-middle"),
-				recordFamily: false,
-				recordFreeze: false,
-			},
 		});
+		recordWorkflowAttemptActivations(host, {
+			familyId: "family-project",
+			attemptId: "attempt-middle",
+			checkpointId: "checkpoint-early",
+			freezeId: middleFreeze.id,
+			startNodeId: "designContract",
+			runtimeBindingSnapshot: binding("binding-middle"),
+			scheduler: middleResult.scheduler,
+		});
+		recordWorkflowFreeze(host, lateFreeze, { familyId: "family-project" });
 		checkpointTransition(host, {
 			familyId: "family-project",
 			attemptId: "attempt-middle",
@@ -431,23 +463,26 @@ sequence:
 			state: middleResult.scheduler.state,
 			nextFreezeId: lateFreeze.id,
 		});
-		recordWorkflowFreeze(host, lateFreeze, { familyId: "family-project" });
-		await runWorkflow({
+		const lateResult = await runWorkflow({
 			host,
 			definition: lateFreeze.definition,
 			runId: "project-late-run",
 			startNodeId: "triage",
 			runtimeHost,
 			initialState: middleResult.scheduler.state,
-			lifecycle: {
-				familyId: "family-project",
-				attemptId: "attempt-late",
-				checkpointId: "checkpoint-middle",
-				freeze: lateFreeze,
-				runtimeBindingSnapshot: binding("binding-late"),
-				recordFamily: false,
-				recordFreeze: false,
-			},
+		});
+		recordWorkflowAttemptActivations(host, {
+			familyId: "family-project",
+			attemptId: "attempt-late",
+			checkpointId: "checkpoint-middle",
+			freezeId: lateFreeze.id,
+			startNodeId: "triage",
+			runtimeBindingSnapshot: binding("binding-late"),
+			scheduler: lateResult.scheduler,
+		});
+		completeWorkflowAttempt(host, {
+			attemptId: "attempt-late",
+			summary: "workflow completed",
 		});
 
 		const family = reconstructWorkflowFamilies(host.getBranch())[0]!;
@@ -468,8 +503,8 @@ sequence:
 		]);
 		expect(inspection.freezeIds).toEqual([earlyFreeze.id, middleFreeze.id, lateFreeze.id]);
 		expect(inspection.attempts.map(attempt => [attempt.id, attempt.status, attempt.checkpointId])).toEqual([
-			["attempt-early", "completed", undefined],
-			["attempt-middle", "completed", "checkpoint-early"],
+			["attempt-early", "stopped", undefined],
+			["attempt-middle", "stopped", "checkpoint-early"],
 			["attempt-late", "completed", "checkpoint-middle"],
 		]);
 		expect(inspection.checkpoints.map(checkpoint => [checkpoint.id, checkpoint.sourceMapping])).toEqual([
@@ -551,6 +586,61 @@ function checkpointTransition(
 		state: options.state,
 		sourceMapping: { [options.frontierNodeId]: options.nextNodeId },
 	});
+	recordWorkflowChangeRequestApplied(host, {
+		changeRequestId: options.changeRequestId,
+		actor: "human:sihao",
+		target: "freeze",
+		freezeId: options.nextFreezeId,
+		reason: "strict phase-transition freeze passed",
+	});
+}
+
+function recordWorkflowAttemptActivations(
+	host: WorkflowLifecycleStoreHost,
+	options: {
+		familyId: string;
+		attemptId: string;
+		checkpointId?: string;
+		freezeId: string;
+		startNodeId: string;
+		runtimeBindingSnapshot: RuntimeBindingSnapshot;
+		scheduler: WorkflowSchedulerResult;
+	},
+): void {
+	if (options.checkpointId === undefined) {
+		startWorkflowAttempt(host, {
+			familyId: options.familyId,
+			attemptId: options.attemptId,
+			freezeId: options.freezeId,
+			startNodeId: options.startNodeId,
+			runtimeBindingSnapshot: options.runtimeBindingSnapshot,
+		});
+	} else {
+		restartWorkflowAttempt(host, {
+			familyId: options.familyId,
+			attemptId: options.attemptId,
+			checkpointId: options.checkpointId,
+			freezeId: options.freezeId,
+			startNodeId: options.startNodeId,
+			runtimeBindingSnapshot: options.runtimeBindingSnapshot,
+		});
+	}
+	for (const activation of options.scheduler.activations) {
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: options.attemptId,
+			activationId: activation.id,
+			nodeId: activation.nodeId,
+			parentActivationIds: activation.parentActivationIds,
+		});
+		if (activation.status !== "completed") {
+			throw new Error(`benchmark fixture expected completed activation: ${activation.id} (${activation.status})`);
+		}
+		appendWorkflowAttemptActivationCompleted(host, {
+			attemptId: options.attemptId,
+			activationId: activation.id,
+			output: activation.output,
+		});
+	}
 }
 
 function completedActivationIds(host: WorkflowLifecycleStoreHost, attemptId: string): string[] {

@@ -19,7 +19,7 @@ import type {
 	WorkflowTemplatePromptBindingSource,
 	WorkflowTemplatePromptSource,
 } from "../../workflow/definition";
-import { type FlowFreeze, freezeWorkflowArtifact, type WorkflowChangePolicy } from "../../workflow/freeze";
+import { type FlowFreeze, freezeWorkflowArtifact } from "../../workflow/freeze";
 import { buildWorkflowGraphView, renderWorkflowGraphText, type WorkflowGraphView } from "../../workflow/graph-view";
 import {
 	buildWorkflowInspection,
@@ -45,6 +45,11 @@ import {
 	type WorkflowCheckpointSnapshot,
 	type WorkflowRunAttemptSnapshot,
 	type WorkflowRunFamilySnapshot,
+	workflowChangeApplicationError,
+	workflowChangeApprovalDenial,
+	workflowChangeFreezeApplicationError,
+	workflowChangeProposalDenial,
+	workflowFreezeForChangeTarget,
 } from "../../workflow/lifecycle";
 import { resolveWorkflowNodeModel } from "../../workflow/model-resolution";
 import type { WorkflowNodeRuntimeHost } from "../../workflow/node-runtime";
@@ -1373,170 +1378,6 @@ function findWorkflowFamilyByChangeRequest(
 	return families.find(family => family.changeRequests.some(request => request.id === changeRequestId));
 }
 
-function workflowChangeApprovalDenial(
-	family: WorkflowRunFamilySnapshot,
-	request: WorkflowChangeRequestRecord,
-	actor: string,
-): string | undefined {
-	const policy = workflowChangePolicy(family, request);
-	if (isHumanWorkflowActor(actor)) {
-		return policy.humansCanApprove
-			? undefined
-			: `Workflow change request approval denied: ${actor} requires changePolicy.humansCanApprove`;
-	}
-	if (isSupervisorWorkflowActor(actor)) {
-		return policy.supervisorsCanApprove === true
-			? undefined
-			: `Workflow change request approval denied: ${actor} requires changePolicy.supervisorsCanApprove`;
-	}
-	return `Workflow change request approval denied: ${actor} requires human approval or authorized supervisor policy`;
-}
-
-function workflowChangeProposalDenial(
-	family: WorkflowRunFamilySnapshot,
-	request: ProposeWorkflowChangeRequestOptions,
-): string | undefined {
-	const policy = workflowChangePolicy(family, request);
-	if (request.origin === "internal-agent" && !policy.agentsCanPropose) {
-		return `Workflow change request proposal denied: ${request.actor} requires changePolicy.agentsCanPropose`;
-	}
-	return undefined;
-}
-
-function workflowChangePolicy(
-	family: WorkflowRunFamilySnapshot,
-	target: WorkflowChangePolicyTarget,
-): WorkflowChangePolicy {
-	const policy = workflowFreezeForChangeTarget(family, target)?.changePolicy;
-	return {
-		agentsCanPropose: policy?.agentsCanPropose ?? true,
-		humansCanApprove: policy?.humansCanApprove ?? true,
-		...(policy?.supervisorsCanApprove !== undefined ? { supervisorsCanApprove: policy.supervisorsCanApprove } : {}),
-	};
-}
-
-interface WorkflowChangePolicyTarget {
-	attemptId?: string;
-	checkpointId?: string;
-}
-
-function workflowFreezeForChangeTarget(
-	family: WorkflowRunFamilySnapshot,
-	target: WorkflowChangePolicyTarget,
-): FlowFreeze | undefined {
-	if (target.attemptId !== undefined) {
-		const attemptFreeze = workflowFreezeForAttempt(family, target.attemptId);
-		if (attemptFreeze !== undefined) return attemptFreeze;
-	}
-	if (target.checkpointId !== undefined) {
-		const checkpoint = family.checkpoints.find(candidate => candidate.id === target.checkpointId);
-		if (checkpoint !== undefined) {
-			const checkpointFreeze = workflowFreezeForAttempt(family, checkpoint.attemptId);
-			if (checkpointFreeze !== undefined) return checkpointFreeze;
-		}
-	}
-	return family.freezes.at(-1);
-}
-
-function workflowFreezeForAttempt(family: WorkflowRunFamilySnapshot, attemptId: string): FlowFreeze | undefined {
-	const attempt = family.attempts.find(candidate => candidate.id === attemptId);
-	if (attempt === undefined) return undefined;
-	return family.freezes.find(candidate => candidate.id === attempt.freezeId);
-}
-
-function workflowChangeApplicationError(
-	family: WorkflowRunFamilySnapshot,
-	request: WorkflowChangeRequestRecord,
-): string | undefined {
-	if (request.checkpointId !== undefined) {
-		const checkpoint = family.checkpoints.find(candidate => candidate.id === request.checkpointId);
-		if (checkpoint === undefined) return `Workflow change request checkpoint not found: ${request.checkpointId}`;
-	}
-	if (request.attemptId === undefined) return undefined;
-	const attempt = family.attempts.find(candidate => candidate.id === request.attemptId);
-	const attemptCheckpoints = family.checkpoints.filter(checkpoint => checkpoint.attemptId === request.attemptId);
-	if (attemptCheckpoints.length === 0) {
-		return `Workflow change request cannot be applied before checkpointing attempt: ${request.attemptId}`;
-	}
-	if (attempt !== undefined && attempt.status !== "stopped") {
-		return `Workflow change request cannot be applied before stopping attempt: ${attempt.id} (${attempt.status})`;
-	}
-	return undefined;
-}
-
-function workflowChangeFreezeApplicationError(
-	request: WorkflowChangeRequestRecord,
-	freeze: FlowFreeze,
-): string | undefined {
-	const nodeIds = new Set(freeze.definition.nodes.map(node => node.id));
-	const edges = freeze.definition.edges;
-	const modelRoles = freeze.definition.models.roles ?? {};
-	for (const operation of request.operations) {
-		if (operation.op === "add_node" && !nodeIds.has(operation.node.id)) {
-			return `Workflow change request cannot be applied to freeze ${freeze.id}: added node missing from freeze: ${operation.node.id}`;
-		}
-		if (operation.op === "remove_node" && nodeIds.has(operation.nodeId)) {
-			return `Workflow change request cannot be applied to freeze ${freeze.id}: removed node still exists in freeze: ${operation.nodeId}`;
-		}
-		if (operation.op === "add_edge" && !workflowDefinitionHasEdge(edges, operation.edge.from, operation.edge.to)) {
-			return `Workflow change request cannot be applied to freeze ${freeze.id}: added edge missing from freeze: ${operation.edge.from} -> ${operation.edge.to}`;
-		}
-		if (operation.op === "remove_edge" && workflowDefinitionHasEdge(edges, operation.from, operation.to)) {
-			return `Workflow change request cannot be applied to freeze ${freeze.id}: removed edge still exists in freeze: ${operation.from} -> ${operation.to}`;
-		}
-		if (operation.op === "replace_edge_condition") {
-			const edge = edges.find(candidate => candidate.from === operation.from && candidate.to === operation.to);
-			if (edge === undefined) {
-				return `Workflow change request cannot be applied to freeze ${freeze.id}: changed edge missing from freeze: ${operation.from} -> ${operation.to}`;
-			}
-			const condition = edge.condition?.source;
-			if (condition !== operation.condition) {
-				return `Workflow change request cannot be applied to freeze ${freeze.id}: edge condition mismatch for ${operation.from} -> ${operation.to}`;
-			}
-		}
-		if (operation.op === "replace_node_prompt_source") {
-			const node = freeze.definition.nodes.find(candidate => candidate.id === operation.nodeId);
-			if (!node || !workflowJsonEqual(node.promptSource, operation.promptSource)) {
-				return `Workflow change request cannot be applied to freeze ${freeze.id}: prompt source mismatch for node: ${operation.nodeId}`;
-			}
-		}
-		if (operation.op === "replace_node_model") {
-			const node = freeze.definition.nodes.find(candidate => candidate.id === operation.nodeId);
-			if (!node || !workflowJsonEqual(node.model, operation.model)) {
-				return `Workflow change request cannot be applied to freeze ${freeze.id}: model mismatch for node: ${operation.nodeId}`;
-			}
-		}
-		if (operation.op === "replace_node_permissions") {
-			const node = freeze.definition.nodes.find(candidate => candidate.id === operation.nodeId);
-			if (
-				!node ||
-				!workflowJsonEqual(node.reads ?? [], operation.reads ?? []) ||
-				!workflowJsonEqual(node.writes ?? [], operation.writes ?? [])
-			) {
-				return `Workflow change request cannot be applied to freeze ${freeze.id}: permissions mismatch for node: ${operation.nodeId}`;
-			}
-		}
-		if (operation.op === "set_model_role" && modelRoles[operation.role] !== operation.selector) {
-			return `Workflow change request cannot be applied to freeze ${freeze.id}: model role mismatch for role: ${operation.role}`;
-		}
-	}
-	for (const [sourceNodeId, targetNodeId] of Object.entries(request.frontierMapping)) {
-		void sourceNodeId;
-		if (!nodeIds.has(targetNodeId)) {
-			return `Workflow change request cannot be applied to freeze ${freeze.id}: frontier target missing from freeze: ${targetNodeId}`;
-		}
-	}
-	return undefined;
-}
-
-function workflowDefinitionHasEdge(edges: WorkflowDefinition["edges"], from: string, to: string): boolean {
-	return edges.some(edge => edge.from === from && edge.to === to);
-}
-
-function workflowJsonEqual(left: unknown, right: unknown): boolean {
-	return JSON.stringify(left) === JSON.stringify(right);
-}
-
 async function writeWorkflowChangeDraft(
 	baseFreeze: FlowFreeze,
 	request: WorkflowChangeRequestRecord,
@@ -1692,10 +1533,6 @@ function workflowEdgeToBlock(edge: WorkflowEdge): Record<string, unknown> {
 	const block: Record<string, unknown> = { from: edge.from, to: edge.to };
 	if (edge.condition !== undefined) block.when = edge.condition.source;
 	return block;
-}
-
-function isHumanWorkflowActor(actor: string): boolean {
-	return actor === "human" || actor.startsWith("human:");
 }
 
 function isSupervisorWorkflowActor(actor: string): boolean {

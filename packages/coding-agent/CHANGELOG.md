@@ -12,6 +12,7 @@
 ### Fixed
 
 - Fixed draft-based workflow refreezes so restart frontier mappings are preserved automatically when a generated draft is frozen, and repeated manual freeze applications are idempotent.
+- Fixed workflow lifecycle APIs so change applications and changed-freeze restarts cannot bypass proposal approval, stop/checkpoint requirements, supervisor policy, or applied freeze records outside the slash-command path.
 - Fixed workflow review nodes so standard reviewer JSON can still drive custom Humanize-style gates: declared gates are extracted from reviewer summaries before pass/fail mapping, and `fallbackVerdict` is used when correctness output cannot map to any declared gate.
 - Fixed imported `.omhflow` subflow exit conditions to namespace `outputs.<nodeId>` references before connecting the subflow to caller steps.
 - Fixed workflow graph patch proposals to reject edge conditions that reference missing output nodes or undeclared review verdict gates before a mutable flow can be refrozen.
