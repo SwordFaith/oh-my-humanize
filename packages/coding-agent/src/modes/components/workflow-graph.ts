@@ -3,6 +3,7 @@ import { renderOutputBlock } from "../../tui/output-block";
 import type { State } from "../../tui/types";
 import {
 	formatActiveWorkflowAgentGeneration,
+	formatOmittedAbortedOutputs,
 	formatWorkflowSubflow,
 	renderWorkflowGraphDiagram,
 	type WorkflowGraphActiveAgentView,
@@ -115,6 +116,9 @@ function workflowGraphHeaderLines(view: WorkflowGraphView): string[] {
 	if (view.checkpoint !== undefined) {
 		const frontier = view.checkpoint.frontier.map(entry => `${entry.from} to ${entry.to}`).join(", ") || "none";
 		lines.push(`frontier ${frontier}`);
+		if ((view.checkpoint.omittedAbortedOutputs ?? 0) > 0) {
+			lines.push(`aborted work ${formatOmittedAbortedOutputs(view.checkpoint.omittedAbortedOutputs ?? 0)}`);
+		}
 	}
 	return lines.map(line => theme.fg("muted", line));
 }

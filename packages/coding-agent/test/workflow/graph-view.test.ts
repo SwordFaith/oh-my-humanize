@@ -602,6 +602,68 @@ describe("workflow graph view rendering", () => {
 		expect(renderWorkflowGraphText(view)).toContain("Checkpoint frontier: checkpoint-1 weakReview to strongReview");
 	});
 
+	it("surfaces checkpointed aborted work as omitted activation output", async () => {
+		const freeze = createFreeze({
+			name: "checkpoint-aborted-output",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "buildRound", type: "agent" },
+				{ id: "reviewRound", type: "review" },
+			],
+			edges: [{ from: "buildRound", to: "reviewRound" }],
+		});
+		const view = buildWorkflowGraphView({
+			id: "checkpoint-aborted-output-family",
+			freezes: [freeze],
+			attempts: [
+				{
+					id: "attempt-1",
+					familyId: "checkpoint-aborted-output-family",
+					freezeId: freeze.id,
+					startNodeId: "buildRound",
+					status: "stopped",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-build",
+							nodeId: "buildRound",
+							parentActivationIds: [],
+							status: "aborted",
+							reason: "stop deadline elapsed",
+						},
+					],
+				},
+			],
+			checkpoints: [
+				{
+					id: "checkpoint-1",
+					familyId: "checkpoint-aborted-output-family",
+					attemptId: "attempt-1",
+					completedActivationIds: [],
+					abortedActivationIds: ["activation-build"],
+					frontierNodeIds: ["buildRound"],
+					state: {},
+					sourceMapping: { buildRound: "buildRound" },
+				},
+			],
+			changeRequests: [],
+		});
+
+		expect(view.checkpoint?.omittedAbortedOutputs).toBe(1);
+		expect(renderWorkflowGraphText(view)).toContain(
+			"Checkpoint omitted aborted work: checkpoint-1 1 activation output omitted",
+		);
+
+		const theme = await getThemeByName("dark");
+		if (!theme) throw new Error("dark theme fixture is required");
+		setThemeInstance(theme);
+		const componentText = stripAnsi(new WorkflowGraphComponent(view, { refreshMs: 0 }).render(120).join("\n"));
+
+		expect(componentText).toContain("aborted work 1 activation output omitted");
+		expect(componentText).not.toContain("half-finished");
+	});
+
 	it("renders checkpointed activations from the checkpoint attempt when ids were reused", () => {
 		const freeze = createFreeze({
 			name: "checkpoint-duplicate-ids",

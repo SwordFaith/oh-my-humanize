@@ -91,6 +91,7 @@ export interface WorkflowGraphEdgeView {
 export interface WorkflowGraphCheckpointView {
 	id: string;
 	frontier: WorkflowGraphFrontierView[];
+	omittedAbortedOutputs?: number;
 }
 
 export interface WorkflowGraphFrontierView {
@@ -218,6 +219,9 @@ export function buildWorkflowGraphView(
 				to: mapWorkflowCheckpointFrontierNode(family, currentCheckpoint, nodeId, currentFreeze),
 			})),
 		};
+		if (currentCheckpoint.abortedActivationIds.length > 0) {
+			view.checkpoint.omittedAbortedOutputs = currentCheckpoint.abortedActivationIds.length;
+		}
 	}
 	return view;
 }
@@ -249,6 +253,11 @@ export function renderWorkflowGraphText(view: WorkflowGraphView, options: Workfl
 	lines.push(...renderWorkflowGraphDiagram(view, options));
 	if (view.checkpoint !== undefined) {
 		lines.push(`Checkpoint frontier: ${view.checkpoint.id} ${formatCheckpointFrontier(view.checkpoint)}`);
+		if ((view.checkpoint.omittedAbortedOutputs ?? 0) > 0) {
+			lines.push(
+				`Checkpoint omitted aborted work: ${view.checkpoint.id} ${formatOmittedAbortedOutputs(view.checkpoint.omittedAbortedOutputs ?? 0)}`,
+			);
+		}
 	}
 	if (view.lineage.length > 0) {
 		lines.push("Mutable lineage:");
@@ -991,6 +1000,10 @@ function formatWorkflowDuration(durationMs: number): string {
 function formatCheckpointFrontier(checkpoint: WorkflowGraphCheckpointView): string {
 	if (checkpoint.frontier.length === 0) return "none";
 	return checkpoint.frontier.map(entry => `${entry.from} to ${entry.to}`).join(", ");
+}
+
+export function formatOmittedAbortedOutputs(count: number): string {
+	return `${count} ${count === 1 ? "activation output" : "activation outputs"} omitted`;
 }
 
 export function formatWorkflowSubflow(subflow: WorkflowGraphSubflowView): string {
