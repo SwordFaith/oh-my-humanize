@@ -1,5 +1,6 @@
 import { YAML } from "bun";
 import { diagnoseWorkflowConditionReferences, parseWorkflowCondition, WorkflowConditionError } from "./condition";
+import { parseWorkflowStateSchema, type WorkflowStateSchema, WorkflowStateSchemaError } from "./state-schema";
 
 export type WorkflowNodeType = "agent" | "script" | "human" | "review";
 export type WorkflowModelUnavailablePolicy = "fallback-to-parent" | "fail";
@@ -35,8 +36,6 @@ export interface WorkflowResourceDeclaration {
 	kind?: WorkflowResourceKind;
 	required?: boolean;
 }
-
-export type WorkflowStateSchema = Record<string, unknown>;
 
 export interface WorkflowCapabilityContract {
 	tools?: string[];
@@ -251,8 +250,14 @@ function parseEdges(value: unknown, sourcePath?: string): WorkflowEdge[] {
 
 function parseStateSchema(value: unknown, path: string, sourcePath?: string): WorkflowStateSchema | undefined {
 	if (value === undefined) return undefined;
-	const raw = expectRecord(value, path, sourcePath);
-	return structuredClone(raw);
+	try {
+		return parseWorkflowStateSchema(value, path);
+	} catch (error) {
+		if (error instanceof WorkflowStateSchemaError) {
+			throw new WorkflowDefinitionError(error.message, sourcePath);
+		}
+		throw error;
+	}
 }
 
 function parseResourceDeclarations(

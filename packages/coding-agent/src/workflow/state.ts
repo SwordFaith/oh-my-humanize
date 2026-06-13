@@ -1,3 +1,5 @@
+import { assertWorkflowStateWriteMatchesSchema, type WorkflowStateSchema } from "./state-schema";
+
 export const DEFAULT_WORKFLOW_MAX_INLINE_VALUE_BYTES = 32 * 1024;
 export const DEFAULT_WORKFLOW_MAX_SUMMARY_BYTES = 8 * 1024;
 
@@ -19,6 +21,7 @@ export interface WorkflowStateAccessPolicy {
 	allowedWritePaths?: string[];
 	maxInlineValueBytes?: number;
 	maxSummaryBytes?: number;
+	stateSchema?: WorkflowStateSchema;
 }
 
 export class WorkflowStateError extends Error {
@@ -44,8 +47,9 @@ export function applyWorkflowStatePatch(
 ): void {
 	assertNoConflictingWrites(patch);
 	for (const operation of patch) {
-		assertPointerAllowed(operation.path, policy.allowedWritePaths, "write to");
-		assertInlineValue(operation.path, operation.value, policy);
+		assertWorkflowStateWriteAllowed(operation, policy);
+	}
+	for (const operation of patch) {
 		setStatePath(state, operation.path, operation.value);
 	}
 }
@@ -75,11 +79,19 @@ export function validateWorkflowActivationOutput(
 		result.statePatch = expectStatePatch(raw.statePatch);
 		assertNoConflictingWrites(result.statePatch);
 		for (const operation of result.statePatch) {
-			assertPointerAllowed(operation.path, policy.allowedWritePaths, "write to");
-			assertInlineValue(operation.path, operation.value, policy);
+			assertWorkflowStateWriteAllowed(operation, policy);
 		}
 	}
 	return result;
+}
+
+function assertWorkflowStateWriteAllowed(
+	operation: WorkflowStatePatchOperation,
+	policy: WorkflowStateAccessPolicy,
+): void {
+	assertPointerAllowed(operation.path, policy.allowedWritePaths, "write to");
+	assertInlineValue(operation.path, operation.value, policy);
+	assertWorkflowStateWriteMatchesSchema(operation.path, operation.value, policy.stateSchema);
 }
 
 function assertNoConflictingWrites(patch: WorkflowStatePatchOperation[]): void {

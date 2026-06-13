@@ -148,6 +148,35 @@ describe("workflow run store", () => {
 		expect(reconstructed[0]?.state).toEqual({ round: 1, verdict: "continue" });
 	});
 
+	it("enforces the definition state schema when reconstructing history", () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(
+			`
+name: schema-history-demo
+version: 1
+stateSchema:
+  version: 1
+  shape:
+    verdict: string
+nodes:
+  review:
+    type: review
+edges: []
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+		const run = startWorkflowRun(host, definition, { runId: "run-1" });
+
+		appendWorkflowStatePatch(host, run.id, {
+			patch: [{ op: "set", path: "/verdict", value: { status: "continue" } }],
+			reason: "corrupt historical event",
+		});
+
+		expect(() => reconstructWorkflowRuns(host.getBranch())).toThrow(
+			'workflow state schema rejects write to "/verdict": expected string, received object',
+		);
+	});
+
 	it("reconstructs graph patch proposals without active-run patch applications", () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });

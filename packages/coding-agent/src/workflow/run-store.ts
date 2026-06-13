@@ -276,7 +276,7 @@ export function reconstructWorkflowRuns(
 		const run = runs.get(event.runId);
 		if (!run) continue;
 		if (event.event === "state_patch_applied") {
-			applyWorkflowStatePatch(run.state, event.patch);
+			applyWorkflowStatePatch(run.state, event.patch, { stateSchema: run.definition.stateSchema });
 			continue;
 		}
 		if (event.event === "graph_patch_proposed") {

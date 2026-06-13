@@ -71,6 +71,26 @@ edges: []
 		expect(definition.nodes[0]?.fallbackVerdict).toBe("CONTINUE");
 	});
 
+	it("rejects unsupported state schema field types before execution", () => {
+		expect(() =>
+			parseWorkflowDefinition(
+				`
+name: invalid-state-schema
+version: 1
+stateSchema:
+  version: 1
+  shape:
+    verdict: enum
+nodes:
+  review:
+    type: review
+edges: []
+`,
+				{ sourcePath: "schema.yml" },
+			),
+		).toThrow("schema.yml: stateSchema.shape.verdict must be string, number, boolean, object, array, or null");
+	});
+
 	it("rejects review fallback verdicts outside declared gates", () => {
 		expect(() =>
 			parseWorkflowDefinition(

@@ -228,6 +228,42 @@ describe("workflow activation scheduler", () => {
 		expect(result.state).toEqual({});
 	});
 
+	it("fails activations that violate the workflow state schema", async () => {
+		const definition = parseWorkflowDefinition(
+			`
+name: schema-demo
+version: 1
+stateSchema:
+  version: 1
+  shape:
+    verdict: string
+nodes:
+  review:
+    type: review
+    writes:
+      - /verdict
+edges: []
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+
+		const result = await runWorkflowScheduler(definition, {
+			startNodeId: "review",
+			executeNode: async () => ({
+				summary: "attempted invalid verdict write",
+				statePatch: [{ op: "set", path: "/verdict", value: { status: "continue" } }],
+			}),
+		});
+
+		expect(result.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["review", "failed"],
+		]);
+		expect(result.activations[0]?.error).toBe(
+			'workflow state schema rejects write to "/verdict": expected string, received object',
+		);
+		expect(result.state).toEqual({});
+	});
+
 	it("creates separate activations for loops and stops at the activation limit", async () => {
 		const definition = parseWorkflowDefinition(loopWorkflow, { sourcePath: "workflow.yml" });
 

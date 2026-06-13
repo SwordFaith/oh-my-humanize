@@ -135,7 +135,7 @@ export async function runWorkflowScheduler(
 			running.set(activation.id, {
 				activation,
 				node,
-				result: executeSchedulerActivation(options, activation, node, context),
+				result: executeSchedulerActivation(definition, options, activation, node, context),
 			});
 		}
 	};
@@ -166,7 +166,10 @@ export async function runWorkflowScheduler(
 		}
 		result.activation.output = output;
 		if (output.statePatch) {
-			applyWorkflowStatePatch(state, output.statePatch, { allowedWritePaths: result.node.writes });
+			applyWorkflowStatePatch(state, output.statePatch, {
+				allowedWritePaths: result.node.writes,
+				stateSchema: definition.stateSchema,
+			});
 		}
 		if (output.data !== undefined) {
 			outputsByNode[result.activation.nodeId] = output.data;
@@ -215,6 +218,7 @@ export async function runWorkflowScheduler(
 }
 
 async function executeSchedulerActivation(
+	definition: WorkflowDefinition,
 	options: WorkflowSchedulerOptions,
 	activation: WorkflowActivation,
 	node: WorkflowNode,
@@ -226,6 +230,7 @@ async function executeSchedulerActivation(
 			node,
 			output: validateWorkflowActivationOutput(await options.executeNode(activation, node, context), {
 				allowedWritePaths: node.writes,
+				stateSchema: definition.stateSchema,
 			}),
 		};
 	} catch (error) {

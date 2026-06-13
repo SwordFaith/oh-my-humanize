@@ -135,6 +135,14 @@ function binding(id: string): RuntimeBindingSnapshot {
 	};
 }
 
+function isStatePatchEvent(data: unknown): boolean {
+	return isRecord(data) && data.event === "state_patch_applied";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 describe("workflow runner", () => {
 	it("persists activation lifecycle, state patches, artifacts, and model audit for a run", async () => {
 		const host = createHost();
@@ -181,6 +189,53 @@ describe("workflow runner", () => {
 			resolvedModel: "openai/gpt-4o",
 			fallbackUsed: false,
 		});
+	});
+
+	it("rejects schema-invalid activation output before persisting state patches", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(
+			`
+name: runner-schema-demo
+version: 1
+stateSchema:
+  version: 1
+  shape:
+    work: object
+nodes:
+  build:
+    type: agent
+    agent: task
+    writes:
+      - /work
+edges: []
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async () => ({
+				summary: "attempted invalid work write",
+				statePatch: [{ op: "set", path: "/work", value: "built" }],
+			}),
+		};
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "run-schema-invalid",
+			startNodeId: "build",
+			runtimeHost,
+		});
+
+		expect(result.scheduler.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "failed"],
+		]);
+		expect(result.scheduler.activations[0]?.error).toBe(
+			'workflow state schema rejects write to "/work": expected object, received string',
+		);
+		expect(host.entries.some(entry => isStatePatchEvent(entry.data))).toBe(false);
+		const reconstructed = reconstructWorkflowRuns(host.getBranch());
+		expect(reconstructed[0]?.state).toEqual({});
+		expect(reconstructed[0]?.activations[0]?.status).toBe("failed");
 	});
 
 	it("lets agent node outputs choose downstream paths", async () => {

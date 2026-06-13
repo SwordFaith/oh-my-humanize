@@ -268,6 +268,7 @@ async function executeAndPersistActivation(
 			}),
 			{
 				allowedWritePaths: node.writes,
+				stateSchema: options.definition.stateSchema,
 			},
 		);
 		if (output.statePatch) {

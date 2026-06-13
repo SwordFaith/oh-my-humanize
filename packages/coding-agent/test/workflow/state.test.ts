@@ -44,6 +44,49 @@ describe("workflow structured state and artifacts", () => {
 		).toThrow('workflow state patch writes "/review/verdict" more than once');
 	});
 
+	it("enforces declared state schema before mutating state", () => {
+		const state: Record<string, unknown> = {};
+		const stateSchema = {
+			version: 1,
+			shape: {
+				review: "object",
+				verdict: "string",
+			},
+		} as const;
+
+		applyWorkflowStatePatch(
+			state,
+			[
+				{ op: "set", path: "/review/verdict", value: "continue" },
+				{ op: "set", path: "/verdict", value: "continue" },
+			],
+			{ stateSchema },
+		);
+
+		expect(state).toEqual({ review: { verdict: "continue" }, verdict: "continue" });
+		expect(() =>
+			applyWorkflowStatePatch(
+				state,
+				[
+					{ op: "set", path: "/review/score", value: 0.92 },
+					{ op: "set", path: "/verdict", value: { status: "continue" } },
+				],
+				{ stateSchema },
+			),
+		).toThrow('workflow state schema rejects write to "/verdict": expected string, received object');
+		expect(state).toEqual({ review: { verdict: "continue" }, verdict: "continue" });
+		expect(() =>
+			applyWorkflowStatePatch(state, [{ op: "set", path: "/verdict/reason", value: "still failing" }], {
+				stateSchema,
+			}),
+		).toThrow(
+			'workflow state schema rejects write to "/verdict/reason": "/verdict" is string and cannot contain children',
+		);
+		expect(() =>
+			applyWorkflowStatePatch(state, [{ op: "set", path: "/unknown", value: true }], { stateSchema }),
+		).toThrow('workflow state schema rejects write to "/unknown": top-level field "unknown" is not declared');
+	});
+
 	it("reads state inside allowed scopes and rejects reads outside them", () => {
 		const state = {
 			review: { verdict: "continue" },
