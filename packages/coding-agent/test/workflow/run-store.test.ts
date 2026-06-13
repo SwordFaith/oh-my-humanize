@@ -198,6 +198,8 @@ edges: []
 			modelChanges: [],
 			permissionChanges: [],
 			modelRoleChanges: [],
+			abandonedBranches: [],
+			rolledBackBranches: [],
 			warnings: [],
 		};
 

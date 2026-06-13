@@ -69,6 +69,8 @@ function graphPatchPreview() {
 		modelChanges: [{ nodeId: "review", before: { role: "reviewer" }, after: { selector: "openai/gpt-4o" } }],
 		permissionChanges: [],
 		modelRoleChanges: [],
+		abandonedBranches: [],
+		rolledBackBranches: [],
 		warnings: ["review model changed"],
 	};
 }

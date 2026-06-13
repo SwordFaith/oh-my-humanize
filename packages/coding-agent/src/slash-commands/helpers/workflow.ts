@@ -1926,6 +1926,23 @@ function parseWorkflowGraphPatchOperation(value: unknown, pathLabel: string): Wo
 			selector: expectWorkflowPatchString(raw.selector, `${pathLabel}.selector`),
 		};
 	}
+	if (op === "abandon_branch") {
+		const operation: WorkflowGraphPatchOperation = {
+			op,
+			nodeId: expectWorkflowPatchString(raw.nodeId, `${pathLabel}.nodeId`),
+		};
+		if (raw.reason !== undefined) operation.reason = expectWorkflowPatchString(raw.reason, `${pathLabel}.reason`);
+		return operation;
+	}
+	if (op === "rollback_branch") {
+		const operation: WorkflowGraphPatchOperation = {
+			op,
+			nodeId: expectWorkflowPatchString(raw.nodeId, `${pathLabel}.nodeId`),
+			targetNodeId: expectWorkflowPatchString(raw.targetNodeId, `${pathLabel}.targetNodeId`),
+		};
+		if (raw.reason !== undefined) operation.reason = expectWorkflowPatchString(raw.reason, `${pathLabel}.reason`);
+		return operation;
+	}
 	throw new Error(`${pathLabel}: unsupported workflow change operation "${op}"`);
 }
 
@@ -2438,6 +2455,8 @@ function formatWorkflowManagerOperation(operation: WorkflowGraphPatchOperation):
 	if (operation.op === "replace_node_model") return `replace_node_model ${operation.nodeId}`;
 	if (operation.op === "replace_node_permissions") return `replace_node_permissions ${operation.nodeId}`;
 	if (operation.op === "set_model_role") return `set_model_role ${operation.role}`;
+	if (operation.op === "abandon_branch") return `abandon_branch ${operation.nodeId}`;
+	if (operation.op === "rollback_branch") return `rollback_branch ${operation.nodeId} -> ${operation.targetNodeId}`;
 	return operation satisfies never;
 }
 

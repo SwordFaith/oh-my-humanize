@@ -214,6 +214,8 @@ function graphPatchPreview() {
 		modelChanges: [],
 		permissionChanges: [],
 		modelRoleChanges: [],
+		abandonedBranches: [],
+		rolledBackBranches: [],
 		warnings: [],
 	};
 }
@@ -1258,6 +1260,48 @@ edges: []
 					writes: ["/verification"],
 				},
 			},
+		]);
+	});
+
+	it("records branch disposition operations in workflow change requests", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		await Bun.write(path.join(dir, "release.omhflow"), workflowArtifactSource());
+		await Bun.write(
+			path.join(dir, "change.json"),
+			JSON.stringify({
+				id: "change-branch-disposition",
+				actor: "agent:evaluator",
+				origin: "internal-agent",
+				reason: "abandon regressed branch and return to baseline",
+				operations: [
+					{ op: "abandon_branch", nodeId: "build", reason: "candidate regressed latency" },
+					{ op: "rollback_branch", nodeId: "build", targetNodeId: "build", reason: "baseline remains active" },
+				],
+				frontierMapping: { build: "build" },
+			}),
+		);
+		const entries: CapturedEntry[] = [];
+		const { output, runtime } = createRuntime(entries);
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				`/workflow freeze ${path.join(dir, "release.omhflow")} --family-id family-branch-disposition`,
+				runtime,
+			),
+		).toEqual({ consumed: true });
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				`/workflow request-change ${path.join(dir, "change.json")} --family-id family-branch-disposition`,
+				runtime,
+			),
+		).toEqual({ consumed: true });
+
+		const family = reconstructWorkflowFamilies(entries)[0];
+		expect(output.some(entry => entry.includes("Workflow change request: change-branch-disposition"))).toBeTrue();
+		expect(family?.changeRequests[0]?.operations).toEqual([
+			{ op: "abandon_branch", nodeId: "build", reason: "candidate regressed latency" },
+			{ op: "rollback_branch", nodeId: "build", targetNodeId: "build", reason: "baseline remains active" },
 		]);
 	});
 

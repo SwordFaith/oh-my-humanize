@@ -701,6 +701,11 @@ export function workflowChangeApplicationError(
 		const checkpoint = family.checkpoints.find(candidate => candidate.id === request.checkpointId);
 		if (checkpoint === undefined) return `Workflow change request checkpoint not found: ${request.checkpointId}`;
 	}
+	const sourceFreeze = workflowFreezeForChangeTarget(family, request);
+	if (sourceFreeze !== undefined) {
+		const branchDispositionError = workflowChangeBranchDispositionError(request, sourceFreeze);
+		if (branchDispositionError !== undefined) return branchDispositionError;
+	}
 	if (request.attemptId === undefined) return undefined;
 	const attempt = family.attempts.find(candidate => candidate.id === request.attemptId);
 	const attemptCheckpoints = family.checkpoints.filter(checkpoint => checkpoint.attemptId === request.attemptId);
@@ -772,6 +777,27 @@ export function workflowChangeFreezeApplicationError(
 	for (const targetNodeId of Object.values(request.frontierMapping)) {
 		if (!nodeIds.has(targetNodeId)) {
 			return `Workflow change request cannot be applied to freeze ${freeze.id}: frontier target missing from freeze: ${targetNodeId}`;
+		}
+	}
+	return undefined;
+}
+
+function workflowChangeBranchDispositionError(
+	request: WorkflowChangeRequestRecord,
+	sourceFreeze: FlowFreeze,
+): string | undefined {
+	const nodeIds = new Set(sourceFreeze.definition.nodes.map(node => node.id));
+	for (const operation of request.operations) {
+		if (operation.op === "abandon_branch" && !nodeIds.has(operation.nodeId)) {
+			return `Workflow change request branch disposition references missing source node: ${operation.nodeId}`;
+		}
+		if (operation.op === "rollback_branch") {
+			if (!nodeIds.has(operation.nodeId)) {
+				return `Workflow change request branch disposition references missing source node: ${operation.nodeId}`;
+			}
+			if (!nodeIds.has(operation.targetNodeId)) {
+				return `Workflow change request branch rollback references missing target node: ${operation.targetNodeId}`;
+			}
 		}
 	}
 	return undefined;

@@ -21,7 +21,9 @@ export type WorkflowGraphPatchOperation =
 	| WorkflowReplaceNodePromptSourcePatchOperation
 	| WorkflowReplaceNodeModelPatchOperation
 	| WorkflowReplaceNodePermissionsPatchOperation
-	| WorkflowSetModelRolePatchOperation;
+	| WorkflowSetModelRolePatchOperation
+	| WorkflowAbandonBranchPatchOperation
+	| WorkflowRollbackBranchPatchOperation;
 
 export interface WorkflowAddNodePatchOperation {
 	op: "add_node";
@@ -76,6 +78,19 @@ export interface WorkflowSetModelRolePatchOperation {
 	selector: string;
 }
 
+export interface WorkflowAbandonBranchPatchOperation {
+	op: "abandon_branch";
+	nodeId: string;
+	reason?: string;
+}
+
+export interface WorkflowRollbackBranchPatchOperation {
+	op: "rollback_branch";
+	nodeId: string;
+	targetNodeId: string;
+	reason?: string;
+}
+
 export interface WorkflowGraphPatchContext {
 	actor: WorkflowGraphPatchActor;
 	reason?: string;
@@ -101,6 +116,8 @@ export interface WorkflowGraphPatchPreview {
 	modelChanges: WorkflowNodeModelChange[];
 	permissionChanges: WorkflowNodePermissionChange[];
 	modelRoleChanges: WorkflowModelRoleChange[];
+	abandonedBranches: WorkflowBranchDisposition[];
+	rolledBackBranches: WorkflowRollbackBranchDisposition[];
 	warnings: string[];
 }
 
@@ -136,6 +153,15 @@ export interface WorkflowModelRoleChange {
 	role: string;
 	before?: string;
 	after: string;
+}
+
+export interface WorkflowBranchDisposition {
+	nodeId: string;
+	reason?: string;
+}
+
+export interface WorkflowRollbackBranchDisposition extends WorkflowBranchDisposition {
+	targetNodeId: string;
 }
 
 export interface WorkflowGraphPatchProposal {
@@ -276,6 +302,14 @@ function applyPatchOperation(
 	}
 	if (operation.op === "set_model_role") {
 		setModelRole(definition, operation, preview);
+		return;
+	}
+	if (operation.op === "abandon_branch") {
+		abandonBranch(definition, operation, preview);
+		return;
+	}
+	if (operation.op === "rollback_branch") {
+		rollbackBranch(definition, operation, preview);
 		return;
 	}
 	const unreachable: never = operation;
@@ -432,6 +466,38 @@ function setModelRole(
 	const before = definition.models.roles[operation.role];
 	definition.models.roles[operation.role] = operation.selector;
 	preview.modelRoleChanges.push({ role: operation.role, before, after: operation.selector });
+}
+
+function abandonBranch(
+	definition: WorkflowDefinition,
+	operation: WorkflowAbandonBranchPatchOperation,
+	preview: WorkflowGraphPatchPreview,
+): void {
+	findNodeIndex(definition, operation.nodeId);
+	const disposition: WorkflowBranchDisposition = { nodeId: operation.nodeId };
+	if (operation.reason !== undefined) {
+		validateNonEmptyString(operation.reason, "workflow graph patch abandon branch reason");
+		disposition.reason = operation.reason;
+	}
+	preview.abandonedBranches.push(disposition);
+}
+
+function rollbackBranch(
+	definition: WorkflowDefinition,
+	operation: WorkflowRollbackBranchPatchOperation,
+	preview: WorkflowGraphPatchPreview,
+): void {
+	findNodeIndex(definition, operation.nodeId);
+	findNodeIndex(definition, operation.targetNodeId);
+	const disposition: WorkflowRollbackBranchDisposition = {
+		nodeId: operation.nodeId,
+		targetNodeId: operation.targetNodeId,
+	};
+	if (operation.reason !== undefined) {
+		validateNonEmptyString(operation.reason, "workflow graph patch rollback branch reason");
+		disposition.reason = operation.reason;
+	}
+	preview.rolledBackBranches.push(disposition);
 }
 
 function validateDefinitionGraph(definition: WorkflowDefinition): void {
@@ -706,6 +772,8 @@ function createEmptyPreview(): WorkflowGraphPatchPreview {
 		modelChanges: [],
 		permissionChanges: [],
 		modelRoleChanges: [],
+		abandonedBranches: [],
+		rolledBackBranches: [],
 		warnings: [],
 	};
 }

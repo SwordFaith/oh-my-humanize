@@ -195,6 +195,60 @@ describe("workflow graph patch API", () => {
 		).toThrow("workflow graph patch model role selector must be non-empty");
 	});
 
+	it("records branch dispositions without mutating the workflow graph", () => {
+		const definition = parseWorkflowDefinition(
+			`
+name: branch-disposition-demo
+version: 1
+nodes:
+  build:
+    type: script
+  tryFast:
+    type: script
+  trySafe:
+    type: script
+  review:
+    type: review
+edges:
+  - from: build
+    to: tryFast
+  - from: build
+    to: trySafe
+  - from: tryFast
+    to: review
+  - from: trySafe
+    to: review
+`,
+			{ sourcePath: "workflow.yml" },
+		);
+
+		const result = applyWorkflowGraphPatch(
+			definition,
+			[
+				{ op: "abandon_branch", nodeId: "trySafe", reason: "candidate regressed latency" },
+				{ op: "rollback_branch", nodeId: "tryFast", targetNodeId: "build", reason: "keep baseline path" },
+			],
+			{ actor: "supervisor" },
+		);
+
+		expect(result.definition.nodes.map(node => node.id)).toEqual(["build", "tryFast", "trySafe", "review"]);
+		expect(result.definition.edges.map(edge => [edge.from, edge.to])).toEqual([
+			["build", "tryFast"],
+			["build", "trySafe"],
+			["tryFast", "review"],
+			["trySafe", "review"],
+		]);
+		expect(result.preview.abandonedBranches).toEqual([{ nodeId: "trySafe", reason: "candidate regressed latency" }]);
+		expect(result.preview.rolledBackBranches).toEqual([
+			{ nodeId: "tryFast", targetNodeId: "build", reason: "keep baseline path" },
+		]);
+		expect(() =>
+			applyWorkflowGraphPatch(definition, [{ op: "abandon_branch", nodeId: "missing", reason: "unknown branch" }], {
+				actor: "supervisor",
+			}),
+		).toThrow('workflow graph patch references unknown node "missing"');
+	});
+
 	it("validates patch references, model context, and edge conditions", () => {
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
 

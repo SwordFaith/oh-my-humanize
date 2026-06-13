@@ -195,7 +195,10 @@ sequence:
 			actor: "agent:evaluator",
 			origin: "internal-agent",
 			reason: "promote positive tryTiling branch and abandon negative tryFusion branch",
-			operations: [{ op: "add_node", node: { id: "integrate", type: "script" } }],
+			operations: [
+				{ op: "abandon_branch", nodeId: "tryFusion", reason: "candidate regressed latency" },
+				{ op: "add_node", node: { id: "integrate", type: "script" } },
+			],
 			frontierMapping: { evaluate: "integrate" },
 		});
 		approveWorkflowChangeRequest(host, {
@@ -279,6 +282,10 @@ sequence:
 				approvedBy: "human:sihao",
 				frontierMapping: { evaluate: "integrate" },
 			},
+		]);
+		expect(family.changeRequests[0]?.operations).toEqual([
+			{ op: "abandon_branch", nodeId: "tryFusion", reason: "candidate regressed latency" },
+			{ op: "add_node", node: { id: "integrate", type: "script" } },
 		]);
 		expect(inspection.checkpoints).toMatchObject([
 			{
