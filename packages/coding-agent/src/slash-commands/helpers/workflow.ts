@@ -88,6 +88,12 @@ interface WorkflowStopArgs {
 	deadlineMs?: number;
 }
 
+interface WorkflowInterruptArgs {
+	attemptId: string;
+	target: string;
+	deadlineMs?: number;
+}
+
 interface WorkflowRestartArgs {
 	checkpointId: string;
 	freezeId?: string;
@@ -152,6 +158,7 @@ interface ActiveWorkflowAttempt {
 	runId: string;
 	stopController: AbortController;
 	nodeAbortController: AbortController;
+	nodeAbortControllers: Map<string, AbortController>;
 	lifecycle: WorkflowRunnerLifecycleOptions;
 	finished: Promise<void>;
 }
@@ -193,6 +200,9 @@ export async function handleWorkflowAcp(
 	}
 	if (verb === "stop") {
 		return handleStopCommand(rest, runtime);
+	}
+	if (verb === "interrupt") {
+		return handleInterruptCommand(rest, runtime);
 	}
 	if (verb === "restart") {
 		return handleRestartCommand(rest, runtime);
@@ -322,6 +332,7 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 	}
 	const stopController = lifecycle !== undefined ? new AbortController() : undefined;
 	const nodeAbortController = lifecycle !== undefined ? new AbortController() : undefined;
+	const nodeAbortControllers = new Map<string, AbortController>();
 	const runPromise = runWorkflow({
 		host: runtime.sessionManager,
 		definition: pkg.definition,
@@ -335,6 +346,12 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 		...(parsed.maxNodeActivations !== undefined ? { maxNodeActivations: parsed.maxNodeActivations } : {}),
 		...(stopController !== undefined ? { signal: stopController.signal } : {}),
 		...(nodeAbortController !== undefined ? { nodeAbortSignal: nodeAbortController.signal } : {}),
+		...(lifecycle !== undefined
+			? {
+					nodeAbortSignalForActivation: activation =>
+						nodeAbortSignalForActivation(nodeAbortControllers, activation),
+				}
+			: {}),
 		lifecycle,
 	});
 	if (stopController !== undefined && nodeAbortController !== undefined && lifecycle !== undefined) {
@@ -346,6 +363,7 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 			runId,
 			stopController,
 			nodeAbortController,
+			nodeAbortControllers,
 			lifecycle,
 			finished: runPromise.then(
 				() => undefined,
@@ -680,6 +698,30 @@ async function handleStopCommand(rest: string, runtime: SlashCommandRuntime): Pr
 	return commandConsumed();
 }
 
+async function handleInterruptCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+	const parsed = parseWorkflowInterruptArgs(rest);
+	if ("error" in parsed) return usage(parsed.error, runtime);
+	const families = reconstructWorkflowFamilies(runtime.sessionManager.getBranch());
+	const family = families.find(candidate => candidate.attempts.some(attempt => attempt.id === parsed.attemptId));
+	const attempt = family?.attempts.find(candidate => candidate.id === parsed.attemptId);
+	if (!family || !attempt) return usage(`Workflow attempt not found: ${parsed.attemptId}`, runtime);
+	if (attempt.status !== "running") {
+		return usage(`Workflow attempt is not running: ${attempt.id} (${attempt.status})`, runtime);
+	}
+	const active = findActiveWorkflowAttempt(runtime, attempt.id);
+	if (active === undefined) {
+		return usage(`Workflow attempt is not attached to this OMP session: ${attempt.id}`, runtime);
+	}
+	return interruptActiveWorkflowActivation(
+		runtime,
+		family,
+		attempt,
+		active,
+		parsed.target,
+		parsed.deadlineMs ?? 30_000,
+	);
+}
+
 async function stopActiveWorkflowAttempt(
 	runtime: SlashCommandRuntime,
 	family: WorkflowRunFamilySnapshot,
@@ -717,9 +759,64 @@ async function stopActiveWorkflowAttempt(
 	return commandConsumed();
 }
 
+async function interruptActiveWorkflowActivation(
+	runtime: SlashCommandRuntime,
+	family: WorkflowRunFamilySnapshot,
+	attempt: WorkflowRunAttemptSnapshot,
+	active: ActiveWorkflowAttempt,
+	target: string,
+	deadlineMs: number,
+): Promise<SlashCommandResult> {
+	const activation = resolveInterruptTarget(attempt, target);
+	if (activation === undefined) {
+		return usage(`Workflow running activation not found: ${target}`, runtime);
+	}
+	const controller = active.nodeAbortControllers.get(activation.id);
+	if (controller === undefined) {
+		return usage(`Workflow activation is not attached to this OMP session: ${activation.id}`, runtime);
+	}
+	active.lifecycle.stopDeadlineMs = deadlineMs;
+	if (!active.stopController.signal.aborted) {
+		active.stopController.abort(`workflow activation interrupted: ${activation.nodeId}`);
+	}
+	if (deadlineMs <= 0) {
+		abortWorkflowActivation(controller, `workflow activation interrupted: ${activation.nodeId}`);
+	} else {
+		const finishedBeforeDeadline = await Promise.race([
+			active.finished.then(() => true),
+			Bun.sleep(deadlineMs).then(() => false),
+		]);
+		if (!finishedBeforeDeadline) {
+			abortWorkflowActivation(controller, `workflow activation interrupted: ${activation.nodeId}`);
+		}
+	}
+	await active.finished;
+	const updatedFamily = reconstructWorkflowFamilies(runtime.sessionManager.getBranch()).find(
+		candidate => candidate.id === family.id,
+	);
+	const checkpoint = updatedFamily?.checkpoints.filter(candidate => candidate.attemptId === attempt.id).at(-1);
+	if (!checkpoint) {
+		return usage(`Workflow active attempt did not create a checkpoint: ${attempt.id}`, runtime);
+	}
+	await flushWorkflowLifecycle(runtime);
+	await runtime.output(`Workflow interrupted activation: ${activation.id} (${activation.nodeId})`);
+	await runtime.output(formatWorkflowCheckpoint(checkpoint));
+	if (updatedFamily) await emitWorkflowGraphViews([buildWorkflowGraphViewForRuntime(updatedFamily, runtime)], runtime);
+	return commandConsumed();
+}
+
 function abortActiveWorkflowNodes(active: ActiveWorkflowAttempt): void {
 	if (!active.nodeAbortController.signal.aborted) {
 		active.nodeAbortController.abort("stop deadline elapsed");
+	}
+	for (const controller of active.nodeAbortControllers.values()) {
+		abortWorkflowActivation(controller, "stop deadline elapsed");
+	}
+}
+
+function abortWorkflowActivation(controller: AbortController, reason: string): void {
+	if (!controller.signal.aborted) {
+		controller.abort(reason);
 	}
 }
 
@@ -754,6 +851,7 @@ async function handleRestartCommand(rest: string, runtime: SlashCommandRuntime):
 	);
 	const stopController = new AbortController();
 	const nodeAbortController = new AbortController();
+	const nodeAbortControllers = new Map<string, AbortController>();
 	const lifecycle: WorkflowRunnerLifecycleOptions = {
 		familyId: located.family.id,
 		attemptId,
@@ -777,6 +875,7 @@ async function handleRestartCommand(rest: string, runtime: SlashCommandRuntime):
 		modelResolution,
 		signal: stopController.signal,
 		nodeAbortSignal: nodeAbortController.signal,
+		nodeAbortSignalForActivation: activation => nodeAbortSignalForActivation(nodeAbortControllers, activation),
 		lifecycle,
 	});
 	const active: ActiveWorkflowAttempt = {
@@ -785,6 +884,7 @@ async function handleRestartCommand(rest: string, runtime: SlashCommandRuntime):
 		runId: `${attemptId}:run`,
 		stopController,
 		nodeAbortController,
+		nodeAbortControllers,
 		lifecycle,
 		finished: runPromise.then(
 			() => undefined,
@@ -1195,6 +1295,41 @@ function parseWorkflowStopArgs(rest: string): WorkflowStopArgs | { error: string
 	return args;
 }
 
+function parseWorkflowInterruptArgs(rest: string): WorkflowInterruptArgs | { error: string } {
+	const tokens = parseCommandArgs(rest);
+	let attemptId: string | undefined;
+	let target: string | undefined;
+	let deadlineMs: number | undefined;
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (token === undefined) continue;
+		if (token === "--deadline-ms") {
+			const value = tokens[index + 1];
+			if (!value) return { error: workflowUsage() };
+			const parsed = Number(value);
+			if (!Number.isFinite(parsed) || parsed < 0)
+				return { error: "Workflow interrupt deadline must be a non-negative number." };
+			deadlineMs = parsed;
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--")) return { error: `Unknown workflow interrupt option: ${token}\n${workflowUsage()}` };
+		if (attemptId === undefined) {
+			attemptId = token;
+			continue;
+		}
+		if (target === undefined) {
+			target = token;
+			continue;
+		}
+		return { error: `Unexpected workflow interrupt argument: ${token}\n${workflowUsage()}` };
+	}
+	if (!attemptId || !target) return { error: workflowUsage() };
+	const args: WorkflowInterruptArgs = { attemptId, target };
+	if (deadlineMs !== undefined) args.deadlineMs = deadlineMs;
+	return args;
+}
+
 function parseWorkflowRestartArgs(rest: string): WorkflowRestartArgs | { error: string } {
 	const tokens = parseCommandArgs(rest);
 	let checkpointId: string | undefined;
@@ -1260,6 +1395,48 @@ function unregisterActiveWorkflowAttempt(runtime: SlashCommandRuntime, attemptId
 
 function findActiveWorkflowAttempt(runtime: SlashCommandRuntime, attemptId: string): ActiveWorkflowAttempt | undefined {
 	return activeWorkflowAttemptMap(runtime).get(attemptId);
+}
+
+function nodeAbortSignalForActivation(
+	controllers: Map<string, AbortController>,
+	activation: WorkflowActivation,
+): AbortSignal {
+	let controller = controllers.get(activation.id);
+	if (controller === undefined) {
+		controller = new AbortController();
+		controllers.set(activation.id, controller);
+	}
+	return controller.signal;
+}
+
+function resolveInterruptTarget(
+	attempt: WorkflowRunAttemptSnapshot,
+	target: string,
+): WorkflowRunAttemptSnapshot["activations"][number] | undefined {
+	const running = attempt.activations.filter(activation => activation.status === "running");
+	return running.find(activation => interruptTargetAliases(attempt, activation).includes(target));
+}
+
+function interruptTargetAliases(
+	attempt: WorkflowRunAttemptSnapshot,
+	activation: WorkflowRunAttemptSnapshot["activations"][number],
+): string[] {
+	const aliases = [activation.id, activation.nodeId];
+	const generation = runningNodeGeneration(attempt, activation);
+	if (generation > 1) aliases.push(`${activation.nodeId}-${generation}`);
+	return aliases;
+}
+
+function runningNodeGeneration(
+	attempt: WorkflowRunAttemptSnapshot,
+	activation: WorkflowRunAttemptSnapshot["activations"][number],
+): number {
+	let generation = 0;
+	for (const candidate of attempt.activations) {
+		if (candidate.nodeId === activation.nodeId) generation += 1;
+		if (candidate.id === activation.id) return generation;
+	}
+	return generation;
 }
 
 export function buildWorkflowGraphViewForRuntime(
@@ -2531,6 +2708,7 @@ function workflowUsage(): string {
 		"Usage: /workflow reject-change <change-request-id> [--actor <actor>] [--reason <text>]",
 		"Usage: /workflow apply-change <change-request-id> (--freeze-id <id>|--draft-id <id>|--draft-path <path>) [--actor <actor>] [--reason <text>]",
 		"Usage: /workflow stop <attempt-id> [--deadline-ms <n>]",
+		"Usage: /workflow interrupt <attempt-id> <activation-or-node-id> [--deadline-ms <n>]",
 		"Usage: /workflow restart <checkpoint-id> [--freeze-id <id>] [--background]",
 	].join("\n");
 }
@@ -2644,11 +2822,18 @@ function formatWorkflowManager(
 			lines.push("- none");
 		}
 	} else {
-		lines.push("- Agent Hub watches live transcripts; interrupt/restart if an intervened node does not settle.");
+		lines.push("- Agent Hub watches live transcripts; interrupt a selected live agent if it does not settle.");
 		for (const agent of graphView.activeAgents) {
 			const summary = formatWorkflowDetail(agent.summary);
 			const generation = formatActiveWorkflowAgentGeneration(agent);
 			lines.push(`- ${agent.role} · ${agent.label} live${generation}${summary} (focus ${agent.focusAgentId})`);
+		}
+		if (currentAttempt?.status === "running") {
+			for (const agent of graphView.activeAgents) {
+				lines.push(
+					`- interrupt agent ${agent.role} · ${agent.label}: /workflow interrupt ${currentAttempt.id} ${agent.focusAgentId} --deadline-ms 30000`,
+				);
+			}
 		}
 		const focusTargets = graphView.activeAgents.map(agent => agent.focusAgentId).join(" or ");
 		lines.push(`- focus live agent: open Agent Hub with double-left or the observe key, then focus ${focusTargets}`);

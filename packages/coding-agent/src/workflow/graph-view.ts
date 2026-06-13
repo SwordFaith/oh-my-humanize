@@ -216,7 +216,7 @@ export function renderWorkflowGraphText(view: WorkflowGraphView, options: Workfl
 	}
 	if (view.activeAgents !== undefined && view.activeAgents.length > 0) {
 		lines.push("Active agents:");
-		lines.push("Use Agent Hub to watch or intervene; use Interrupt if a live node does not settle.");
+		lines.push("Use Agent Hub to watch or intervene; interrupt a selected live agent if it does not settle.");
 		for (const agent of view.activeAgents) lines.push(`- ${formatActiveWorkflowAgent(agent)}`);
 	}
 	lines.push("Diagram:");
@@ -934,10 +934,15 @@ function formatWorkflowGraphActions(
 ): string[] {
 	const actions = [`Refresh: /workflow graph --family-id ${family.id}`];
 	if (currentAttempt?.status === "running") {
-		actions.push(`Interrupt: /workflow stop ${currentAttempt.id} --deadline-ms 30000`);
+		actions.push(`Stop attempt: /workflow stop ${currentAttempt.id} --deadline-ms 30000`);
 		const hasLiveAttempt = options.liveAttemptIds === undefined || options.liveAttemptIds.has(currentAttempt.id);
 		if (hasLiveAttempt && currentAttempt.activations.some(activation => activation.status === "running")) {
 			actions.push(`Active agents: /workflow manager --family-id ${family.id}`);
+			for (const agent of activeAgents) {
+				actions.push(
+					`Interrupt ${agent.role} · ${agent.label}: /workflow interrupt ${currentAttempt.id} ${agent.focusAgentId} --deadline-ms 30000`,
+				);
+			}
 			const focusTargets = activeAgents.map(agent => agent.focusAgentId).join(" or ");
 			const targetHint = focusTargets.length === 0 ? "the selected live agent" : focusTargets;
 			actions.push(`Open Agent Hub: double-left or observe key; focus ${targetHint}`);

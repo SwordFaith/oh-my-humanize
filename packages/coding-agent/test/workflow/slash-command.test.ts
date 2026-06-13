@@ -50,6 +50,12 @@ interface CapturedEntry {
 	data?: unknown;
 }
 
+interface VoidDeferred {
+	promise: Promise<void>;
+	resolve(value?: void | PromiseLike<void>): void;
+	reject(reason?: unknown): void;
+}
+
 const openAiModel: Model<Api> = buildModel({
 	id: "gpt-4o",
 	name: "GPT-4o",
@@ -4027,10 +4033,16 @@ edges: []
 		const managerOutput = output.at(-1) ?? "";
 		expect(managerOutput).toContain("Active agents:");
 		expect(managerOutput).toContain(
-			"- Agent Hub watches live transcripts; interrupt/restart if an intervened node does not settle.",
+			"- Agent Hub watches live transcripts; interrupt a selected live agent if it does not settle.",
 		);
 		expect(managerOutput).toContain("- Builder · Build round live");
 		expect(managerOutput).toContain("- Reviewer · Review round live");
+		expect(managerOutput).toContain(
+			"- interrupt agent Builder · Build round: /workflow interrupt live-manager:attempt-1 buildRound --deadline-ms 30000",
+		);
+		expect(managerOutput).toContain(
+			"- interrupt agent Reviewer · Review round: /workflow interrupt live-manager:attempt-1 reviewRound --deadline-ms 30000",
+		);
 		expect(managerOutput).toContain(
 			"- focus live agent: open Agent Hub with double-left or the observe key, then focus buildRound or reviewRound",
 		);
@@ -4044,6 +4056,113 @@ edges: []
 
 		releaseAgents.resolve();
 		await Bun.sleep(10);
+	});
+
+	it("interrupts a selected live workflow agent without aborting sibling agents", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "selected-interrupt"), { recursive: true });
+		await Bun.write(
+			path.join(dir, "selected-interrupt.omhflow"),
+			`---
+name: selected-interrupt
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 50
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Selected Interrupt
+
+\`\`\`yaml workflow
+nodes:
+  buildA:
+    type: agent
+    agent: task
+    prompt: Build path A.
+  buildB:
+    type: agent
+    agent: task
+    prompt: Build path B.
+edges: []
+\`\`\`
+`,
+		);
+		const entries: CapturedEntry[] = [];
+		const started = new Map<string, VoidDeferred>();
+		const aborted = new Map<string, VoidDeferred>();
+		const releaseBuildB = Promise.withResolvers<void>();
+		const signals = new Map<string, AbortSignal>();
+		const calls: string[] = [];
+		for (const nodeId of ["buildA", "buildB"]) {
+			started.set(nodeId, Promise.withResolvers<void>());
+			aborted.set(nodeId, Promise.withResolvers<void>());
+		}
+		const runner: WorkflowAgentTaskRunner = async request => {
+			calls.push(request.nodeId);
+			if (request.signal) {
+				signals.set(request.nodeId, request.signal);
+				request.signal.addEventListener("abort", () => aborted.get(request.nodeId)?.resolve(), { once: true });
+			}
+			started.get(request.nodeId)?.resolve();
+			if (request.nodeId === "buildA") {
+				await aborted.get("buildA")?.promise;
+				return {
+					exitCode: 1,
+					output: "",
+					error: request.signal?.reason ?? "workflow agent interrupted",
+				};
+			}
+			await releaseBuildB.promise;
+			return { exitCode: 0, output: JSON.stringify({ summary: "built B" }) };
+		};
+		const { output, runtime } = createTuiRuntime(entries, dir, runner);
+
+		expect(
+			await executeBuiltinSlashCommand(
+				`/workflow start ${path.join(dir, "selected-interrupt.omhflow")} --run-id selected-interrupt --family-id family-selected-interrupt --background`,
+				runtime,
+			),
+		).toBe(true);
+		await Promise.all([started.get("buildA")?.promise, started.get("buildB")?.promise]);
+
+		expect(await executeBuiltinSlashCommand("/workflow manager --family-id family-selected-interrupt", runtime)).toBe(
+			true,
+		);
+		const managerOutput = output.at(-1) ?? "";
+		expect(managerOutput).toContain(
+			"- interrupt agent Builder · Build a: /workflow interrupt selected-interrupt:attempt-1 buildA --deadline-ms 30000",
+		);
+		expect(managerOutput).toContain(
+			"- interrupt agent Builder · Build b: /workflow interrupt selected-interrupt:attempt-1 buildB --deadline-ms 30000",
+		);
+
+		const interrupt = executeBuiltinSlashCommand(
+			"/workflow interrupt selected-interrupt:attempt-1 buildA --deadline-ms 1",
+			runtime,
+		);
+		await aborted.get("buildA")?.promise;
+		expect(signals.get("buildA")?.aborted).toBe(true);
+		expect(signals.get("buildB")?.aborted).toBe(false);
+		releaseBuildB.resolve();
+
+		expect(await interrupt).toBe(true);
+		expect(calls.sort()).toEqual(["buildA", "buildB"]);
+		expect(output.some(entry => entry.includes("Workflow interrupted activation: activation-1 (buildA)"))).toBeTrue();
+		expect(
+			output.some(entry => entry.includes("Workflow checkpoint: selected-interrupt:attempt-1:checkpoint-1")),
+		).toBeTrue();
+		const family = reconstructWorkflowFamilies(entries)[0];
+		expect(family?.attempts[0]?.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["buildA", "aborted"],
+			["buildB", "completed"],
+		]);
+		expect(family?.checkpoints[0]).toMatchObject({
+			completedActivationIds: ["activation-2"],
+			abortedActivationIds: ["activation-1"],
+			frontierNodeIds: ["buildA"],
+		});
 	});
 
 	it("does not present persisted running workflow activations as live Agent Hub targets", async () => {

@@ -25,6 +25,7 @@ export interface WorkflowSchedulerOptions {
 	maxNodeActivations?: number;
 	signal?: AbortSignal;
 	nodeAbortSignal?: AbortSignal;
+	nodeAbortSignalForActivation?: (activation: WorkflowActivation) => AbortSignal | undefined;
 	graphRevisionId?: string;
 	executeNode: (
 		activation: WorkflowActivation,
@@ -126,11 +127,12 @@ export async function runWorkflowScheduler(
 			}
 			activation.status = "running";
 			activations.push(activation);
+			const nodeAbortSignal = options.nodeAbortSignalForActivation?.(activation) ?? options.nodeAbortSignal;
 			const context: WorkflowSchedulerExecutionContext = {
 				state,
 				completedActivations: completedActivationSnapshot(),
 				signal: options.signal,
-				nodeAbortSignal: options.nodeAbortSignal,
+				nodeAbortSignal,
 			};
 			running.set(activation.id, {
 				activation,
@@ -234,11 +236,12 @@ async function executeSchedulerActivation(
 			}),
 		};
 	} catch (error) {
-		if (workflowAbortReason(options.nodeAbortSignal)) {
+		const abortReason = workflowAbortReason(context.nodeAbortSignal);
+		if (abortReason) {
 			return {
 				activation,
 				node,
-				error: workflowAbortReason(options.nodeAbortSignal),
+				error: abortReason,
 				aborted: true,
 			};
 		}

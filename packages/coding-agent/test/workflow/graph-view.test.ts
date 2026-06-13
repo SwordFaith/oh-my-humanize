@@ -186,9 +186,17 @@ describe("workflow graph view rendering", () => {
 		const text = renderWorkflowGraphText(view);
 
 		expect(text).toContain("Active agents:");
-		expect(text).toContain("Use Agent Hub to watch or intervene; use Interrupt if a live node does not settle.");
+		expect(text).toContain(
+			"Use Agent Hub to watch or intervene; interrupt a selected live agent if it does not settle.",
+		);
 		expect(text).toContain("- Builder · Build round live");
 		expect(text).toContain("- Reviewer · Review round live");
+		expect(text).toContain(
+			"Interrupt Builder · Build round: /workflow interrupt attempt-1 buildRound --deadline-ms 30000",
+		);
+		expect(text).toContain(
+			"Interrupt Reviewer · Review round: /workflow interrupt attempt-1 reviewRound --deadline-ms 30000",
+		);
 		expect(text).toContain("Open Agent Hub: double-left or observe key; focus buildRound or reviewRound");
 		expect(text).not.toContain("Focus agent: /agents");
 	});
@@ -260,6 +268,9 @@ describe("workflow graph view rendering", () => {
 		const text = renderWorkflowGraphText(view);
 
 		expect(text).toContain("- Builder · Build round live · round 2 (focus buildRound-2)");
+		expect(text).toContain(
+			"Interrupt Builder · Build round: /workflow interrupt attempt-1 buildRound-2 --deadline-ms 30000",
+		);
 		expect(text).toContain("Open Agent Hub: double-left or observe key; focus buildRound-2");
 	});
 
@@ -759,7 +770,7 @@ describe("workflow graph view rendering", () => {
 		const text = stripAnsi(component.render(120).join("\n"));
 
 		expect(text).toContain("active agents");
-		expect(text).toContain("Agent Hub watches live transcripts; Interrupt stops a stuck workflow node.");
+		expect(text).toContain("Agent Hub watches live transcripts; interrupt a selected live agent if needed.");
 		expect(text).toContain("● Builder · Build round live · round 3 - editing implementation");
 		expect(text).toContain("focus buildRound");
 		expect(text).not.toContain("activation-build");

@@ -69,6 +69,7 @@ export interface WorkflowRunnerOptions {
 	startParentActivationIds?: string[];
 	signal?: AbortSignal;
 	nodeAbortSignal?: AbortSignal;
+	nodeAbortSignalForActivation?: (activation: WorkflowActivation) => AbortSignal | undefined;
 	packageRoot?: string;
 	maxPromptBytes?: number;
 	frozenResources?: FlowFreezeResourceSnapshot[];
@@ -115,6 +116,7 @@ export async function runWorkflow(options: WorkflowRunnerOptions): Promise<Workf
 		startParentActivationIds: options.startParentActivationIds,
 		signal: options.signal,
 		nodeAbortSignal: options.nodeAbortSignal,
+		nodeAbortSignalForActivation: options.nodeAbortSignalForActivation,
 		graphRevisionId: run.currentGraphRevisionId,
 		executeNode: async (activation, node, context) =>
 			executeAndPersistActivation(options, run, activation, node, context),
@@ -261,10 +263,11 @@ async function executeAndPersistActivation(
 		if (modelAudit?.error && nodeRequiresModel(node)) {
 			throw new WorkflowRunnerError(modelAudit.error);
 		}
+		const executionSignal = context.nodeAbortSignal ?? context.signal;
 		const output = validateWorkflowActivationOutput(
 			await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost, {
 				modelOverride: modelOverrideFromAudit(modelAudit),
-				signal: context.nodeAbortSignal ?? context.signal,
+				signal: executionSignal,
 			}),
 			{
 				allowedWritePaths: node.writes,
@@ -295,12 +298,13 @@ async function executeAndPersistActivation(
 			appendLifecycleActivationStarted(options, activation, node);
 		}
 		const message = error instanceof Error ? error.message : String(error);
-		if (workflowNodeAbortReason(options.nodeAbortSignal) !== undefined) {
+		const abortReason = workflowNodeAbortReason(context.nodeAbortSignal ?? context.signal);
+		if (abortReason !== undefined) {
 			appendWorkflowActivationFailed(options.host, run.id, {
 				activationId: activation.id,
 				error: message,
 			});
-			appendLifecycleActivationAborted(options, activation, node, workflowNodeAbortReason(options.nodeAbortSignal));
+			appendLifecycleActivationAborted(options, activation, node, abortReason);
 			throw error;
 		}
 		appendWorkflowActivationFailed(options.host, run.id, {

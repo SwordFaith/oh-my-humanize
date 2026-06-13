@@ -10,6 +10,7 @@
 ### Fixed
 
 - Fixed focused workflow-agent views so slash commands still execute in the main TUI session instead of being blocked as subagent steering text.
+- Fixed workflow live-agent intervention so `/workflow interrupt` can checkpoint one selected running agent while sibling agents continue, and the TUI graph/manager expose per-agent interrupt actions separately from whole-attempt stop.
 - Fixed looped workflow active-agent hints so repeated running nodes show the current round and Agent Hub focus target instead of reusing the first-round node id.
 - Fixed `/workflow stop` and synchronous `/workflow restart` to flush lifecycle events at checkpoint/restart boundaries before returning.
 - Fixed workflow-only sessions so stop/checkpoint boundaries force lifecycle entries onto disk, making printed `omp --resume <id>` commands resolvable even before any user/assistant transcript messages exist.

@@ -138,7 +138,7 @@ function workflowGraphSubflowLines(view: WorkflowGraphView): string[] {
 }
 
 function workflowGraphActiveAgentLines(view: WorkflowGraphView, width: number): string[] {
-	const lines = [theme.fg("muted", "Agent Hub watches live transcripts; Interrupt stops a stuck workflow node.")];
+	const lines = [theme.fg("muted", "Agent Hub watches live transcripts; interrupt a selected live agent if needed.")];
 	for (const agent of view.activeAgents ?? []) {
 		const summary =
 			agent.summary === undefined ? "" : ` - ${sanitizeWorkflowAgentSummary(agent.summary, Math.floor(width / 2))}`;
