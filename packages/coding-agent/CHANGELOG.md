@@ -17,6 +17,10 @@
 - Fixed workflow manager and graph active-agent hints so persisted running activations from a resumed session are not presented as live Agent Hub targets when no local workflow runner is attached.
 - Fixed workflow checkpoint and restart edge cases for attempts that stop before any activation starts and for restart attempt ids that would otherwise collide with existing custom ids.
 - Fixed review workflow nodes so verdict state patches use the node's declared `writes` path, allowing imported subflow review gates to write scoped verdict fields such as `/qualityVerdict`.
+### Fixed
+
+- Fixed session JSONL persistence so the first assistant turn materializes the file synchronously, leaves the append writer open, and writes later entries with a sync append writer even during writer-close races instead of waiting on a queued rewrite.
+
 ## [15.12.5] - 2026-06-13
 ### Changed
 
