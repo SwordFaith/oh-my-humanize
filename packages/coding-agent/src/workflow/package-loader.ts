@@ -30,7 +30,14 @@ export interface WorkflowArtifact {
 	definition: WorkflowDefinition;
 	entryNodeIds: string[];
 	exits: WorkflowDslCompileExit[];
+	changeRequests: WorkflowArtifactChangeRequestSource[];
 	sourceMapping: WorkflowArtifactSourceMapping;
+}
+
+export interface WorkflowArtifactChangeRequestSource {
+	id: string;
+	path: string;
+	required?: boolean;
 }
 
 export interface WorkflowArtifactMetadata {
@@ -114,6 +121,7 @@ async function loadWorkflowArtifactInternal(inputPath: string, stack: string[]):
 	const externalModules = await loadWorkflowImports(block.value, flowPath, resourceDir, [...stack, flowPath]);
 	const compiled = compileArtifactDefinitionInput(metadata, block.value, flowPath, externalModules);
 	const artifactMetadata = mergeWorkflowBlockMetadata(metadata, compiled, flowPath);
+	const changeRequests = parseWorkflowArtifactChangeRequests(compiled.changeRequests, flowPath);
 	const definition = parseWorkflowDefinition(JSON.stringify(compiled.definitionInput), {
 		sourcePath: flowPath,
 	});
@@ -125,6 +133,7 @@ async function loadWorkflowArtifactInternal(inputPath: string, stack: string[]):
 		definition,
 		entryNodeIds: compiled.entryNodeIds,
 		exits: compiled.exits,
+		changeRequests,
 		sourceMapping: {
 			workflowBlocks: workflowBlocks.map(block => ({ id: block.id, language: block.language })),
 			nodes: Object.fromEntries(definition.nodes.map(node => [node.id, { sourceBlock: block.id }])),
@@ -204,12 +213,42 @@ function parseWorkflowBlocks(source: string, flowPath: string): ParsedWorkflowBl
 	return blocks;
 }
 
+function parseWorkflowArtifactChangeRequests(value: unknown, flowPath: string): WorkflowArtifactChangeRequestSource[] {
+	if (value === undefined) return [];
+	const entries = Array.isArray(value) ? value : [value];
+	return entries.map((entry, index) =>
+		parseWorkflowArtifactChangeRequest(entry, `change_requests.${index}`, flowPath),
+	);
+}
+
+function parseWorkflowArtifactChangeRequest(
+	value: unknown,
+	label: string,
+	flowPath: string,
+): WorkflowArtifactChangeRequestSource {
+	const record = expectRecord(value, label, flowPath);
+	const id = expectString(record.id, `${label}.id`, flowPath);
+	if (record.path !== undefined && record.file !== undefined) {
+		throw new WorkflowPackageError(`${flowPath}: ${label} must not define both path and file`);
+	}
+	const requestPath = expectString(record.path ?? record.file, `${label}.path`, flowPath);
+	const request: WorkflowArtifactChangeRequestSource = { id, path: requestPath };
+	if (record.required !== undefined) {
+		if (typeof record.required !== "boolean") {
+			throw new WorkflowPackageError(`${flowPath}: ${label}.required must be a boolean`);
+		}
+		request.required = record.required;
+	}
+	return request;
+}
+
 interface CompiledWorkflowArtifactInput {
 	definitionInput: Record<string, unknown>;
 	entryNodeIds: string[];
 	exits: WorkflowDslCompileExit[];
 	checkpointPolicy?: unknown;
 	changePolicy?: unknown;
+	changeRequests?: unknown;
 }
 
 function compileArtifactDefinitionInput(
@@ -236,6 +275,7 @@ function compileArtifactDefinitionInput(
 			exits: compiled.exits,
 			checkpointPolicy: compiled.checkpointPolicy,
 			changePolicy: compiled.changePolicy,
+			changeRequests: compiled.changeRequests,
 		};
 	} catch (error) {
 		if (error instanceof WorkflowDslError) {

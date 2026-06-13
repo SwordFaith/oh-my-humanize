@@ -10,6 +10,7 @@ export interface WorkflowDslCompileResult {
 	migrations?: unknown;
 	checkpointPolicy?: unknown;
 	changePolicy?: unknown;
+	changeRequests?: unknown;
 }
 
 export interface WorkflowDslCompileExit {
@@ -87,6 +88,11 @@ function addWorkflowContracts(result: WorkflowDslCompileResult, block: Record<st
 	if (block.migrations !== undefined) result.migrations = block.migrations;
 	if (block.checkpoint_policy !== undefined) result.checkpointPolicy = block.checkpoint_policy;
 	if (block.change_policy !== undefined) result.changePolicy = block.change_policy;
+	if (block.change_request !== undefined && block.change_requests !== undefined) {
+		throw new WorkflowDslError("workflow block must not define both change_request and change_requests");
+	}
+	if (block.change_request !== undefined) result.changeRequests = block.change_request;
+	if (block.change_requests !== undefined) result.changeRequests = block.change_requests;
 }
 
 class WorkflowDslCompiler {

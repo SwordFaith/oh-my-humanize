@@ -117,6 +117,71 @@ edges: []
 		);
 	});
 
+	it("freezes workflow block change request file declarations as artifact resources", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release", "changes"), { recursive: true });
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			path.join(dir, "release", "changes", "promote.json"),
+			JSON.stringify({
+				id: "promote-positive-branch",
+				reason: "promote the selected branch",
+				operations: [{ op: "add_node", node: { id: "verify", type: "script" } }],
+				frontierMapping: { build: "verify" },
+			}),
+		);
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+change_request:
+  id: promote-positive-branch
+  file: changes/promote.json
+nodes:
+  build:
+    type: script
+    script:
+      inline: |
+        return { summary: "built" };
+edges: []
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+		const freeze = await freezeWorkflowArtifact(artifact);
+
+		expect(artifact.changeRequests).toEqual([{ id: "promote-positive-branch", path: "changes/promote.json" }]);
+		expect(freeze.changeRequests).toEqual([{ id: "promote-positive-branch", path: "changes/promote.json" }]);
+		expect(freeze.resourceSnapshots.map(snapshot => snapshot.path)).toEqual(["changes/promote.json"]);
+	});
+
+	it("rejects change request file declarations that escape the resource directory", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "release"), { recursive: true });
+		await Bun.write(path.join(dir, "change.json"), "{}\n");
+		const flowPath = path.join(dir, "release.omhflow");
+		await Bun.write(
+			flowPath,
+			omhflowSource(`
+change_request:
+  id: escaping-change
+  file: ../change.json
+nodes:
+  build:
+    type: script
+    script:
+      inline: |
+        return { summary: "built" };
+edges: []
+`),
+		);
+
+		const artifact = await loadWorkflowArtifact(flowPath);
+
+		await expect(freezeWorkflowArtifact(artifact)).rejects.toThrow(
+			'workflow resource path "../change.json" escapes the same-name resource directory',
+		);
+	});
+
 	it("rejects production freezes without checkpoint and change policy", async () => {
 		const dir = await createTempDir();
 		await fs.mkdir(path.join(dir, "release"), { recursive: true });

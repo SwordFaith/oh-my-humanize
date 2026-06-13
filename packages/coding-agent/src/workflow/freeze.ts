@@ -22,6 +22,7 @@ export interface FlowFreeze {
 	portableDefaults: WorkflowPortableDefaults;
 	checkpointPolicy?: WorkflowCheckpointPolicy;
 	changePolicy?: WorkflowChangePolicy;
+	changeRequests?: WorkflowArtifact["changeRequests"];
 	definition: WorkflowDefinition;
 }
 
@@ -73,7 +74,7 @@ export async function freezeWorkflowArtifact(artifact: WorkflowArtifact): Promis
 	await ensureResourceDirectory(artifact.resourceDir);
 	const freezeMetadata = validateFreezeMetadata(artifact);
 	validateNodeRuntimeContracts(artifact.definition);
-	const resourceReferences = collectResourceReferences(artifact.definition);
+	const resourceReferences = collectResourceReferences(artifact);
 	await validateReferencedResources(artifact.resourceDir, resourceReferences);
 	const resourceHashes = await hashResourceDirectory(artifact.resourceDir);
 	const resourceSnapshots = await snapshotReferencedResources(artifact.resourceDir, resourceReferences);
@@ -103,6 +104,7 @@ export async function freezeWorkflowArtifact(artifact: WorkflowArtifact): Promis
 		portableDefaults: { models: artifact.definition.models },
 		checkpointPolicy: freezeMetadata.checkpointPolicy,
 		changePolicy: freezeMetadata.changePolicy,
+		changeRequests: structuredClone(artifact.changeRequests),
 		definition: structuredClone(artifact.definition),
 	};
 }
@@ -260,8 +262,9 @@ async function validateReferencedResources(resourceDir: string, references: stri
 	}
 }
 
-function collectResourceReferences(definition: WorkflowDefinition): string[] {
+function collectResourceReferences(artifact: WorkflowArtifact): string[] {
 	const references: string[] = [];
+	const definition = artifact.definition;
 	for (const node of definition.nodes) {
 		if (node.promptSource?.kind === "file") {
 			references.push(node.promptSource.path);
@@ -274,6 +277,7 @@ function collectResourceReferences(definition: WorkflowDefinition): string[] {
 		}
 	}
 	for (const resource of definition.resources ?? []) references.push(resource.path);
+	for (const request of artifact.changeRequests) references.push(request.path);
 	return references;
 }
 
