@@ -33,6 +33,9 @@ describe("workflow artifact registry", () => {
 			"agent-build-review-loop",
 			"human-interactive-dev",
 			"recflow-audit-events-cockpit",
+			"branch-conditional",
+			"loop-until-done",
+			"parallel-join",
 		];
 
 		for (const name of expected) {

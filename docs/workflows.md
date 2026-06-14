@@ -38,6 +38,10 @@ resources. Resource paths inside the flow resolve from that same-name directory.
 - `recflow-audit-events-cockpit` — a recursive workflow development cockpit
   with parallel builders, review-controlled loop, and an imported quality
   subflow.
+- `branch-conditional` — a minimal structured-output branch primitive.
+- `loop-until-done` — a minimal bounded loop primitive controlled by node
+  output.
+- `parallel-join` — a minimal fan-out/join primitive over independent probes.
 
 The additional built-ins are intentionally small, practical patterns rather
 than a large template zoo. They map to reusable multi-agent structures from the
@@ -45,6 +49,9 @@ than a large template zoo. They map to reusable multi-agent structures from the
 parallel fan-out/gather, generator-critic, refinement loop,
 human-in-the-loop, and dynamic workflow orchestration. Each promoted flow was
 validated under `temp/playground` before being packaged as a built-in.
+The three primitive flows are intentionally closer to executable language
+examples than project templates; use them to study and compose branch, loop, and
+join behavior.
 
 List available flows:
 

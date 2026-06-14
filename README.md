@@ -33,8 +33,10 @@ distributable `.omhflow + resources` artifact, run it with a live TUI graph,
 stop/checkpoint a production attempt, approve flow changes, and restart safely.
 Built-in flows include `humanize-rlcr`, `kda-humanize-reference`,
 `parallel-weak-implementation`, `agent-build-review-loop`,
-`human-interactive-dev`, and `recflow-audit-events-cockpit`; external flows can
-be installed with `omp workflow install` or discovered through `OMHFLOW_DIR`.
+`human-interactive-dev`, `recflow-audit-events-cockpit`, and the
+control-flow primitives `branch-conditional`, `loop-until-done`, and
+`parallel-join`; external flows can be installed with `omp workflow install` or
+discovered through `OMHFLOW_DIR`.
 
 ```sh
 omp workflow list
