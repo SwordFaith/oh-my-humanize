@@ -774,7 +774,7 @@ export function workflowChangeApplicationError(
 	if (attemptCheckpoints.length === 0) {
 		return `Workflow change request cannot be applied before checkpointing attempt: ${request.attemptId}`;
 	}
-	if (attempt !== undefined && attempt.status !== "stopped") {
+	if (attempt !== undefined && attempt.status !== "stopped" && attempt.status !== "failed") {
 		return `Workflow change request cannot be applied before stopping attempt: ${attempt.id} (${attempt.status})`;
 	}
 	return undefined;

@@ -1948,6 +1948,126 @@ edges: []
 		);
 	});
 
+	it("applies attempt-scoped changes after a failed attempt checkpoints", async () => {
+		const entries: CapturedEntry[] = [];
+		const freezeA = createFreeze("flowfreeze:failed-a", ["build", "review"]);
+		const freezeB = createFreeze("flowfreeze:failed-b", ["verify"]);
+		const host = createHostFromEntries(entries);
+		startWorkflowFamily(host, { familyId: "family-failed-apply" });
+		recordWorkflowFreeze(host, freezeA, { familyId: "family-failed-apply" });
+		startWorkflowAttempt(host, {
+			familyId: "family-failed-apply",
+			attemptId: "attempt-1",
+			freezeId: freezeA.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-1"),
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-1",
+			activationId: "activation-build",
+			nodeId: "build",
+			parentActivationIds: [],
+		});
+		appendWorkflowAttemptActivationCompleted(host, {
+			attemptId: "attempt-1",
+			activationId: "activation-build",
+			output: { summary: "built" },
+		});
+		appendWorkflowAttemptActivationStarted(host, {
+			attemptId: "attempt-1",
+			activationId: "activation-review",
+			nodeId: "review",
+			parentActivationIds: ["activation-build"],
+		});
+		appendWorkflowAttemptActivationFailed(host, {
+			attemptId: "attempt-1",
+			activationId: "activation-review",
+			error: "review prompt missing",
+		});
+		failWorkflowAttempt(host, {
+			attemptId: "attempt-1",
+			error: "review prompt missing",
+		});
+		createWorkflowCheckpoint(host, {
+			checkpointId: "attempt-1:checkpoint-1",
+			familyId: "family-failed-apply",
+			attemptId: "attempt-1",
+			completedActivationIds: ["activation-build"],
+			abortedActivationIds: [],
+			frontierNodeIds: ["review"],
+			state: {},
+			sourceMapping: { review: "verify" },
+		});
+		proposeWorkflowChangeRequest(host, {
+			changeRequestId: "change-failed-apply",
+			familyId: "family-failed-apply",
+			attemptId: "attempt-1",
+			actor: "human:sihao",
+			origin: "human",
+			reason: "repair failed review path",
+			operations: [{ op: "add_node", node: { id: "verify", type: "script" } }],
+			frontierMapping: { review: "verify" },
+		});
+		approveWorkflowChangeRequest(host, {
+			changeRequestId: "change-failed-apply",
+			actor: "human:sihao",
+		});
+		recordWorkflowFreeze(host, freezeB, { familyId: "family-failed-apply" });
+		const verifyStarted = Promise.withResolvers<void>();
+		const releaseVerify = Promise.withResolvers<void>();
+		const calls: string[] = [];
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => {
+				calls.push(input.node.id);
+				if (input.node.id === "verify") {
+					verifyStarted.resolve();
+					await releaseVerify.promise;
+				}
+				return { summary: `ran ${input.node.id}` };
+			},
+		};
+		const { output, runtime } = createRuntime(entries, runtimeHost);
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				"/workflow apply-change change-failed-apply --freeze-id flowfreeze:failed-b --actor human:sihao",
+				runtime,
+			),
+		).toEqual({ consumed: true });
+		expect(output).toContain("Workflow change request applied: change-failed-apply -> freeze flowfreeze:failed-b");
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				"/workflow restart attempt-1:checkpoint-1 --freeze-id flowfreeze:failed-b --background",
+				runtime,
+			),
+		).toEqual({ consumed: true });
+		await verifyStarted.promise;
+		expect(await executeAcpBuiltinSlashCommand("/workflow manager --family-id family-failed-apply", runtime)).toEqual(
+			{
+				consumed: true,
+			},
+		);
+
+		const managerOutput = output.at(-1) ?? "";
+		expect(calls).toEqual(["verify"]);
+		expect(output.some(entry => entry.includes("Workflow background restart attempt started: attempt-2"))).toBeTrue();
+		expect(managerOutput).toContain(
+			"- current attempt: attempt-2 running freeze=flowfreeze:failed-b from attempt-1:checkpoint-1",
+		);
+		expect(managerOutput).toContain("- resume in progress: attempt-2 from attempt-1:checkpoint-1");
+		expect(reconstructWorkflowFamilies(entries)[0]?.changeRequests[0]?.applications).toMatchObject([
+			{
+				target: "freeze",
+				freezeId: "flowfreeze:failed-b",
+				actor: "human:sihao",
+			},
+		]);
+
+		releaseVerify.resolve();
+		await Bun.sleep(10);
+		expect(reconstructWorkflowFamilies(entries)[0]?.attempts.at(-1)?.status).toBe("completed");
+	});
+
 	it("starts agent workflows through the TUI session task runner", async () => {
 		const dir = await createTempDir();
 		await Bun.write(
@@ -1982,7 +2102,8 @@ edges: []
 		expect(result).toBe(true);
 		expect(requestedTask).toEqual({
 			id: "build",
-			description: "build",
+			description: "Builder · Build",
+			role: "Builder · Build",
 			assignment: "Implement the workflow feature.",
 		});
 		expect(output[0]).toContain("Workflow run: run-1");
