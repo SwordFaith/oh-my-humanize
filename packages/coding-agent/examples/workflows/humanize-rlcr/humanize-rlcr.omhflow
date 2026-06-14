@@ -1,0 +1,179 @@
+---
+name: humanize-rlcr
+version: 1
+schema: omhflow/v1
+models:
+  roles:
+    builder: gpt-5.5
+    reviewer: gpt-5.5
+  defaults:
+    agent: builder
+    review: reviewer
+  unavailable: fallback-to-parent
+checkpoint:
+  stopDeadlineMs: 30000
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Humanize RLCR
+
+This flow models the core Humanize loop:
+
+1. Plan compliance and plan understanding.
+2. Goal tracker initialization.
+3. Implementation rounds reviewed by Codex-style summary review until complete.
+4. Code review rounds until no review issues remain.
+5. Final alignment and finalize.
+
+```yaml workflow
+stateSchema:
+  version: 1
+  shape:
+    humanize: object
+    verdict: string
+resources:
+  - path: prompts/plan-understanding-quiz.md
+    kind: prompt
+  - path: prompts/implementation-round.md
+    kind: prompt
+  - path: prompts/codex-summary-review.md
+    kind: prompt
+  - path: prompts/code-review-fix.md
+    kind: prompt
+  - path: prompts/codex-code-review.md
+    kind: prompt
+  - path: prompts/final-alignment-check.md
+    kind: prompt
+  - path: scripts/plan-compliance-precheck.sh
+    kind: script
+  - path: scripts/init-goal-tracker.sh
+    kind: script
+  - path: scripts/write-round-summary.sh
+    kind: script
+  - path: scripts/enter-review-phase.sh
+    kind: script
+  - path: scripts/finalize.sh
+    kind: script
+capabilities:
+  agents:
+    - task
+    - reviewer
+  tools:
+    - ask
+    - eval
+migrations:
+  - from: implementation-loop
+    to: review-loop
+    frontierMapping:
+      codexSummaryReview: enterReviewPhase
+sequence:
+  - node:
+      id: planCompliancePrecheck
+      type: script
+      script:
+        language: sh
+        file: scripts/plan-compliance-precheck.sh
+      writes:
+        - /humanize
+  - node:
+      id: planUnderstandingQuiz
+      type: human
+      prompt:
+        file: prompts/plan-understanding-quiz.md
+      reads:
+        - /humanize
+  - node:
+      id: initializeGoalTracker
+      type: script
+      script:
+        language: sh
+        file: scripts/init-goal-tracker.sh
+      writes:
+        - /humanize
+  - template:
+      kind: retry_until
+      body:
+        sequence:
+          - node:
+              id: implementRound
+              type: agent
+              agent: task
+              model:
+                role: builder
+              prompt:
+                file: prompts/implementation-round.md
+              reads:
+                - /humanize
+          - node:
+              id: writeRoundSummary
+              type: script
+              script:
+                language: sh
+                file: scripts/write-round-summary.sh
+              writes:
+                - /humanize
+      review:
+        id: codexSummaryReview
+        type: review
+        agent: reviewer
+        model:
+          role: reviewer
+        prompt:
+          file: prompts/codex-summary-review.md
+        gates:
+          - CONTINUE
+          - COMPLETE
+        fallbackVerdict: CONTINUE
+      retryWhen: outputs.codexSummaryReview.verdict != "COMPLETE"
+  - node:
+      id: enterReviewPhase
+      type: script
+      script:
+        language: sh
+        file: scripts/enter-review-phase.sh
+      writes:
+        - /humanize
+  - template:
+      kind: retry_until
+      body:
+        id: fixReviewIssues
+        type: agent
+        agent: task
+        model:
+          role: builder
+        prompt:
+          file: prompts/code-review-fix.md
+        reads:
+          - /humanize
+      review:
+        id: codexCodeReview
+        type: review
+        agent: reviewer
+        model:
+          role: reviewer
+        prompt:
+          file: prompts/codex-code-review.md
+        gates:
+          - ISSUES
+          - CLEAN
+      retryWhen: outputs.codexCodeReview.verdict == "ISSUES"
+  - node:
+      id: finalAlignmentCheck
+      type: review
+      agent: reviewer
+      model:
+        role: reviewer
+      prompt:
+        file: prompts/final-alignment-check.md
+      gates:
+        - finish
+  - node:
+      id: finalize
+      type: script
+      script:
+        language: sh
+        file: scripts/finalize.sh
+      writes:
+        - /humanize
+```

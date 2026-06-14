@@ -345,6 +345,7 @@ These are consumed via `@oh-my-pi/pi-utils/dirs` and affect where coding-agent s
 | --------------------- | ----------------------------------------------------------------------------- |
 | `PI_CONFIG_DIR`       | Config root dirname under home (default `.omp`)                               |
 | `PI_CODING_AGENT_DIR` | Full override for agent directory (default `~/<PI_CONFIG_DIR or .omp>/agent`) |
+| `OMHFLOW_DIR`         | Path-list of external `.omhflow` flow library roots. `omp workflow install` writes to the first entry; named workflow lookup searches built-ins first, then these roots. Defaults to `~/.omp/flows` when unset |
 | `PWD`                 | Used when matching canonical current working directory in path helpers        |
 
 ---

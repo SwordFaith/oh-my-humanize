@@ -1,0 +1,140 @@
+---
+name: kda-humanize-reference
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 30000
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# KDA with Humanize subflow
+
+```yaml workflow
+imports:
+  humanize:
+    path: ./kda-humanize-reference/humanize-rlcr-reference.omhflow
+capabilities:
+  agents:
+    - task
+  tools:
+    - eval
+resources:
+  - path: prompts/task-contract.md
+    kind: prompt
+  - path: prompts/workspace-inspection.md
+    kind: prompt
+  - path: prompts/draft-plan.md
+    kind: prompt
+  - path: prompts/candidate.md
+    kind: prompt
+  - path: prompts/validation.md
+    kind: prompt
+  - path: prompts/promotion.md
+    kind: prompt
+sequence:
+  - node:
+      id: defineTaskContract
+      type: human
+      writes:
+        - /taskContract
+      prompt:
+        file: prompts/task-contract.md
+  - node:
+      id: inspectWorkspace
+      type: agent
+      agent: task
+      reads:
+        - /taskContract
+      writes:
+        - /workspace
+      prompt:
+        template:
+          file: prompts/workspace-inspection.md
+          bindings:
+            taskContract:
+              state: /taskContract
+  - node:
+      id: draftPlan
+      type: agent
+      agent: task
+      reads:
+        - /taskContract
+        - /workspace
+      writes:
+        - /plan
+      prompt:
+        template:
+          file: prompts/draft-plan.md
+          bindings:
+            taskContract:
+              state: /taskContract
+            workspace:
+              state: /workspace
+  - use: humanize
+  - template:
+      kind: retry_until
+      body:
+        id: implementCandidate
+        type: agent
+        agent: task
+        reads:
+          - /taskContract
+          - /plan
+        writes:
+          - /candidate
+        prompt:
+          template:
+            file: prompts/candidate.md
+            bindings:
+              taskContract:
+                state: /taskContract
+              plan:
+                state: /plan
+      review:
+        id: validateCandidate
+        type: review
+        reads:
+          - /summary
+        prompt:
+          template:
+            file: prompts/validation.md
+            bindings:
+              candidateSummary:
+                output:
+                  node: implementCandidate
+                  path: /summary
+                  activation: parent
+        gates:
+          - revise
+          - promote
+        fallbackVerdict: revise
+      retryWhen: outputs.validateCandidate.verdict == "revise"
+  - node:
+      id: recordEvidence
+      type: script
+      script:
+        inline: |
+          return {
+            summary: "recorded KDA evidence",
+            statePatch: [
+              { op: "set", path: "/evidence/status", value: "candidate validation recorded" }
+            ]
+          };
+      writes:
+        - /evidence
+  - node:
+      id: promotionDecision
+      type: review
+      reads:
+        - /evidence
+      prompt:
+        template:
+          file: prompts/promotion.md
+          bindings:
+            evidence:
+              state: /evidence
+      gates:
+        - reject
+        - promote
+```

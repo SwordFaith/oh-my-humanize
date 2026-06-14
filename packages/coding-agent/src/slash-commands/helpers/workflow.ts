@@ -8,6 +8,7 @@ import type { SessionInfo } from "../../session/session-listing";
 import { SessionManager } from "../../session/session-manager";
 import { parseCommandArgs } from "../../utils/command-args";
 import { workflowAgentTaskIdForNode } from "../../workflow/agent-task-id";
+import { resolveWorkflowFlowSpec } from "../../workflow/artifact-registry";
 import { evaluateWorkflowCondition } from "../../workflow/condition";
 import type {
 	WorkflowDefinition,
@@ -297,7 +298,8 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 	}
 	let pkg: WorkflowStartPackage;
 	try {
-		pkg = await loadWorkflowStartPackage(resolveWorkflowPath(parsed.workflowPath, runtime.cwd));
+		const spec = await resolveWorkflowFlowSpec(parsed.workflowPath, { cwd: runtime.cwd });
+		pkg = await loadWorkflowStartPackage(spec.path);
 	} catch (error) {
 		return usage(errorMessage(error), runtime);
 	}
@@ -438,7 +440,8 @@ function workflowStartConflict(
 async function handleFreezeCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
 	const parsed = parseWorkflowFreezeArgs(rest);
 	if ("error" in parsed) return usage(parsed.error, runtime);
-	const artifact = await loadWorkflowArtifact(resolveWorkflowPath(parsed.workflowPath, runtime.cwd));
+	const spec = await resolveWorkflowFlowSpec(parsed.workflowPath, { cwd: runtime.cwd });
+	const artifact = await loadWorkflowArtifact(spec.path);
 	const freeze = await freezeWorkflowArtifact(artifact);
 	const familyId = parsed.familyId ?? `${freeze.id}:family`;
 	const existingFamily = reconstructWorkflowFamilies(runtime.sessionManager.getBranch()).find(
@@ -2808,8 +2811,8 @@ function workflowUsage(): string {
 		"Usage: /workflow list [--family-id <id>]",
 		"Usage: /workflow graph [--family-id <id>]",
 		"Usage: /workflow manager [--family-id <id>]",
-		"Usage: /workflow freeze <path> [--family-id <id>]",
-		"Usage: /workflow start <path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--background]",
+		"Usage: /workflow freeze <flow-or-path> [--family-id <id>]",
+		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--background]",
 		"Usage: /workflow request-change <file> [--family-id <id>] [--attempt-id <id>]",
 		"Usage: /workflow approve-change <change-request-id> [--actor <actor>]",
 		"Usage: /workflow reject-change <change-request-id> [--actor <actor>] [--reason <text>]",

@@ -26,6 +26,30 @@ The most capable agent surface that ships. Continuously tuned by real-world use 
 
 **40+** providers · **32** built-in tools · **14** lsp ops · **28** dap ops · **~55k** lines of Rust core.
 
+## Workflow Orchestration
+
+`/workflow` turns omp into an interactive agentic workflow runner: freeze a
+distributable `.omhflow + resources` artifact, run it with a live TUI graph,
+stop/checkpoint a production attempt, approve flow changes, and restart safely.
+Built-in flows include `humanize-rlcr` and `kda-humanize-reference`; external
+flows can be installed with `omp workflow install` or discovered through
+`OMHFLOW_DIR`.
+
+```sh
+omp workflow list
+omp workflow start humanize-rlcr --max-activations 1
+```
+
+Inside the TUI:
+
+```text
+/workflow start humanize-rlcr --background
+/workflow manager
+```
+
+See [docs/workflows.md](docs/workflows.md) for artifact layout, non-interactive
+usage, install/uninstall, and lifecycle commands.
+
 ## Install
 
 **macOS · Linux**

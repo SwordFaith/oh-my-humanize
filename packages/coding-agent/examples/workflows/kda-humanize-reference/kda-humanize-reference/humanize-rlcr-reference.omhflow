@@ -1,0 +1,168 @@
+---
+name: humanize-rlcr-reference
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 30000
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Humanize RLCR reference
+
+```yaml workflow
+capabilities:
+  agents:
+    - task
+  tools:
+    - eval
+  skills:
+    - humanize-rlcr
+resources:
+  - path: prompts/plan-compliance.md
+    kind: prompt
+  - path: prompts/plan-quiz.md
+    kind: prompt
+  - path: prompts/goal-tracker.md
+    kind: prompt
+  - path: prompts/implement-round.md
+    kind: prompt
+  - path: prompts/implementation-review.md
+    kind: prompt
+  - path: prompts/fix-code-review.md
+    kind: prompt
+  - path: prompts/code-review.md
+    kind: prompt
+  - path: prompts/finalize.md
+    kind: prompt
+sequence:
+  - node:
+      id: planCompliance
+      type: review
+      reads:
+        - /plan
+      prompt:
+        template:
+          file: prompts/plan-compliance.md
+          bindings:
+            plan:
+              state: /plan
+      gates:
+        - PASS
+        - FAIL_RELEVANCE
+        - FAIL_BRANCH_SWITCH
+      fallbackVerdict: FAIL_RELEVANCE
+  - node:
+      id: planUnderstandingQuiz
+      type: human
+      reads:
+        - /plan
+      prompt:
+        template:
+          file: prompts/plan-quiz.md
+          bindings:
+            plan:
+              state: /plan
+  - node:
+      id: initializeGoalTracker
+      type: agent
+      agent: task
+      reads:
+        - /plan
+      writes:
+        - /goalTracker
+      prompt:
+        template:
+          file: prompts/goal-tracker.md
+          bindings:
+            plan:
+              state: /plan
+  - template:
+      kind: retry_until
+      body:
+        id: implementRound
+        type: agent
+        agent: task
+        reads:
+          - /plan
+          - /goalTracker
+        writes:
+          - /implementationSummary
+        prompt:
+          template:
+            file: prompts/implement-round.md
+            bindings:
+              plan:
+                state: /plan
+      review:
+        id: implementationReview
+        type: review
+        reads:
+          - /summary
+        prompt:
+          template:
+            file: prompts/implementation-review.md
+            bindings:
+              summary:
+                output:
+                  node: implementRound
+                  path: /summary
+                  activation: parent
+        gates:
+          - CONTINUE
+          - COMPLETE
+          - STOP
+        fallbackVerdict: CONTINUE
+      retryWhen: outputs.implementationReview.verdict == "CONTINUE"
+  - template:
+      kind: retry_until
+      body:
+        id: fixCodeReviewIssues
+        type: agent
+        agent: task
+        reads:
+          - /plan
+          - /implementationSummary
+        writes:
+          - /codeReviewFix
+        prompt:
+          template:
+            file: prompts/fix-code-review.md
+            bindings:
+              plan:
+                state: /plan
+      review:
+        id: codeReviewGate
+        type: review
+        reads:
+          - /summary
+        prompt:
+          template:
+            file: prompts/code-review.md
+            bindings:
+              fixSummary:
+                output:
+                  node: fixCodeReviewIssues
+                  path: /summary
+                  activation: parent
+        gates:
+          - ISSUES
+          - CLEAN
+        fallbackVerdict: ISSUES
+      retryWhen: outputs.codeReviewGate.verdict == "ISSUES"
+  - node:
+      id: finalize
+      type: agent
+      agent: task
+      reads:
+        - /plan
+        - /goalTracker
+      writes:
+        - /finalizeSummary
+      prompt:
+        template:
+          file: prompts/finalize.md
+          bindings:
+            plan:
+              state: /plan
+```

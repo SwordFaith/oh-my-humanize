@@ -1361,6 +1361,39 @@ edges: []
 		]);
 	});
 
+	it("resolves bundled workflow artifact names for freeze and start commands", async () => {
+		const freezeEntries: CapturedEntry[] = [];
+		const freezeRuntime = createRuntime(freezeEntries);
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				"/workflow freeze humanize-rlcr --family-id family-builtin-freeze",
+				freezeRuntime.runtime,
+			),
+		).toEqual({ consumed: true });
+		expect(reconstructWorkflowFamilies(freezeEntries)[0]?.freezes[0]?.flowPath).toContain(
+			path.join("examples", "workflows", "humanize-rlcr", "humanize-rlcr.omhflow"),
+		);
+
+		const startEntries: CapturedEntry[] = [];
+		const { runtime } = createRuntime(startEntries, {});
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				"/workflow start humanize-rlcr --run-id run-builtin --family-id family-builtin-start --max-activations 0",
+				runtime,
+			),
+		).toEqual({ consumed: true });
+		const family = reconstructWorkflowFamilies(startEntries)[0];
+		expect(family?.id).toBe("family-builtin-start");
+		expect(family?.freezes[0]?.flowPath).toContain(
+			path.join("examples", "workflows", "humanize-rlcr", "humanize-rlcr.omhflow"),
+		);
+		expect(family?.attempts.map(attempt => [attempt.id, attempt.status])).toEqual([
+			["run-builtin:attempt-1", "stopped"],
+		]);
+	});
+
 	it("applies an approved change to a draft .omhflow artifact for strict refreeze", async () => {
 		const dir = await createTempDir();
 		await fs.mkdir(path.join(dir, "release"), { recursive: true });
