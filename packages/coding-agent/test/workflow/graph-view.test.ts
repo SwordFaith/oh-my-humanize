@@ -1136,6 +1136,63 @@ describe("workflow graph view rendering", () => {
 		expect(text).not.toContain("activation-build");
 	});
 
+	it("shows a running checkpoint resume as status instead of a duplicate restart action", () => {
+		const definition: WorkflowDefinition = {
+			name: "resume-affordance",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "build", type: "script" },
+				{ id: "review", type: "review" },
+			],
+			edges: [{ from: "build", to: "review" }],
+		};
+		const freeze = createFreeze(definition);
+		const family: WorkflowRunFamilySnapshot = {
+			id: "resume-affordance:family",
+			freezes: [freeze],
+			attempts: [
+				{
+					id: "attempt-source",
+					familyId: "resume-affordance:family",
+					freezeId: freeze.id,
+					startNodeId: "build",
+					status: "stopped",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [],
+				},
+				{
+					id: "attempt-resume",
+					familyId: "resume-affordance:family",
+					freezeId: freeze.id,
+					startNodeId: "review",
+					status: "running",
+					checkpointId: "checkpoint-1",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [],
+				},
+			],
+			checkpoints: [
+				{
+					id: "checkpoint-1",
+					familyId: "resume-affordance:family",
+					attemptId: "attempt-source",
+					completedActivationIds: [],
+					abortedActivationIds: [],
+					frontierNodeIds: ["review"],
+					state: {},
+					sourceMapping: {},
+				},
+			],
+			changeRequests: [],
+		};
+
+		const view = buildWorkflowGraphView(family);
+
+		expect(view.actions).toContain("Resume in progress: attempt-resume from checkpoint-1");
+		expect(view.actions).not.toContain("Restart: /workflow restart checkpoint-1 --background");
+	});
+
 	it("renders the live TUI graph as an operator cockpit before the diagram", async () => {
 		const theme = await getThemeByName("dark");
 		if (!theme) throw new Error("dark theme fixture is required");

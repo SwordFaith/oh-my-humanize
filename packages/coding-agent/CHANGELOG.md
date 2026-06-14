@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed workflow checkpoint resume controls so `/workflow restart <checkpoint>` refuses while another attempt is already running from that checkpoint, and the TUI graph plus `/workflow manager` show `resume in progress` instead of advertising a duplicate restart command.
 - Fixed background workflow attempts so lifecycle checkpoints are flushed after activation-limit stops or completion, making printed restart checkpoints recoverable from later OMP sessions.
 - Fixed `/workflow restart` diagnostics so a checkpoint found in another local resumable session points the operator to `omp --resume <session-id>` instead of only reporting that the current session cannot find it.
 - Fixed workflow graph review nodes so the TUI shows the parsed verdict and selected outgoing route separately from summary text.

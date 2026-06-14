@@ -42,6 +42,7 @@ import {
 	appendWorkflowAttemptActivationAborted,
 	approveWorkflowChangeRequest,
 	createWorkflowCheckpoint,
+	findRunningWorkflowCheckpointResumeAttempt,
 	type ProposeWorkflowChangeRequestOptions,
 	proposeWorkflowChangeRequest,
 	type RuntimeBindingSnapshot,
@@ -832,6 +833,13 @@ async function handleRestartCommand(rest: string, runtime: SlashCommandRuntime):
 	const families = reconstructWorkflowFamilies(runtime.sessionManager.getBranch());
 	const located = findCheckpoint(families, parsed.checkpointId);
 	if (!located) return usage(await formatWorkflowCheckpointNotFound(parsed.checkpointId, runtime), runtime);
+	const runningResume = findRunningWorkflowCheckpointResumeAttempt(located.family, located.checkpoint.id);
+	if (runningResume !== undefined) {
+		return usage(
+			`Workflow checkpoint already has a running resume: ${located.checkpoint.id} (${runningResume.id})`,
+			runtime,
+		);
+	}
 	const freeze =
 		parsed.freezeId !== undefined
 			? located.family.freezes.find(candidate => candidate.id === parsed.freezeId)
@@ -2971,8 +2979,13 @@ function formatWorkflowManager(
 		lines.push(`- interrupt: /workflow stop ${currentAttempt.id} --deadline-ms 30000`);
 	}
 	for (const checkpoint of family.checkpoints) {
-		const freezeSuffix = latestFreeze === undefined ? "" : ` --freeze-id ${latestFreeze.id}`;
-		lines.push(`- restart: /workflow restart ${checkpoint.id}${freezeSuffix} --background`);
+		const runningResume = findRunningWorkflowCheckpointResumeAttempt(family, checkpoint.id);
+		if (runningResume !== undefined) {
+			lines.push(`- resume in progress: ${runningResume.id} from ${checkpoint.id}`);
+		} else {
+			const freezeSuffix = latestFreeze === undefined ? "" : ` --freeze-id ${latestFreeze.id}`;
+			lines.push(`- restart: /workflow restart ${checkpoint.id}${freezeSuffix} --background`);
+		}
 	}
 	lines.push(`- request change: /workflow request-change <file> --family-id ${family.id}`);
 	return lines.join("\n");

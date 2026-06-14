@@ -9,6 +9,7 @@ import type {
 	WorkflowRunAttemptSnapshot,
 	WorkflowRunFamilySnapshot,
 } from "./lifecycle";
+import { findRunningWorkflowCheckpointResumeAttempt } from "./lifecycle";
 import { applyWorkflowStatePatch, type WorkflowActivationOutput } from "./state";
 
 export type WorkflowGraphNodeStatus =
@@ -1380,7 +1381,10 @@ function formatWorkflowGraphActions(
 		actions.push(`Reject: /workflow reject-change ${request.id} --actor human --reason <reason>`);
 	}
 	if (currentCheckpoint) {
-		actions.push(`Restart: /workflow restart ${currentCheckpoint.id} --background`);
+		const runningResume = findRunningWorkflowCheckpointResumeAttempt(family, currentCheckpoint.id);
+		if (runningResume !== undefined)
+			actions.push(`Resume in progress: ${runningResume.id} from ${currentCheckpoint.id}`);
+		else actions.push(`Restart: /workflow restart ${currentCheckpoint.id} --background`);
 	}
 	return actions;
 }

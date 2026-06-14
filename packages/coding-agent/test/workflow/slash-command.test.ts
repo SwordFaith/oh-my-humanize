@@ -4277,9 +4277,55 @@ edges:
 		expect(output[0]).toContain("Operator actions:");
 		expect(output[0]).toContain("- graph: /workflow graph --family-id family-optimizer");
 		expect(output[0]).toContain("- interrupt: /workflow stop attempt-integrate --deadline-ms 30000");
-		expect(output[0]).toContain(
+		expect(output[0]).toContain("- resume in progress: attempt-integrate from checkpoint-search");
+		expect(output[0]).not.toContain(
 			"- restart: /workflow restart checkpoint-search --freeze-id flowfreeze:b --background",
 		);
+	});
+
+	it("rejects restarting a checkpoint that already has a running resume attempt", async () => {
+		const entries: CapturedEntry[] = [];
+		const freeze = createFreeze("flowfreeze:duplicate-restart", ["build", "review"]);
+		const host = createHostFromEntries(entries);
+		startWorkflowFamily(host, { familyId: "family-duplicate-restart" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-duplicate-restart" });
+		startWorkflowAttempt(host, {
+			familyId: "family-duplicate-restart",
+			attemptId: "attempt-source",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-source"),
+		});
+		requestWorkflowAttemptStop(host, {
+			attemptId: "attempt-source",
+			deadlineMs: 10,
+			reason: "operator checkpoint",
+		});
+		createWorkflowCheckpoint(host, {
+			checkpointId: "checkpoint-duplicate",
+			familyId: "family-duplicate-restart",
+			attemptId: "attempt-source",
+			completedActivationIds: [],
+			abortedActivationIds: [],
+			frontierNodeIds: ["review"],
+			state: {},
+			sourceMapping: {},
+		});
+		restartWorkflowAttempt(host, {
+			familyId: "family-duplicate-restart",
+			attemptId: "attempt-resume",
+			freezeId: freeze.id,
+			startNodeId: "review",
+			checkpointId: "checkpoint-duplicate",
+			runtimeBindingSnapshot: binding("binding-resume"),
+		});
+		const { output, runtime } = createRuntime(entries);
+
+		expect(await executeAcpBuiltinSlashCommand("/workflow restart checkpoint-duplicate", runtime)).toEqual({
+			consumed: true,
+		});
+
+		expect(output[0]).toBe("Workflow checkpoint already has a running resume: checkpoint-duplicate (attempt-resume)");
 	});
 
 	it("shows running workflow agents in the operator manager", async () => {

@@ -1169,6 +1169,17 @@ export function reconstructWorkflowFamilies(entries: WorkflowLifecycleBranchEntr
 	return [...families.values()];
 }
 
+export function findRunningWorkflowCheckpointResumeAttempt(
+	family: WorkflowRunFamilySnapshot,
+	checkpointId: string,
+): WorkflowRunAttemptSnapshot | undefined {
+	for (let index = family.attempts.length - 1; index >= 0; index -= 1) {
+		const attempt = family.attempts[index];
+		if (attempt?.status === "running" && attempt.checkpointId === checkpointId) return attempt;
+	}
+	return undefined;
+}
+
 function appendRuntimeBindingSnapshot(
 	host: WorkflowLifecycleStoreHost,
 	attemptId: string,
