@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- Fixed Agent Hub workflow-agent rows so the operator roster shows workflow work items instead of raw subagent adapter labels.
 - Fixed workflow checkpoint resume controls so `/workflow restart <checkpoint>` refuses while another attempt is already running from that checkpoint, and the TUI graph plus `/workflow manager` show `resume in progress` instead of advertising a duplicate restart command.
 - Fixed workflow graph controls so running script/program nodes link to manager status without advertising Agent Hub intervention controls when no live workflow agent is available.
 - Fixed background workflow attempts so lifecycle checkpoints are flushed after activation-limit stops or completion, making printed restart checkpoints recoverable from later OMP sessions.

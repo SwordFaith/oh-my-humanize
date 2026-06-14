@@ -96,6 +96,11 @@ function statusBadge(status: AgentStatus): string {
 	}
 }
 
+function isWorkflowOperatorWorkItem(ref: AgentRef, task: string | undefined): boolean {
+	const label = task ?? ref.displayName;
+	return ref.kind === "sub" && ref.parentId === ref.id && label.includes(" · ");
+}
+
 function registerPersistedSubagents(registry: AgentRegistry, sessionFile: string | null | undefined): void {
 	if (!sessionFile?.endsWith(".jsonl")) return;
 	const root = sessionFile.slice(0, -6);
@@ -449,12 +454,18 @@ export class AgentHubOverlayComponent extends Container {
 
 	#renderRow(ref: AgentRef, selected: boolean, width: number): string {
 		const cursor = selected ? theme.fg("accent", theme.nav.cursor) : " ";
-		const parts: string[] = [statusBadge(ref.status), theme.bold(replaceTabs(ref.id))];
-		parts.push(theme.fg("dim", replaceTabs(ref.displayName)));
-		parts.push(theme.fg("dim", ref.parentId ? `${ref.kind} · of ${ref.parentId}` : ref.kind));
 		const observed = this.#observableFor(ref.id);
 		const task = observed?.description ?? observed?.progress?.task;
-		if (task) {
+		const workflowWorkItem = isWorkflowOperatorWorkItem(ref, task);
+		const parts: string[] = [statusBadge(ref.status)];
+		if (workflowWorkItem) {
+			parts.push(theme.bold(sanitizeLine(task ?? ref.displayName, TRUNCATE_LENGTHS.TITLE)));
+		} else {
+			parts.push(theme.bold(replaceTabs(ref.id)));
+			parts.push(theme.fg("dim", replaceTabs(ref.displayName)));
+			parts.push(theme.fg("dim", ref.parentId ? `${ref.kind} · of ${ref.parentId}` : ref.kind));
+		}
+		if (task && !workflowWorkItem && task !== ref.displayName) {
 			parts.push(theme.fg("muted", sanitizeLine(task, TRUNCATE_LENGTHS.TITLE)));
 		}
 		const unread = this.#irc.unreadCount(ref.id);

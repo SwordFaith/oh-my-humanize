@@ -9,6 +9,7 @@ export function createTaskToolAgentRunner(toolSession: ToolSession): WorkflowAge
 			agent: request.agent,
 			id: request.task.id,
 			description: request.task.description,
+			role: request.task.role,
 			assignment: request.task.assignment,
 		};
 		if (request.modelOverride !== undefined) {

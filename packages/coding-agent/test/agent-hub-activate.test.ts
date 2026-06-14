@@ -111,6 +111,36 @@ describe("Agent hub Enter activation", () => {
 		hub.dispose();
 	});
 
+	it("renders workflow agents as operator work items instead of adapter labels", () => {
+		const agents = new AgentRegistry();
+		agents.register({
+			id: "buildRound",
+			displayName: "Builder · Build round",
+			kind: "sub",
+			parentId: "buildRound",
+			session: { subscribe: () => () => {} } as unknown as AgentSession,
+			sessionFile: null,
+			status: "running",
+		});
+		const hub = new AgentHubOverlayComponent({
+			observers: new SessionObserverRegistry(),
+			hubKeys: [],
+			onDone: () => {},
+			requestRender: () => {},
+			registry: agents,
+			irc: new IrcBus(agents),
+			focusAgent: async () => {},
+		});
+
+		const rendered = Bun.stripANSI(hub.render(120).join("\n"));
+
+		expect(rendered).toContain("Builder · Build round");
+		expect(rendered).not.toContain("buildRound ·");
+		expect(rendered).not.toContain("sub · of buildRound");
+		expect(rendered).not.toContain("task · sub");
+		hub.dispose();
+	});
+
 	it("selector controller restores focus to the editor after Enter focuses an agent", async () => {
 		const agents = new AgentRegistry();
 		agents.register({

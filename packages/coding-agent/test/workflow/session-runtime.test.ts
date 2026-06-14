@@ -270,7 +270,8 @@ describe("session workflow runtime host", () => {
 			modelOverrideAuthFallback: false,
 			task: {
 				id: "build",
-				description: "build",
+				description: "Builder · Build",
+				role: "Builder · Build",
 				assignment: "Implement the workflow feature.",
 			},
 		});
@@ -432,7 +433,8 @@ describe("session workflow runtime host", () => {
 			modelOverrideAuthFallback: false,
 			task: {
 				id: "review",
-				description: "review",
+				description: "Reviewer · Review",
+				role: "Reviewer · Review",
 				assignment: "Review the workflow result.",
 			},
 		});

@@ -1,5 +1,6 @@
 import { workflowAgentTaskIdForNode } from "./agent-task-id";
 import type { WorkflowScriptLanguage } from "./definition";
+import { formatWorkflowAgentWorkItemLabel } from "./display";
 import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput } from "./node-runtime";
 import { WorkflowNodeRuntimeError } from "./node-runtime";
 import { validateWorkflowActivationOutput, type WorkflowActivationOutput } from "./state";
@@ -25,6 +26,7 @@ export interface WorkflowAgentTaskRequest {
 export interface WorkflowAgentTaskItem {
 	id: string;
 	description: string;
+	role: string;
 	assignment: string;
 }
 
@@ -93,9 +95,11 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 					`workflow agent node "${input.node.id}" requires a subagent runtime adapter`,
 				);
 			}
+			const taskLabel = formatWorkflowAgentWorkItemLabel(input.node);
 			const task: WorkflowAgentTaskItem = {
 				id: workflowAgentTaskIdForNode(input.node.id),
-				description: input.node.id,
+				description: taskLabel,
+				role: taskLabel,
 				assignment: input.prompt?.trim() || `Run workflow node "${input.node.id}".`,
 			};
 			const request: WorkflowAgentTaskRequest = {
@@ -155,13 +159,15 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			if (!assignment) {
 				throw new WorkflowNodeRuntimeError(`workflow review node "${input.node.id}" must define a review prompt`);
 			}
+			const taskLabel = formatWorkflowAgentWorkItemLabel(input.node);
 			const request: WorkflowAgentTaskRequest = {
 				agent: input.agent ?? "reviewer",
 				activationId: input.activation.id,
 				nodeId: input.node.id,
 				task: {
 					id: workflowAgentTaskIdForNode(input.node.id),
-					description: input.node.id,
+					description: taskLabel,
+					role: taskLabel,
 					assignment,
 				},
 			};
