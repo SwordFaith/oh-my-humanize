@@ -1,0 +1,66 @@
+---
+name: parallel-weak-implementation
+version: 1
+schema: omhflow/v1
+models:
+  roles:
+    builder: gpt-5.5
+    reviewer: gpt-5.5
+  defaults:
+    agent: builder
+    review: reviewer
+  unavailable: fallback-to-parent
+checkpoint:
+  stopDeadlineMs: 300000
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Parallel weak implementation
+
+```yaml workflow
+resources:
+  - path: prompts/scope.md
+    kind: prompt
+  - path: prompts/weak-review.md
+    kind: prompt
+capabilities:
+  agents:
+    - task
+sequence:
+  - node:
+      id: scope
+      type: agent
+      agent: task
+      prompt:
+        file: prompts/scope.md
+      writes:
+        - /plan
+  - parallel:
+      - node:
+          id: implementCore
+          type: agent
+          agent: task
+          reads:
+            - /plan
+      - node:
+          id: implementTests
+          type: agent
+          agent: task
+          reads:
+            - /plan
+      - node:
+          id: implementDocs
+          type: agent
+          agent: task
+          reads:
+            - /plan
+    join:
+      id: weakReview
+      type: review
+      prompt:
+        file: prompts/weak-review.md
+      gates:
+        - continue
+        - finish
+```

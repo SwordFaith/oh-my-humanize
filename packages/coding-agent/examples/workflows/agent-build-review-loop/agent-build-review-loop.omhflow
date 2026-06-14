@@ -1,0 +1,95 @@
+---
+name: agent-build-review-loop
+version: 1
+schema: omhflow/v1
+models:
+  roles:
+    builder: gpt-5.5
+    reviewer: gpt-5.5
+  defaults:
+    agent: builder
+    review: reviewer
+  unavailable: fallback-to-parent
+checkpoint:
+  stopDeadlineMs: 300000
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Agent Build/Review Loop
+
+```yaml workflow
+stateSchema:
+  version: 1
+  shape:
+    progress: object
+    implementation: object
+    verdict: string
+    archive: object
+resources:
+  - path: scripts/seed-progress.sh
+    kind: script
+  - path: scripts/archive-loop.sh
+    kind: script
+  - path: prompts/build-round.md
+    kind: prompt
+  - path: prompts/review-round.md
+    kind: prompt
+capabilities:
+  tools:
+    - shell
+  agents:
+    - task
+sequence:
+  - node:
+      id: seedProgress
+      type: script
+      script:
+        language: sh
+        file: scripts/seed-progress.sh
+      writes:
+        - /progress
+  - template:
+      kind: retry_until
+      body:
+        node:
+          id: buildRound
+          type: agent
+          agent: task
+          model:
+            role: builder
+          reads:
+            - /progress
+          prompt:
+            file: prompts/build-round.md
+          writes:
+            - /implementation
+      review:
+        id: reviewRound
+        type: review
+        agent: task
+        model:
+          role: reviewer
+        reads:
+          - /progress
+          - /implementation
+        prompt:
+          file: prompts/review-round.md
+        writes:
+          - /verdict
+        gates:
+          - complete
+          - continue
+        fallbackVerdict: continue
+      retryWhen: outputs.reviewRound.verdict == "continue"
+  - node:
+      id: archiveLoop
+      type: script
+      reads:
+        - /verdict
+      script:
+        language: sh
+        file: scripts/archive-loop.sh
+      writes:
+        - /archive
+```

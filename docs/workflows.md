@@ -29,6 +29,22 @@ resources. Resource paths inside the flow resolve from that same-name directory.
 - `humanize-rlcr` — a Humanize-style review loop with implementation and review
   rounds.
 - `kda-humanize-reference` — a KDA-style flow that imports a Humanize subflow.
+- `parallel-weak-implementation` — a compact parallel fan-out/gather
+  implementation pattern with a weak review join.
+- `agent-build-review-loop` — a generator/critic refinement loop for repeated
+  build and review rounds.
+- `human-interactive-dev` — a human-in-the-loop branch/refine workflow for
+  operator intervention and restart practice.
+- `recflow-audit-events-cockpit` — a recursive workflow development cockpit
+  with parallel builders, review-controlled loop, and an imported quality
+  subflow.
+
+The additional built-ins are intentionally small, practical patterns rather
+than a large template zoo. They map to reusable multi-agent structures from the
+[Multi-Agent Wiki pattern index](https://multi-agent.wiki/patterns), including
+parallel fan-out/gather, generator-critic, refinement loop,
+human-in-the-loop, and dynamic workflow orchestration. Each promoted flow was
+validated under `temp/playground` before being packaged as a built-in.
 
 List available flows:
 
@@ -40,6 +56,82 @@ Built-in flows are packaged workflow artifacts, not infrastructure
 dependencies. The workflow runtime, freeze checker, resolver, and CLI must also
 work with any valid standalone `.omhflow + same-name directory` artifact supplied
 by path or through `OMHFLOW_DIR`.
+
+## Humanize RLCR Demo
+
+Use `humanize-rlcr` when a task needs iterative implementation with explicit
+review gates. The flow models plan compliance, a human understanding gate,
+implementation/review looping, code-review cleanup, and final alignment.
+
+Prepare a project directory with a task brief:
+
+```sh
+mkdir -p demo-humanize
+cd demo-humanize
+cat > task.md <<'EOF'
+Goal: add a small documented behavior change and verify it locally.
+Acceptance: implementation notes, tests or command output, and final summary.
+EOF
+```
+
+Start it interactively so the operator can observe the graph, answer the human
+gate, interrupt agents, or approve changes:
+
+```text
+/workflow start humanize-rlcr --family-id demo-humanize --background
+/workflow manager --family-id demo-humanize
+```
+
+For a bounded smoke run without opening the TUI:
+
+```sh
+omp workflow start humanize-rlcr \
+  --cwd "$PWD" \
+  --run-id demo-humanize-smoke \
+  --max-activations 3 \
+  --json
+```
+
+The headless path is useful for freeze/runtime checks, but human nodes and
+operator steering are TUI-first.
+
+## KDA Demo
+
+Use `kda-humanize-reference` when a task needs a KDA-style outer flow that
+defines a contract, inspects the workspace, drafts a plan, then calls Humanize
+as a reusable subflow before candidate validation and promotion.
+
+Prepare a project directory:
+
+```sh
+mkdir -p demo-kda
+cd demo-kda
+cat > task.md <<'EOF'
+Task contract: inspect this project, draft a plan, use the Humanize subflow to
+iterate, then record evidence for promotion.
+EOF
+```
+
+Run it in the TUI:
+
+```text
+/workflow start kda-humanize-reference --family-id demo-kda --background
+/workflow graph --family-id demo-kda
+/workflow manager --family-id demo-kda
+```
+
+The resident graph should show the imported Humanize subflow as a function-like
+call boundary, while diagnostics keep source mapping and namespace details
+available for inspection. For non-interactive validation:
+
+```sh
+omp workflow freeze kda-humanize-reference --json
+omp workflow start kda-humanize-reference \
+  --cwd "$PWD" \
+  --run-id demo-kda-smoke \
+  --max-activations 5 \
+  --json
+```
 
 ## Interactive Use
 

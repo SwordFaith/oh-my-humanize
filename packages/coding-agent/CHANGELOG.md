@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added built-in `humanize-rlcr` and `kda-humanize-reference` `.omhflow` artifacts, shared named workflow resolution for `/workflow start|freeze`, and a non-interactive `omp workflow` command for listing, freezing, starting, installing, and uninstalling workflow artifacts via `OMHFLOW_DIR`.
+- Added built-in `humanize-rlcr`, `kda-humanize-reference`, `parallel-weak-implementation`, `agent-build-review-loop`, `human-interactive-dev`, and `recflow-audit-events-cockpit` `.omhflow` artifacts, shared named workflow resolution for `/workflow start|freeze`, Humanize/KDA workflow demos, and a non-interactive `omp workflow` command for listing, freezing, starting, installing, and uninstalling workflow artifacts via `OMHFLOW_DIR`.
 - Fixed paste and image placeholders crashing when the editor renders before theme initialization.
 - Added `ModelRegistry.create(authStorage, modelsPath?)` async factory that runs the JSON → YAML migration step on `models.{yml,yaml}` asynchronously ahead of the sync constructor's bundled-model load. The sync `new ModelRegistry(...)` constructor still works (tests rely on it); production boot paths now use the factory so the migration's I/O lands off the event-loop hot path.
 - Added `ConfigFile.tryLoadAsync()`, `ConfigFile.loadAsync()`, `ConfigFile.loadOrDefaultAsync()`, `ConfigFile.getMtimeMsAsync()`, and `ConfigFile.warmup(file)` so the rest of the codebase can migrate config reads off the sync path.

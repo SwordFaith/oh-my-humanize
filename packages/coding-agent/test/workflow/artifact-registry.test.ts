@@ -25,31 +25,29 @@ afterEach(async () => {
 });
 
 describe("workflow artifact registry", () => {
-	it("resolves and freezes bundled Humanize and KDA workflow artifacts by name", async () => {
-		const humanize = await resolveWorkflowFlowSpec("humanize-rlcr", { cwd: process.cwd(), flowDirs: [] });
-		const kda = await resolveWorkflowFlowSpec("kda-humanize-reference", { cwd: process.cwd(), flowDirs: [] });
+	it("resolves and freezes bundled practical workflow artifacts by name", async () => {
+		const expected = [
+			"humanize-rlcr",
+			"kda-humanize-reference",
+			"parallel-weak-implementation",
+			"agent-build-review-loop",
+			"human-interactive-dev",
+			"recflow-audit-events-cockpit",
+		];
 
-		expect(humanize).toMatchObject({
-			kind: "named",
-			name: "humanize-rlcr",
-			source: "builtin",
-		});
-		expect(kda).toMatchObject({
-			kind: "named",
-			name: "kda-humanize-reference",
-			source: "builtin",
-		});
-		expect(humanize.path).toBe(path.join(getBuiltinWorkflowRoot(), "humanize-rlcr", "humanize-rlcr.omhflow"));
-		expect(kda.path).toBe(
-			path.join(getBuiltinWorkflowRoot(), "kda-humanize-reference", "kda-humanize-reference.omhflow"),
-		);
+		for (const name of expected) {
+			const spec = await resolveWorkflowFlowSpec(name, { cwd: process.cwd(), flowDirs: [] });
 
-		await expect(freezeWorkflowArtifact(await loadWorkflowArtifact(humanize.path))).resolves.toMatchObject({
-			definition: { name: "humanize-rlcr" },
-		});
-		await expect(freezeWorkflowArtifact(await loadWorkflowArtifact(kda.path))).resolves.toMatchObject({
-			definition: { name: "kda-humanize-reference" },
-		});
+			expect(spec).toMatchObject({
+				kind: "named",
+				name,
+				source: "builtin",
+			});
+			expect(spec.path).toBe(path.join(getBuiltinWorkflowRoot(), name, `${name}.omhflow`));
+			await expect(freezeWorkflowArtifact(await loadWorkflowArtifact(spec.path))).resolves.toMatchObject({
+				definition: { name },
+			});
+		}
 	});
 
 	it("treats explicit paths as paths even when the basename matches an installed flow name", async () => {
