@@ -69,7 +69,7 @@ export interface LspServerInfo {
  */
 export class WelcomeComponent implements Component {
 	#animStart: number | null = null;
-	#animTimer: ReturnType<typeof setInterval> | null = null;
+	#animTimer: NodeJS.Timeout | null = null;
 	/** Tip chosen once per instance so re-renders (intro, LSP updates) don't shuffle it. */
 	readonly #tip: string | undefined = TIPS.length > 0 ? TIPS[Math.floor(Math.random() * TIPS.length)] : undefined;
 	// Render cache: the welcome box is the first transcript-area component, so
@@ -133,6 +133,10 @@ export class WelcomeComponent implements Component {
 	setLspServers(servers: LspServerInfo[]): void {
 		this.lspServers = servers;
 		this.invalidate();
+	}
+
+	dispose(): void {
+		this.#stopAnimation();
 	}
 
 	render(termWidth: number): readonly string[] {

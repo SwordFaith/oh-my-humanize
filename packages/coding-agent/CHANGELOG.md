@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Changed the workflow monitor to collapse the startup welcome/onboarding panel as soon as a workflow graph becomes active, keeping the resident cockpit as the primary first-viewport surface.
 - Changed the workflow graph and `/workflow manager` default surfaces into a concise operator cockpit that foregrounds run status, topology, on-flight work, recent output, subflow calls, change review, and contextual controls while leaving freeze ids and runtime binding dumps to diagnostics.
 
 ### Fixed

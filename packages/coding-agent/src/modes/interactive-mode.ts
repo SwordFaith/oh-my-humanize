@@ -387,6 +387,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	hookWidgetContainerBelow: Container;
 	statusLine: StatusLineComponent;
 	#workflowMonitorComponent?: Component;
+	#onboardingContainer?: Container;
 
 	isInitialized = false;
 	isBashMode = false;
@@ -699,6 +700,7 @@ export class InteractiveMode implements InteractiveModeContext {
 
 		const startupQuiet = settings.get("startup.quiet");
 		this.#welcomeComponent = undefined;
+		this.#onboardingContainer = new Container();
 
 		for (const warning of this.session.configWarnings) {
 			this.ui.addChild(new Text(theme.fg("warning", `Warning: ${warning}`), 1, 0));
@@ -716,31 +718,34 @@ export class InteractiveMode implements InteractiveModeContext {
 			);
 
 			// Setup UI layout
-			this.ui.addChild(new Spacer(1));
-			this.ui.addChild(this.#welcomeComponent);
-			this.ui.addChild(new Spacer(1));
+			this.#onboardingContainer.addChild(new Spacer(1));
+			this.#onboardingContainer.addChild(this.#welcomeComponent);
+			this.#onboardingContainer.addChild(new Spacer(1));
 			if (!options.suppressWelcomeIntro) {
 				this.playWelcomeIntro();
 			}
 
 			// Add changelog if provided
 			if (this.#changelogMarkdown) {
-				this.ui.addChild(new DynamicBorder());
+				this.#onboardingContainer.addChild(new DynamicBorder());
 				if (settings.get("collapseChangelog")) {
 					const versionMatch = this.#changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
 					const latestVersion = versionMatch ? versionMatch[1] : this.#version;
 					const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
-					this.ui.addChild(new Text(condensedText, 1, 0));
+					this.#onboardingContainer.addChild(new Text(condensedText, 1, 0));
 				} else {
-					this.ui.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
-					this.ui.addChild(new Spacer(1));
-					this.ui.addChild(new Markdown(this.#changelogMarkdown.trim(), 1, 0, getMarkdownTheme()));
-					this.ui.addChild(new Spacer(1));
+					this.#onboardingContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+					this.#onboardingContainer.addChild(new Spacer(1));
+					this.#onboardingContainer.addChild(
+						new Markdown(this.#changelogMarkdown.trim(), 1, 0, getMarkdownTheme()),
+					);
+					this.#onboardingContainer.addChild(new Spacer(1));
 				}
-				this.ui.addChild(new DynamicBorder());
+				this.#onboardingContainer.addChild(new DynamicBorder());
 			}
 		}
 
+		this.ui.addChild(this.#onboardingContainer);
 		this.ui.addChild(this.chatContainer);
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
@@ -3081,11 +3086,22 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	showWorkflowGraphMonitor(component: Component): void {
+		this.#collapseOnboardingForWorkflowMonitor();
 		disposeWorkflowMonitorComponent(this.#workflowMonitorComponent);
 		this.workflowMonitorContainer.clear();
 		this.#workflowMonitorComponent = component;
 		this.workflowMonitorContainer.addChild(component);
 		this.ui.requestRender();
+	}
+
+	#collapseOnboardingForWorkflowMonitor(): void {
+		if (!this.#onboardingContainer || this.#onboardingContainer.children.length === 0) {
+			this.#welcomeComponent = undefined;
+			return;
+		}
+		this.#onboardingContainer.dispose();
+		this.#onboardingContainer.clear();
+		this.#welcomeComponent = undefined;
 	}
 
 	#mountChatChild(item: Component): void {

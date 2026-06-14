@@ -11,6 +11,7 @@ import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { LspStartupServerInfo } from "@oh-my-pi/pi-coding-agent/tools";
 import { EventBus } from "@oh-my-pi/pi-coding-agent/utils/event-bus";
+import { Text } from "@oh-my-pi/pi-tui";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 describe("InteractiveMode LSP startup welcome banner", () => {
@@ -118,5 +119,20 @@ describe("InteractiveMode LSP startup welcome banner", () => {
 		expect(showStatusSpy).not.toHaveBeenCalled();
 		expect(findServerLine()).toContain(theme.status.enabled);
 		expect(findServerLine()).not.toContain(theme.status.pending);
+	});
+
+	it("collapses onboarding when a workflow monitor becomes active", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+
+		const before = Bun.stripANSI(mode.ui.render(120).join("\n"));
+		expect(before).toContain("Welcome back!");
+		expect(before).toContain("rust-analyzer");
+
+		mode.showWorkflowGraphMonitor(new Text("Workflow cockpit: live graph", 1, 0));
+
+		const after = Bun.stripANSI(mode.ui.render(120).join("\n"));
+		expect(after).toContain("Workflow cockpit: live graph");
+		expect(after).not.toContain("Welcome back!");
+		expect(after).not.toContain("rust-analyzer");
 	});
 });
