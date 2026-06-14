@@ -1,4 +1,4 @@
-import { Ellipsis, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import { Ellipsis, sliceByColumn, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { workflowAgentTaskIdForNode } from "./agent-task-id";
 import { evaluateWorkflowCondition } from "./condition";
 import type { WorkflowNode } from "./definition";
@@ -110,6 +110,7 @@ export interface WorkflowGraphNodeView {
 	id: string;
 	kind: string;
 	status: WorkflowGraphNodeStatus;
+	activationCount?: number;
 	verdict?: string;
 	summary?: string;
 	error?: string;
@@ -190,6 +191,8 @@ const MIN_NODE_WIDTH = 31;
 const DEFAULT_NODE_WIDTH = 49;
 const MAX_NODE_WIDTH = 71;
 const NODE_GAP_WIDTH = 3;
+const LOOP_RAIL_GAP_WIDTH = 3;
+const LOOP_RAIL_STEP_WIDTH = 4;
 
 export function buildWorkflowGraphView(
 	family: WorkflowRunFamilySnapshot,
@@ -202,6 +205,8 @@ export function buildWorkflowGraphView(
 		latestFreeze;
 	const currentCheckpoint = currentAttempt ? findWorkflowCheckpointForAttempt(family, currentAttempt) : undefined;
 	const nodeStatuses = buildWorkflowGraphNodeStatuses(family, currentAttempt, currentCheckpoint);
+	const nodeActivationCounts =
+		currentAttempt === undefined ? undefined : buildWorkflowGraphNodeActivationCounts(currentAttempt);
 	const nodes =
 		currentFreeze?.definition.nodes.map(node => {
 			const status = nodeStatuses.get(node.id) ?? { status: "pending" as const };
@@ -211,6 +216,7 @@ export function buildWorkflowGraphView(
 				status: status.status,
 				focused: isFocusedWorkflowGraphNode(status.status),
 			};
+			if (nodeActivationCounts !== undefined) view.activationCount = nodeActivationCounts.get(node.id) ?? 0;
 			if (status.verdict !== undefined) view.verdict = status.verdict;
 			if (status.summary !== undefined) view.summary = status.summary;
 			if (status.error !== undefined) view.error = status.error;
@@ -322,14 +328,18 @@ export function renderWorkflowGraphDiagram(
 	if (view.nodes.length === 0) return ["(no frozen graph)"];
 	const layout = layoutWorkflowGraph(view, options.width);
 	const lines: string[] = [];
+	const nodeLineById = new Map<string, number>();
 	for (let rankIndex = 0; rankIndex < layout.ranks.length; rankIndex += 1) {
-		lines.push(...renderWorkflowGraphRank(rankIndex, layout));
+		const rankLines = renderWorkflowGraphRank(rankIndex, layout);
+		const rankStartLine = lines.length;
+		lines.push(...rankLines);
+		const nodeLine = rankStartLine + Math.floor(rankLines.length / 2);
+		for (const node of layout.ranks[rankIndex] ?? []) nodeLineById.set(node.id, nodeLine);
 		const connectorLines = renderWorkflowGraphConnector(rankIndex, layout);
 		lines.push(...connectorLines);
 		if (rankIndex < layout.ranks.length - 1 && connectorLines.length === 0) lines.push("");
 	}
-	if (layout.backEdges.length > 0) lines.push("", ...renderWorkflowGraphLoopbacks(layout.backEdges));
-	return lines;
+	return renderWorkflowGraphLoopbackRails(lines, layout.backEdges, nodeLineById);
 }
 
 interface WorkflowGraphLayout {
@@ -559,14 +569,53 @@ function nodeCenter(nodeId: string, rankIndex: number, layout: WorkflowGraphLayo
 	return leftOffset + nodeIndex * (layout.nodeWidth + NODE_GAP_WIDTH) + Math.floor(layout.nodeWidth / 2);
 }
 
-function renderWorkflowGraphLoopbacks(edges: WorkflowGraphEdgeView[]): string[] {
-	const lines = ["╭─ loopbacks"];
-	for (let index = 0; index < edges.length; index += 1) {
-		const branch = index === edges.length - 1 ? "╰" : "├";
-		const edge = edges[index]!;
-		lines.push(`${branch}─ ${edge.from} back to ${formatEdgeTarget(edge)}`);
+function renderWorkflowGraphLoopbackRails(
+	lines: string[],
+	backEdges: readonly WorkflowGraphEdgeView[],
+	nodeLineById: ReadonlyMap<string, number>,
+): string[] {
+	if (backEdges.length === 0) return lines;
+	const maxWidth = Math.max(0, ...lines.map(line => visibleWidth(line)));
+	const rendered = [...lines];
+	const labelsByLine = new Map<number, string[]>();
+	const labelColumn = maxWidth + LOOP_RAIL_GAP_WIDTH + backEdges.length * LOOP_RAIL_STEP_WIDTH + 1;
+	for (let index = 0; index < backEdges.length; index += 1) {
+		const edge = backEdges[index]!;
+		const sourceLine = nodeLineById.get(edge.from);
+		const targetLine = nodeLineById.get(edge.to);
+		if (sourceLine === undefined || targetLine === undefined) continue;
+		const topLine = Math.min(sourceLine, targetLine);
+		const bottomLine = Math.max(sourceLine, targetLine);
+		const column = maxWidth + LOOP_RAIL_GAP_WIDTH + index * LOOP_RAIL_STEP_WIDTH;
+		for (let lineIndex = topLine; lineIndex <= bottomLine; lineIndex += 1) {
+			const glyph = lineIndex === topLine ? "╭─" : lineIndex === bottomLine ? "╰─" : "│";
+			rendered[lineIndex] = putWorkflowGraphTextAtColumn(rendered[lineIndex] ?? "", column, glyph);
+		}
+		const labels = labelsByLine.get(bottomLine) ?? [];
+		labels.push(`${edge.from} back to ${formatEdgeTarget(edge)}`);
+		labelsByLine.set(bottomLine, labels);
 	}
-	return lines;
+	for (const [lineIndex, labels] of labelsByLine) {
+		rendered[lineIndex] = putWorkflowGraphTextAtColumn(rendered[lineIndex] ?? "", labelColumn, labels.join("; "));
+	}
+	return rendered;
+}
+
+function putWorkflowGraphTextAtColumn(line: string, column: number, text: string): string {
+	const safeColumn = Math.max(0, column);
+	const textWidth = visibleWidth(text);
+	const lineWidth = visibleWidth(line);
+	const prefix = padWorkflowGraphLineToColumn(sliceByColumn(line, 0, safeColumn), safeColumn);
+	const suffixStart = safeColumn + textWidth;
+	const suffixWidth = Math.max(0, lineWidth - suffixStart);
+	const suffix = suffixWidth === 0 ? "" : sliceByColumn(line, suffixStart, suffixWidth);
+	return `${prefix}${text}${suffix}`.trimEnd();
+}
+
+function padWorkflowGraphLineToColumn(line: string, column: number): string {
+	const width = visibleWidth(line);
+	if (width >= column) return line;
+	return `${line}${" ".repeat(column - width)}`;
 }
 
 interface ConnectorCell {
@@ -659,9 +708,11 @@ function renderWorkflowGraphNode(
 	const border = node.focused ? doubleBorder() : singleBorder();
 	const innerWidth = width - 2;
 	const detail = formatWorkflowNodeDetail(node);
+	const activationCount = node.activationCount === undefined ? undefined : `runs ${node.activationCount}`;
 	const lines = [
 		`${statusGlyph(node.status)} ${node.id}`,
 		node.kind,
+		...(activationCount === undefined ? [] : [activationCount]),
 		detail ? `${node.status} - ${detail}` : node.status,
 	];
 	return [
@@ -901,6 +952,14 @@ function countWorkflowChangeRequests(family: WorkflowRunFamilySnapshot): Workflo
 	const counts: WorkflowGraphChangeCounts = { approved: 0, proposed: 0, rejected: 0 };
 	for (const request of family.changeRequests) {
 		counts[request.status] += 1;
+	}
+	return counts;
+}
+
+function buildWorkflowGraphNodeActivationCounts(currentAttempt: WorkflowRunAttemptSnapshot): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const activation of currentAttempt.activations) {
+		counts.set(activation.nodeId, (counts.get(activation.nodeId) ?? 0) + 1);
 	}
 	return counts;
 }

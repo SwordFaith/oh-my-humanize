@@ -112,10 +112,71 @@ describe("workflow graph view rendering", () => {
 			],
 		});
 
-		const diagram = renderWorkflowGraphDiagram(view, { width: 80 }).join("\n");
+		const diagram = renderWorkflowGraphDiagram(view, { width: 80 });
+		const rendered = diagram.join("\n");
+		const loopCloseIndex = diagram.findIndex(line => line.includes("review back to build when verdict is retry"));
+		const loopColumn = visibleColumnsOf(diagram[loopCloseIndex] ?? "", "╰")[0];
+		const loopLineIndex = diagram.findIndex(
+			(line, index) => index < loopCloseIndex && charAtVisibleColumn(line, loopColumn ?? -1) === "╭",
+		);
 
-		expect(diagram).toContain("loopbacks");
-		expect(diagram).toContain("review back to build when verdict is retry");
+		expect(loopLineIndex).toBeGreaterThan(-1);
+		expect(loopColumn).toBeDefined();
+		expect(loopCloseIndex).toBeGreaterThan(loopLineIndex);
+		for (let index = loopLineIndex + 1; index < loopCloseIndex; index += 1) {
+			expect(charAtVisibleColumn(diagram[index]!, loopColumn!)).toBe("│");
+		}
+		expect(rendered).toContain("review back to build when verdict is retry");
+		expect(rendered).not.toContain("loopbacks");
+	});
+
+	it("keeps nested loop rails aligned without crossing readable labels", () => {
+		const view: WorkflowGraphView = {
+			familyId: "humanize-rlcr-family",
+			currentAttempt: {
+				id: "attempt-1",
+				status: "running",
+				runtimeBindingId: "binding-1",
+			},
+			changes: { approved: 0, proposed: 0, rejected: 0 },
+			topology: { parallelFanOuts: 0, branchPoints: 2, joins: 1, loops: 2, subflows: 0 },
+			nodes: [
+				{ id: "plan", kind: "agent", status: "completed", focused: false, activationCount: 1 },
+				{ id: "implement", kind: "agent", status: "completed", focused: false, activationCount: 4 },
+				{ id: "summaryReview", kind: "review", status: "completed", focused: false, activationCount: 4 },
+				{ id: "codeReview", kind: "review", status: "running", activationCount: 4, focused: true },
+				{ id: "done", kind: "program", status: "pending", focused: false, activationCount: 0 },
+			],
+			edges: [
+				{ from: "plan", to: "implement" },
+				{ from: "implement", to: "summaryReview" },
+				{ from: "summaryReview", to: "codeReview", condition: 'state.summaryVerdict == "COMPLETE"' },
+				{ from: "summaryReview", to: "implement", condition: 'state.summaryVerdict == "CONTINUE"' },
+				{ from: "codeReview", to: "done", condition: 'state.codeVerdict == "COMPLETE"' },
+				{ from: "codeReview", to: "implement", condition: 'state.codeVerdict == "CONTINUE"' },
+			],
+			lineage: [],
+			actions: [],
+		};
+
+		const diagram = renderWorkflowGraphDiagram(view, { width: 104 });
+		const rendered = diagram.join("\n");
+		const implementRunsLine = diagram.find(line => line.includes("runs 4") && line.includes("╭"));
+		const loopColumns = visibleColumnsOf(implementRunsLine ?? "", "╭");
+		const summaryLabelLine = diagram.find(line =>
+			line.includes("summaryReview back to implement when summary verdict is CONTINUE"),
+		);
+		const codeLabelLine = diagram.find(line =>
+			line.includes("codeReview back to implement when code verdict is CONTINUE"),
+		);
+
+		expect(loopColumns).toHaveLength(2);
+		expect(charAtVisibleColumn(summaryLabelLine ?? "", loopColumns[0]!)).toBe("╰");
+		expect(charAtVisibleColumn(summaryLabelLine ?? "", loopColumns[1]!)).toBe("│");
+		expect(charAtVisibleColumn(codeLabelLine ?? "", loopColumns[1]!)).toBe("╰");
+		expect(rendered).toContain("runs 0");
+		expect(rendered).not.toContain("CONTINUE│");
+		expect(rendered).not.toContain("CONTINUE╰");
 	});
 
 	it("summarizes branch, parallel, loop, join, and subflow topology for the operator cockpit", () => {
@@ -497,6 +558,8 @@ describe("workflow graph view rendering", () => {
 		const text = renderWorkflowGraphText(view);
 
 		expect(text).toContain("- Builder · Build round live · round 2 (watch/intervene buildRound-2)");
+		expect(text).toContain("runs 2");
+		expect(text).toContain("runs 1");
 		expect(text).toContain(
 			"Interrupt Builder · Build round · /workflow interrupt attempt-1 buildRound-2 --deadline-ms 30000",
 		);
