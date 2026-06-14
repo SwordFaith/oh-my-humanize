@@ -361,18 +361,45 @@ function parseReviewTaskOutput(
 			return { verdict: finalLine, summary: trimmed };
 		}
 	}
+	const firstLine = firstNonEmptyLine(trimmed);
+	if (firstLine && firstLine !== trimmed && firstLine !== finalLine && gates?.includes(firstLine)) {
+		return { verdict: firstLine, summary: trimmed };
+	}
+	const firstLineGate = firstLine === undefined ? undefined : gatePrefixFromLine(firstLine, gates);
+	if (firstLineGate !== undefined) {
+		return { verdict: firstLineGate, summary: trimmed || firstLineGate };
+	}
 	if (fallbackVerdict !== undefined) {
 		return { verdict: fallbackVerdict, summary: trimmed || fallbackVerdict };
 	}
 	throw new WorkflowNodeRuntimeError(`workflow review node "${nodeId}" must return a verdict`);
 }
 
+function gatePrefixFromLine(line: string, gates: string[] | undefined): string | undefined {
+	if (!gates?.length) return undefined;
+	for (const gate of [...gates].sort((left, right) => right.length - left.length)) {
+		if (!line.startsWith(gate)) continue;
+		const next = line[gate.length];
+		if (next === undefined || /[\s:;,.!?-]/u.test(next)) return gate;
+	}
+	return undefined;
+}
+
+function firstNonEmptyLine(output: string): string | undefined {
+	const lines = nonEmptyLines(output);
+	return lines[0];
+}
+
 function lastNonEmptyLine(output: string): string | undefined {
-	const lines = output
+	const lines = nonEmptyLines(output);
+	return lines.at(-1);
+}
+
+function nonEmptyLines(output: string): string[] {
+	return output
 		.split(/\r?\n/)
 		.map(line => line.trim())
 		.filter(line => line.length > 0);
-	return lines.at(-1);
 }
 
 function parseReviewObject(
@@ -437,8 +464,14 @@ function reviewVerdictFromObjectText(
 	if (!gates?.length) return undefined;
 	for (const summary of reviewTextCandidatesFromObject(parsed, fallbackSummary)) {
 		const finalLine = lastNonEmptyLine(summary);
-		if (finalLine === undefined || !gates.includes(finalLine)) continue;
-		return { verdict: finalLine, summary };
+		if (finalLine !== undefined && gates.includes(finalLine)) {
+			return { verdict: finalLine, summary };
+		}
+		const firstLine = firstNonEmptyLine(summary);
+		const firstLineGate = firstLine === undefined ? undefined : gatePrefixFromLine(firstLine, gates);
+		if (firstLineGate !== undefined) {
+			return { verdict: firstLineGate, summary };
+		}
 	}
 	return undefined;
 }
