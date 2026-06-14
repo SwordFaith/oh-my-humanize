@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed workflow graph node summaries so structured agent completion JSON is rendered as concise human-facing text instead of leaking runtime adapter fields into the TUI.
 - Fixed workflow cockpit interrupt targets so sanitized live-agent ids shown in the graph and manager are accepted by `/workflow interrupt`, including repeated loop rounds.
 - Fixed workflow graph checkpoint summaries so stopped attempts show when aborted activation outputs were intentionally omitted from the checkpoint.
 - Fixed workflow monitor active-agent rows so they can show live model, current tool, recent activity, and lightweight runtime stats from the existing Agent Hub observer stream.

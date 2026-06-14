@@ -594,10 +594,72 @@ function renderWorkflowGraphBorderLine(
 
 function formatWorkflowNodeDetail(node: WorkflowGraphNodeView): string {
 	const parts: string[] = [];
-	if (node.summary) parts.push(formatSingleLineWorkflowDetail(node.summary));
+	if (node.summary) parts.push(formatSingleLineWorkflowDetail(formatWorkflowDisplayDetail(node.summary)));
 	if (node.error) parts.push(`error: ${formatSingleLineWorkflowDetail(node.error)}`);
 	if (node.reason) parts.push(`reason: ${formatSingleLineWorkflowDetail(node.reason)}`);
 	return parts.join("; ");
+}
+
+function formatWorkflowDisplayDetail(value: string): string {
+	return extractStructuredWorkflowDisplayDetail(value) ?? value;
+}
+
+function extractStructuredWorkflowDisplayDetail(value: string): string | undefined {
+	const jsonText = workflowDisplayDetailJsonCandidate(value);
+	if (jsonText === undefined) return undefined;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(jsonText);
+	} catch {
+		return undefined;
+	}
+	if (!isWorkflowDisplayRecord(parsed)) return undefined;
+	return (
+		workflowDisplayRecordString(parsed, ["summary", "message", "result", "verdict", "decision"]) ??
+		workflowDisplayNestedRecordString(parsed, "data", ["summary", "message", "result", "verdict", "decision"]) ??
+		workflowDisplayRecordStatus(parsed)
+	);
+}
+
+function workflowDisplayDetailJsonCandidate(value: string): string | undefined {
+	const trimmed = value.trim();
+	if (trimmed.length === 0) return undefined;
+	const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/u);
+	const candidate = fenced?.[1]?.trim() ?? trimmed;
+	if (!candidate.startsWith("{") || !candidate.endsWith("}")) return undefined;
+	return candidate;
+}
+
+function workflowDisplayRecordString(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value !== "string") continue;
+		const trimmed = value.trim();
+		if (trimmed.length > 0) return trimmed;
+	}
+	return undefined;
+}
+
+function workflowDisplayNestedRecordString(
+	record: Record<string, unknown>,
+	key: string,
+	fields: readonly string[],
+): string | undefined {
+	const value = record[key];
+	if (!isWorkflowDisplayRecord(value)) return undefined;
+	return workflowDisplayRecordString(value, fields);
+}
+
+function workflowDisplayRecordStatus(record: Record<string, unknown>): string | undefined {
+	const status = record.status;
+	if (typeof status !== "string") return undefined;
+	const trimmed = status.trim();
+	if (trimmed.length === 0 || /^(completed?|success|ok|done)$/iu.test(trimmed)) return undefined;
+	return trimmed;
+}
+
+function isWorkflowDisplayRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatEdgeTarget(edge: WorkflowGraphEdgeView): string {

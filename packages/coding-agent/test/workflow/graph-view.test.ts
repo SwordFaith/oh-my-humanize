@@ -396,6 +396,50 @@ describe("workflow graph view rendering", () => {
 		expect(rendered).not.toContain("script:sh");
 	});
 
+	it("renders structured completion summaries as human-facing text", () => {
+		const freeze = createFreeze({
+			name: "structured-summary",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [{ id: "writeReleasePlan", type: "agent", agent: "task" }],
+			edges: [],
+		});
+		const view = buildWorkflowGraphView({
+			id: "structured-summary-family",
+			freezes: [freeze],
+			attempts: [
+				{
+					id: "attempt-1",
+					familyId: "structured-summary-family",
+					freezeId: freeze.id,
+					startNodeId: "writeReleasePlan",
+					status: "completed",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-1",
+							nodeId: "writeReleasePlan",
+							parentActivationIds: [],
+							status: "completed",
+							output: {
+								summary:
+									'{"status":"completed","summary":"Wrote TLS plan","artifacts":["workflow-output/release-plan.md"]}',
+							},
+						},
+					],
+				},
+			],
+			checkpoints: [],
+			changeRequests: [],
+		});
+
+		const rendered = renderWorkflowGraphText(view);
+
+		expect(rendered).toContain("completed - Wrote TLS plan");
+		expect(rendered).not.toContain('{"status":"completed"');
+		expect(rendered).not.toContain("workflow-output/release-plan.md");
+	});
+
 	it("infers cockpit roles from workflow node intent instead of falling back to generic agents", () => {
 		const view = createView({
 			name: "cockpit-labels",
