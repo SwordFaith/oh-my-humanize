@@ -201,10 +201,12 @@ When a workflow is running, the TUI keeps a resident dashboard instead of
 printing a new graph into scrollback on every refresh. The left Flow Lens is the
 topology canvas: it shows directed edges, loopback rails, branch hints,
 subflow/function-call boundaries, current node status, per-node run counts, and
-live lanes for active agent progress. The right Operator Deck is the human
-intervention surface: it shows the focused node, transcript monitor tabs for
-active workflow agents, immediate controls, on-flight work, recent output, and
-compact node-state lanes.
+live lanes for active agent progress. Conditional edges use compact decision
+chips such as `if CONTINUE`, while the full route condition remains available in
+the routes and review details. The right Operator Deck is the human intervention
+surface: it shows the focused node, transcript monitor tabs for active workflow
+agents, immediate controls, on-flight work, recent output, and compact
+node-state lanes.
 
 ![Workflow dashboard with parallel agent transcript tabs](images/workflow-dashboard-agent-tabs.png)
 

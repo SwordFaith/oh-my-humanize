@@ -117,7 +117,7 @@ describe("workflow graph view rendering", () => {
 
 		const diagram = renderWorkflowGraphDiagram(view, { width: 80 });
 		const rendered = diagram.join("\n");
-		const loopCloseIndex = diagram.findIndex(line => line.includes("back to build"));
+		const loopCloseIndex = diagram.findIndex(line => line.includes("↺ build"));
 		const loopColumn = visibleColumnsOf(diagram[loopCloseIndex] ?? "", "╯")[0];
 		const loopLineIndex = diagram.findIndex(
 			(line, index) => index < loopCloseIndex && charAtVisibleColumn(line, loopColumn ?? -1) === "╮",
@@ -132,9 +132,42 @@ describe("workflow graph view rendering", () => {
 			expect(["│", "▲"]).toContain(connector!);
 		}
 		expect(rendered).toContain("▲");
-		expect(rendered).toContain("when verdict is retry; back to build");
+		expect(rendered).toContain("↺ build · if retry");
 		expect(rendered).not.toContain("review back to build");
 		expect(rendered).not.toContain("loopbacks");
+	});
+
+	it("renders diagram route labels as compact decision chips", () => {
+		const view = createView({
+			name: "decision-chip-loop",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "build", type: "agent" },
+				{ id: "review", type: "review" },
+				{ id: "ship", type: "script" },
+			],
+			edges: [
+				{ from: "build", to: "review" },
+				{
+					from: "review",
+					to: "build",
+					condition: { source: 'outputs.review.verdict == "CONTINUE"' },
+				},
+				{
+					from: "review",
+					to: "ship",
+					condition: { source: 'outputs.review.verdict == "COMPLETE"' },
+				},
+			],
+		});
+
+		const rendered = renderWorkflowGraphDiagram(view, { width: 96 }).join("\n");
+
+		expect(rendered).toContain("if COMPLETE");
+		expect(rendered).toContain("↺ build · if CONTINUE");
+		expect(rendered).not.toContain("when review verdict");
+		expect(rendered).not.toContain("back to build");
 	});
 
 	it("draws loopback rails as connected node-to-node controls near the graph", () => {
@@ -175,11 +208,11 @@ describe("workflow graph view rendering", () => {
 		expect(sourceRailColumn! - sourceJointColumn!).toBeLessThanOrEqual(8);
 		expect(targetLine).toContain("├──");
 		expect(sourceLine).toContain("├──");
-		expect(sourceLine).toContain("when verdict is retry; back to build");
+		expect(sourceLine).toContain("↺ build · if retry");
 		expect(sourceLine).not.toContain("review back to build");
 	});
 
-	it("prioritizes loop conditions over repeated source ids in narrow labels", () => {
+	it("keeps loop decision chips short in narrow labels", () => {
 		const view = createView({
 			name: "long-loop-label",
 			version: 1,
@@ -201,12 +234,12 @@ describe("workflow graph view rendering", () => {
 		});
 
 		const diagram = renderWorkflowGraphDiagram(view, { width: 96 });
-		const loopLabelLine = diagram.find(line => line.includes("when codex summary review"));
+		const loopLabelLine = diagram.find(line => line.includes("↺ implementRound"));
 
 		expect(loopLabelLine).toBeDefined();
-		expect(loopLabelLine).toContain("codex summary review");
 		expect(loopLabelLine).toContain("not COMPLETE");
 		expect(loopLabelLine).not.toContain("codexSummaryReview back");
+		expect(loopLabelLine).not.toContain("codex summary review");
 		expect(visibleWidth(loopLabelLine!)).toBeLessThanOrEqual(96);
 	});
 
@@ -296,8 +329,8 @@ describe("workflow graph view rendering", () => {
 			...visibleColumnsOf(implementRunsLine ?? "", "┬"),
 			...visibleColumnsOf(implementRunsLine ?? "", "╮"),
 		];
-		const summaryLabelLine = diagram.find(line => line.includes("when summary verdict is CONTINUE"));
-		const codeLabelLine = diagram.find(line => line.includes("when code verdict is CONTINUE"));
+		const summaryLabelLine = diagram.find(line => line.includes("if summary=CONTINUE"));
+		const codeLabelLine = diagram.find(line => line.includes("if code=CONTINUE"));
 
 		expect(loopColumns).toHaveLength(2);
 		expect(charAtVisibleColumn(summaryLabelLine ?? "", loopColumns[0]!)).toBe("╯");
@@ -881,14 +914,14 @@ describe("workflow graph view rendering", () => {
 
 		const diagram = renderWorkflowGraphDiagram(view, { width: 80 }).join("\n");
 
-		expect(diagram).toContain("when verdict is finish");
-		expect(diagram).toContain("when verdict is retry; back to build");
+		expect(diagram).toContain("if finish");
+		expect(diagram).toContain("↺ build · if retry");
 		expect(diagram).not.toContain("review back to build");
 		expect(diagram).not.toContain('state.verdict == "finish"');
 		expect(diagram).not.toContain('state.verdict == "retry"');
 		expect(diagram).not.toContain("edge review to ship");
 		expect(diagram).toContain("▼");
-		expect(diagram).not.toMatch(/->|=>|→{1,}|←{1,}|◀|↺/u);
+		expect(diagram).not.toMatch(/->|=>|→{1,}|←{1,}|◀/u);
 	});
 
 	it("anchors conditional edge labels to the connector column", () => {
@@ -908,12 +941,12 @@ describe("workflow graph view rendering", () => {
 			line => line.includes("└") && line.includes("┬") && line.includes("┘"),
 		);
 		const connectorColumn = visibleColumnsOf(diagram[sourceBottomIndex]!, "┬")[0];
-		const labelLine = diagram.find(line => line.includes("when verdict is finish"));
+		const labelLine = diagram.find(line => line.includes("if finish"));
 
 		expect(connectorColumn).toBeDefined();
 		expect(labelLine).toBeDefined();
 		expect(charAtVisibleColumn(labelLine!, connectorColumn!)).toBe("│");
-		expect(labelLine!.trimStart()).toStartWith("│  when verdict is finish");
+		expect(labelLine!.trimStart()).toStartWith("│  if finish");
 		expect(labelLine).not.toContain("edge review to ship");
 	});
 
@@ -947,9 +980,9 @@ describe("workflow graph view rendering", () => {
 		const loopLabelLine = diagram.find(line => line.includes("╯"));
 
 		expect(loopLabelLine).toBeDefined();
-		expect(loopLabelLine).toContain("when review investigation is");
+		expect(loopLabelLine).toContain("↺ writeInvestigation · if CONTINUE");
 		expect(loopLabelLine).not.toContain("reviewInvestigation back");
-		expect(rendered).toContain("when review investigation verdict is not CONTINUE");
+		expect(rendered).toContain("if not CONTINUE");
 		expect(rendered).not.toContain("outputs.reviewInvestigation.verdict");
 	});
 
@@ -1854,7 +1887,7 @@ describe("workflow graph view rendering", () => {
 		const diagram = renderWorkflowGraphDiagram(view, { width: 160 });
 		const buildLine = diagram.find(line => line.includes("build"));
 		const reviewLine = diagram.find(line => line.includes("review"));
-		const loopLabelLine = diagram.find(line => line.includes("back to build"));
+		const loopLabelLine = diagram.find(line => line.includes("↺ build"));
 		const rendered = diagram.join("\n");
 
 		expect(buildLine).toBeDefined();
@@ -2111,11 +2144,11 @@ describe("workflow graph view rendering", () => {
 
 		const microLines = new WorkflowGraphComponent(view, { refreshMs: 0, heightProvider: () => 6 }).render(96);
 		const microTextLines = microLines.map(line => stripAnsi(line));
-		const graphRowsMarker = microTextLines.find(line => line.includes("workflow graph rows hidden"));
+		const graphRowsMarker = microTextLines.find(line => line.includes("dashboard rows hidden"));
 
 		expect(graphRowsMarker).toBeDefined();
-		expect(graphRowsMarker?.startsWith("│ ")).toBeTrue();
-		expect(graphRowsMarker?.endsWith(" │")).toBeTrue();
+		expect(graphRowsMarker?.startsWith("├─ ")).toBeTrue();
+		expect(graphRowsMarker?.endsWith("┤")).toBeTrue();
 		expect(visibleWidth(graphRowsMarker ?? "")).toBe(96);
 
 		const narrowLines = new WorkflowGraphComponent(view, { refreshMs: 0, heightProvider: () => 30 }).render(96);

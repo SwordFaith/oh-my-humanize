@@ -515,11 +515,15 @@ function renderWorkflowGraphConnector(rankIndex: number, layout: WorkflowGraphLa
 			renderWorkflowGraphConnectorLabel(
 				routed.target,
 				layout.labelWidth,
-				`when ${formatWorkflowConditionLabel(routed.edge.condition!)}`,
+				formatWorkflowGraphRouteLabel(routed.edge.condition!),
 			),
 		);
 	const skippedLabels = skippedEdges.map(routed =>
-		renderWorkflowGraphConnectorLabel(routed.source, layout.labelWidth, `to ${formatEdgeTarget(routed.edge)}`),
+		renderWorkflowGraphConnectorLabel(
+			routed.source,
+			layout.labelWidth,
+			formatWorkflowGraphSkippedRouteLabel(routed.edge),
+		),
 	);
 	if (directLabels.length === 0) return [...rows, ...skippedLabels];
 	const labelInsertionIndex = rows.length <= 1 ? rows.length : rows.length - 1;
@@ -646,8 +650,8 @@ function formatWorkflowGraphLoopbackLabels(labels: readonly string[], labelColum
 }
 
 function formatWorkflowGraphLoopbackLabel(edge: WorkflowGraphEdgeView): string {
-	if (edge.condition === undefined) return `back to ${edge.to}`;
-	return `when ${formatWorkflowGraphLoopbackConditionLabel(edge.condition)}; back to ${edge.to}`;
+	if (edge.condition === undefined) return `↺ ${edge.to}`;
+	return `↺ ${edge.to} · ${formatWorkflowGraphRouteLabel(edge.condition)}`;
 }
 
 interface WorkflowGraphLoopbackPath {
@@ -924,7 +928,7 @@ interface ConnectorCell {
 
 type ConnectorDirection = "up" | "down" | "left" | "right";
 type ConnectorGrid = ConnectorCell[][];
-type WorkflowConditionLabelMode = "default" | "loopback";
+type WorkflowConditionLabelMode = "default" | "loopback" | "route";
 
 function createConnectorGrid(rows: number, width: number): ConnectorGrid {
 	return Array.from({ length: rows }, () =>
@@ -1140,13 +1144,18 @@ export function formatWorkflowConditionLabel(condition: string): string {
 	}
 }
 
-function formatWorkflowGraphLoopbackConditionLabel(condition: string): string {
+function formatWorkflowGraphRouteLabel(condition: string): string {
 	const trimmed = condition.trim();
 	try {
-		return formatWorkflowConditionAst(parseWorkflowCondition(trimmed).ast, "loopback");
+		return `if ${formatWorkflowConditionAst(parseWorkflowCondition(trimmed).ast, "route")}`;
 	} catch {
-		return formatWorkflowConditionFallback(trimmed, "loopback");
+		return `if ${formatWorkflowConditionFallback(trimmed, "route")}`;
 	}
+}
+
+function formatWorkflowGraphSkippedRouteLabel(edge: WorkflowGraphEdgeView): string {
+	if (edge.condition === undefined) return `to ${edge.to}`;
+	return `to ${edge.to} · ${formatWorkflowGraphRouteLabel(edge.condition)}`;
 }
 
 function formatWorkflowConditionFallback(condition: string, mode: WorkflowConditionLabelMode): string {
@@ -1188,12 +1197,38 @@ function formatWorkflowComparisonCondition(
 	condition: WorkflowComparisonCondition,
 	mode: WorkflowConditionLabelMode = "default",
 ): string {
+	if (mode === "route") {
+		const routeLabel = formatWorkflowRouteComparisonCondition(condition);
+		if (routeLabel !== undefined) return routeLabel;
+	}
 	const knownLabel = formatKnownWorkflowComparisonCondition(condition);
 	if (knownLabel !== undefined) return knownLabel;
 	const subject = formatWorkflowConditionSubjectPath(condition.leftPath, mode);
 	const relation = formatWorkflowComparisonRelation(condition.operator, mode);
 	const value = formatWorkflowConditionLiteral(condition.right);
 	return `${subject} ${relation} ${value}`;
+}
+
+function formatWorkflowRouteComparisonCondition(condition: WorkflowComparisonCondition): string | undefined {
+	const subject = workflowConditionVerdictSubjectLabel(condition.leftPath);
+	if (subject === undefined) return undefined;
+	if (typeof condition.right !== "string" && typeof condition.right !== "boolean") return undefined;
+	const value = formatWorkflowConditionLiteral(condition.right);
+	if (condition.operator === "==") return subject.length === 0 ? value : `${subject}=${value}`;
+	if (condition.operator === "!=") return subject.length === 0 ? `not ${value}` : `${subject}!=${value}`;
+	return undefined;
+}
+
+function workflowConditionVerdictSubjectLabel(path: readonly string[]): string | undefined {
+	const leaf = path.at(-1);
+	if (leaf === undefined) return undefined;
+	if (leaf === "verdict") {
+		if (path[0] === "outputs") return "";
+		return formatWorkflowConditionPath(path.slice(1, -1));
+	}
+	if (!/Verdict$/u.test(leaf)) return undefined;
+	const subjectLeaf = leaf.replace(/Verdict$/u, "");
+	return formatWorkflowConditionPath([...path.slice(1, -1), subjectLeaf]);
 }
 
 function formatKnownWorkflowComparisonCondition(condition: WorkflowComparisonCondition): string | undefined {
@@ -1221,8 +1256,9 @@ function formatWorkflowComparisonRelation(
 ): string {
 	switch (operator) {
 		case "==":
-			return "is";
+			return mode === "route" ? "=" : "is";
 		case "!=":
+			if (mode === "route") return "!=";
 			return mode === "loopback" ? "not" : "is not";
 		case ">":
 			return mode === "loopback" ? ">" : "is greater than";

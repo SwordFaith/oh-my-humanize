@@ -5,6 +5,7 @@
 ### Changed
 
 - Changed the workflow Operator Deck to surface live workflow agents as switchable transcript-monitor tabs before on-flight details, making parallel workflow agents feel like focusable subagents.
+- Changed workflow graph condition labels in the dashboard diagram to render as compact decision chips such as `if CONTINUE`, while keeping full conditions in route/review detail text.
 - Changed the workflow dashboard topology summary to describe independent root nodes as parallel roots instead of calling the flow linear.
 - Changed the workflow dashboard compact profile for 30-line terminals so it reduces graph detail before falling back to whole-dashboard clipping.
 - Changed compact workflow dashboard status rows to hide bare model identifiers by default, keeping the monitor focused on node progress and operator action.
@@ -18,7 +19,7 @@
 ### Fixed
 
 - Fixed bundled practical workflow artifacts that still declared the non-canonical `shell` tool capability, so runtime binding diagnostics use the canonical `bash` capability that the workflow host can resolve.
-- Fixed workflow dashboard height clipping so the hidden-rows marker preserves the outer TUI frame instead of rendering as a bare line.
+- Fixed workflow dashboard height clipping so the hidden-rows marker preserves the outer TUI frame and renders as a dashboard divider instead of looking like broken nested panel content.
 - Fixed workflow monitor activation in the TUI so the welcome/onboarding panel is removed from the current viewport when a workflow dashboard becomes active.
 
 ## [16.0.1] - 2026-06-15

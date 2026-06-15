@@ -1199,10 +1199,9 @@ function fitWorkflowGraphRowsToHeight(lines: string[], width: number, heightBudg
 }
 
 function renderWorkflowGraphClippedRowsMarker(hiddenRows: number, width: number): string {
-	const innerWidth = Math.max(0, width - WORKFLOW_GRAPH_FRAME_CHROME_WIDTH);
-	const marker = truncateToWidth(`+${hiddenRows} workflow graph rows hidden`, innerWidth);
-	const padded = padWorkflowGraphLine(marker, innerWidth);
-	return `${theme.fg("borderMuted", "│")} ${theme.fg("muted", padded)} ${theme.fg("borderMuted", "│")}`;
+	return renderWorkflowGraphDashboardBar("├", "┤", `+${hiddenRows} dashboard rows hidden`, undefined, width, value =>
+		theme.fg("borderMuted", value),
+	);
 }
 
 function workflowGraphHeightBudget(value: number | undefined): number | undefined {
