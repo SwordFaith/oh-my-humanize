@@ -13,7 +13,7 @@ import type { AgentSession } from "../../src/session/agent-session";
 import { resolveResumableSession } from "../../src/session/session-listing";
 import { SessionManager } from "../../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../../src/slash-commands/acp-builtins";
-import { executeBuiltinSlashCommand } from "../../src/slash-commands/builtin-registry";
+import { type BuiltinSlashCommandRuntime, executeBuiltinSlashCommand } from "../../src/slash-commands/builtin-registry";
 import { buildWorkflowGraphViewForRuntime } from "../../src/slash-commands/helpers/workflow";
 import { parseWorkflowDefinition, type WorkflowDefinition } from "../../src/workflow/definition";
 import type { FlowFreeze } from "../../src/workflow/freeze";
@@ -46,6 +46,7 @@ import {
 	type WorkflowRunStoreHost,
 } from "../../src/workflow/run-store";
 import type { WorkflowAgentTaskRunner } from "../../src/workflow/session-runtime";
+import { createShellScriptRunner } from "../../src/workflow/shell-script-runtime";
 
 interface CapturedEntry {
 	type: "custom";
@@ -2994,6 +2995,125 @@ edges:
 			state: { build: { status: "built" } },
 			sourceMapping: { review: "review" },
 		});
+	});
+
+	it("persists TUI live-stop workflow events to the session file", async () => {
+		const cwd = await createTempDir();
+		const sessionDir = path.join(cwd, "sessions");
+		const manager = SessionManager.create(cwd, sessionDir);
+		await fs.mkdir(path.join(cwd, "tui-live-stop"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "tui-live-stop.omhflow"),
+			`---
+name: tui-live-stop
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 10
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# TUI Live Stop
+
+\`\`\`yaml workflow
+nodes:
+  hold:
+    type: script
+    script:
+      language: sh
+      inline: |
+        printf started > hold.started
+        sleep 300
+edges: []
+\`\`\`
+`,
+		);
+		try {
+			const output: string[] = [];
+			const shellRunner = createShellScriptRunner({
+				cwd,
+				hasUI: false,
+				getSessionFile: () => manager.getSessionFile() ?? null,
+				getSessionId: () => manager.getSessionId(),
+				getSessionSpawns: () => null,
+				settings: Settings.isolated(),
+			});
+			const session = {
+				getWorkflowAgentTaskRunner: () => undefined,
+				getWorkflowScriptEvalRunner: () => undefined,
+				getWorkflowShellScriptRunner: () => shellRunner,
+				getWorkflowHumanInputRunner: () => undefined,
+				getAvailableModels: () => [],
+				modelRegistry: { getAvailable: () => [] },
+			} as unknown as AgentSession;
+			const runtime = {
+				ctx: {
+					session,
+					sessionManager: manager,
+					settings: Settings.isolated(),
+					workflowMonitorSnapshotAgentDir: path.join(cwd, "agent"),
+					showStatus: (text: string) => {
+						output.push(text);
+					},
+					present: () => {},
+					showWorkflowGraphMonitor: () => {},
+					getObservedSessions: () => [],
+					ui: { requestComponentRender: () => {}, terminal: { rows: 30 } },
+					editor: { setText: () => {} },
+					refreshSlashCommandState: () => {},
+				},
+			} as unknown as BuiltinSlashCommandRuntime;
+
+			expect(
+				await executeBuiltinSlashCommand(
+					`/workflow start ${path.join(cwd, "tui-live-stop.omhflow")} --run-id tui-live-stop --family-id family-tui-live-stop --background`,
+					runtime,
+				),
+			).toBe(true);
+			let markerFound = false;
+			for (let attempt = 0; attempt < 500; attempt += 1) {
+				try {
+					await fs.access(path.join(cwd, "hold.started"));
+					markerFound = true;
+					break;
+				} catch {
+					await Bun.sleep(10);
+				}
+			}
+			if (!markerFound) throw new Error(`workflow shell marker was not created:\n${output.join("\n")}`);
+			await expect(Bun.file(path.join(cwd, "hold.started")).text()).resolves.toBe("started");
+
+			expect(
+				await executeBuiltinSlashCommand("/workflow stop tui-live-stop:attempt-1 --deadline-ms 1", runtime),
+			).toBe(true);
+			expect(
+				output.some(entry => entry.includes("Workflow checkpoint: tui-live-stop:attempt-1:checkpoint-1")),
+			).toBeTrue();
+
+			await manager.flush();
+			const sessionFile = manager.getSessionFile();
+			if (!sessionFile) throw new Error("Expected a persisted session file path");
+			const reopened = await SessionManager.open(sessionFile, sessionDir);
+			try {
+				const families = reconstructWorkflowFamilies(reopened.getBranch());
+				expect(
+					families[0]?.attempts[0]?.activations.map(activation => [activation.nodeId, activation.status]),
+				).toEqual([["hold", "aborted"]]);
+				expect(families[0]?.checkpoints[0]).toMatchObject({
+					id: "tui-live-stop:attempt-1:checkpoint-1",
+					completedActivationIds: [],
+					abortedActivationIds: ["activation-1"],
+					frontierNodeIds: ["hold"],
+					state: {},
+					sourceMapping: { hold: "hold" },
+				});
+			} finally {
+				await reopened.close();
+			}
+		} finally {
+			await manager.close();
+		}
 	});
 
 	it("checkpoints background workflow starts when max runtime elapses", async () => {

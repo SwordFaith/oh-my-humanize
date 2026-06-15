@@ -902,7 +902,8 @@ export class SessionManager {
 		if (!this.#persist || !this.#sessionFile) return;
 		this.#forceFileCreation = true;
 		if (this.#fileIsCurrent && !this.#rewriteRequired) return;
-		await this.#rewriteAtomically();
+		this.#rewriteSynchronously();
+		if (this.#diskFailure) throw this.#diskFailure;
 	}
 
 	/** Flush pending writes. Call before switching sessions or on shutdown. */

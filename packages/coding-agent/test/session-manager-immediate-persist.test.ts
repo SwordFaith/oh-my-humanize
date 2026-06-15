@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { FileSessionStorage } from "@oh-my-pi/pi-coding-agent/session/session-storage";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 const tempDirs: TempDir[] = [];
@@ -48,6 +49,32 @@ function readJsonl(file: string): Array<Record<string, unknown>> {
 		.map(line => JSON.parse(line) as Record<string, unknown>);
 }
 
+class DelayedAtomicStorage extends FileSessionStorage {
+	readonly #atomicGates: Array<PromiseWithResolvers<void>> = [];
+
+	async waitForAtomicStart(): Promise<boolean> {
+		for (let attempt = 0; attempt < 50; attempt += 1) {
+			if (this.#atomicGates.length > 0) return true;
+			await Bun.sleep(0);
+		}
+		return false;
+	}
+
+	releaseNextAtomic(): boolean {
+		const next = this.#atomicGates.shift();
+		if (next === undefined) return false;
+		next.resolve();
+		return true;
+	}
+
+	override async writeTextAtomic(targetPath: string, content: string): Promise<void> {
+		const gate = Promise.withResolvers<void>();
+		this.#atomicGates.push(gate);
+		await gate.promise;
+		await super.writeTextAtomic(targetPath, content);
+	}
+}
+
 function messageRole(entry: Record<string, unknown>): string | undefined {
 	const message = entry.message;
 	if (!message || typeof message !== "object") return undefined;
@@ -86,5 +113,36 @@ describe("SessionManager immediate JSONL persistence", () => {
 		expect(entries).toHaveLength(4);
 		expect(messageRole(entries[3] ?? {})).toBe("user");
 		expect(messageContent(entries[3] ?? {})).toBe("written immediately");
+	});
+
+	it("keeps entries appended during ensureOnDisk materialization on the visible session file", async () => {
+		const cwd = makeTempDir("@pi-ensure-race-cwd-");
+		const sessionDir = path.join(cwd, "sessions");
+		const storage = new DelayedAtomicStorage();
+		const manager = SessionManager.create(cwd, sessionDir, storage);
+		const sessionFile = manager.getSessionFile();
+		if (!sessionFile) throw new Error("Expected a persisted session file path");
+
+		manager.appendCustomEntry("workflow-lifecycle-event", { event: "family_created", familyId: "family-race" });
+
+		const ensure = manager.ensureOnDisk();
+		const atomicStarted = await storage.waitForAtomicStart();
+		manager.appendCustomEntry("workflow-run-event", { event: "activation_started", activationId: "activation-1" });
+		manager.appendCustomEntry("workflow-lifecycle-event", {
+			event: "checkpoint_created",
+			checkpointId: "checkpoint-1",
+		});
+		if (atomicStarted) storage.releaseNextAtomic();
+		await ensure;
+
+		manager.appendCustomEntry("workflow-run-event", { event: "activation_aborted", activationId: "activation-1" });
+		await manager.flush();
+
+		const persisted = readJsonl(sessionFile);
+		const events = persisted
+			.filter(entry => entry.type === "custom")
+			.map(entry => (entry.data as { event?: string } | undefined)?.event)
+			.filter((event): event is string => typeof event === "string");
+		expect(events).toEqual(["family_created", "activation_started", "checkpoint_created", "activation_aborted"]);
 	});
 });
