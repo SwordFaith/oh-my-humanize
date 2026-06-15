@@ -1,6 +1,31 @@
 # Changelog
 
 ## [Unreleased]
+### Breaking Changes
+
+- Renamed the SDK tool format type and resolver from `ToolCallFormat`/`resolveToolCallSyntax` to `DialectFormat`/`resolveDialect`, and the agent option from `toolCallSyntax` to `dialect`.
+- Changed `/dump` transcript output to render messages with the selected model's native dialect turn and thinking envelopes instead of markdown role headings.
+
+### Added
+
+- Added `/advisor on`, `/advisor off`, `/advisor status`, and `/advisor dump [raw]` slash-command subcommands to manage the advisor at runtime
+- Added `advisor.enabled` and `advisor.subagents` settings to enable the advisor and extend it to spawned task/eval subagents
+- Added advisor status badge (`++` in success color) to the status line when an advisor is active
+- Added `/dump [raw]` flag to toggle between compact and legacy uncompact transcript output formats
+- Added `/advisor on`, `/advisor off`, and `/advisor status` slash-command subcommands to enable or disable the advisor at runtime and view advisor status metrics
+- Added a passive advisor: assign a second model to the `advisor` role and enable `advisor.enabled` to have it silently review each primary turn and inject severity-tagged advice notes via the `advise` tool. A `nit` rides the non-interrupting aside queue (batched into one card at the next step boundary), while a `concern` or `blocker` interrupts the running agent through the steering channel — aborting in-flight tools, or resuming the agent when it has already yielded — so high-severity advice is acted on immediately. Advice renders in the primary transcript as a distinct `Advisor` card, and the advisor gets hard-isolated read-only `read`/`search`/`find` access — bound to its own `ToolSession` so its reads never touch the primary's snapshot/seen-lines caches — to investigate the workspace before weighing in. The status line shows a `++` badge (in the success color, kept distinct from the model name) after the model name while an advisor is active, and `/advisor dump` copies the advisor's own transcript to the clipboard. Advisors are created only for the top-level session by default; enable `advisor.subagents` to extend them to spawned task/eval subagents.
+
+### Changed
+
+- Changed `/dump` default output to compact markdown format; use `/dump raw` for the legacy uncompact format
+- Changed `/dump` and `/advisor dump` to default to compact transcript output and accept an optional `raw` flag for the legacy uncompact format
+- Session dump output now renders message history using the model's native dialect turn envelope instead of markdown role headings
+
+### Fixed
+
+- Fixed advisor context handling to automatically maintain its token budget by promoting the advisor model or compacting/restarting advisor context when needed, preventing advice from degrading on long sessions
+- Fixed `startup.quiet` leaving MCP and LSP startup status events visible during launch ([#2639](https://github.com/can1357/oh-my-pi/issues/2639)).
+- Registered the `Advisor` group in the `model` settings tab so advisor settings render correctly in the settings panel.
 
 ### Fixed
 
@@ -62,6 +87,7 @@
 
 - Unexpected stop detection: optional tiny/smol classifier that continues the turn when the assistant says it will act but emits no tool calls.
 - Settings `features.unexpectedStopDetection` and `providers.unexpectedStopModel`.
+- Animated "thinking" pulse (`·‥…‥`) shown in place of a hidden thinking block while the model is actively reasoning, so streaming progress is visible even with `hideThinkingBlock` enabled.
 
 ### Changed
 
@@ -77,6 +103,10 @@
 - Fixed ModelRegistry tests making outbound network calls by automatically stubbing fetch during test execution.
 - Fixed `eval` JS cells (and browser-tab worker startup) always stalling for the full init timeout — typically the cell's whole 30s budget — before silently falling back to the slower inline worker. The self-dispatching CLI host imports the worker module dynamically from its argv dispatch, so the worker's own `parentPort.on("message")` attached only after Bun flushed the messages the parent posted before spawn; the synchronously-posted `init` handshake was dropped and never answered with `ready`. The host now installs a buffering `parentPort` inbox synchronously in the entry's sync prefix (before importing the worker module) and the worker binds it on load, replaying the buffered handshake. `omp --smoke-test` now also spawns the JS eval worker through the host entry and asserts it handshakes on a real worker thread.
 - Fixed pre-prompt context-full compaction on OpenAI Responses sessions to use provider-anchored context usage when available, so large encrypted reasoning signatures no longer trigger automatic maintenance while the visible context percentage remains below threshold ([#2628](https://github.com/can1357/oh-my-pi/issues/2628)).
+
+### Fixed
+
+- Fixed Windows bash path handling so MSYS/Git-Bash drive aliases like `/d/project` and WSL-style `/mnt/d/project` normalize to native drive paths consistently across the bash tool cwd validation and brush filesystem builtins ([#2634](https://github.com/can1357/oh-my-pi/issues/2634)).
 
 ## [15.13.2] - 2026-06-15
 

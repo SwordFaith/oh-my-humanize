@@ -762,6 +762,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 				? new StreamMarkupHealing({ pattern: streamMarkupHealingPattern })
 				: undefined;
 			const explicitReasoningDeltasMayBeCumulative = modelMayLeakThinkingTags(model.provider, model.id);
+			let suppressHealedThinking = false;
 			let healedToolCallEmitted = false;
 			const emitHealedToolCall = (call: HealedToolCall): void => {
 				finishCurrentBlock(currentBlock);
@@ -786,11 +787,11 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 				currentBlock = undefined;
 				healedToolCallEmitted = true;
 			};
-			const emitHealingEvent = (event: StreamMarkupHealingEvent): void => {
+			const emitHealingEvent = (event: StreamMarkupHealingEvent, suppressThinking: boolean): void => {
 				if (event.type === "text") {
 					appendProcessedText(event.text);
 				} else if (event.type === "thinking") {
-					appendThinkingDelta(event.thinking);
+					if (!suppressThinking) appendThinkingDelta(event.thinking);
 				} else {
 					emitHealedToolCall(event.call);
 				}
@@ -893,6 +894,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 							foundReasoningField,
 							explicitReasoningDeltasMayBeCumulative ? "cumulative" : "delta",
 						);
+						suppressHealedThinking = true;
 					}
 
 					const normalizedDeltaText = normalizeStreamingContentText(choice.delta.content);
@@ -900,21 +902,13 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 						if (!firstTokenTime) firstTokenTime = Date.now();
 						const hasStructuredToolCalls =
 							Array.isArray(choice.delta.tool_calls) && choice.delta.tool_calls.length > 0;
-						const suppressContentThinking =
-							foundReasoningField !== undefined && streamMarkupHealing?.pattern === "thinking";
 
 						if (streamMarkupHealing) {
-							if (hasStructuredToolCalls) {
-								// Same chunk leaks markers AND carries structured tool_calls.
-								// Strip the marker text from visible output, but drop any
-								// synthesized calls so the structured payload stays the
-								// single source of truth (avoids double-dispatch).
-								appendProcessedText(streamMarkupHealing.consumeWithoutCalls(normalizedDeltaText));
-							} else {
-								for (const event of streamMarkupHealing.feedEvents(normalizedDeltaText)) {
-									if (suppressContentThinking && event.type === "thinking") continue;
-									emitHealingEvent(event);
-								}
+							const healingEvents = hasStructuredToolCalls
+								? streamMarkupHealing.feedEventsWithoutCalls(normalizedDeltaText)
+								: streamMarkupHealing.feedEvents(normalizedDeltaText);
+							for (const event of healingEvents) {
+								emitHealingEvent(event, suppressHealedThinking);
 							}
 						} else {
 							appendProcessedText(normalizedDeltaText);
@@ -1054,7 +1048,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 
 			if (streamMarkupHealing) {
 				for (const event of streamMarkupHealing.flushEvents()) {
-					emitHealingEvent(event);
+					emitHealingEvent(event, suppressHealedThinking);
 				}
 				flushHealedToolCalls();
 				if (healedToolCallEmitted && output.stopReason === "stop") {

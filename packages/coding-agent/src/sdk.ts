@@ -16,7 +16,7 @@ import {
 	type SimpleStreamOptions,
 	streamSimple,
 } from "@oh-my-pi/pi-ai";
-import type { ToolCallSyntax } from "@oh-my-pi/pi-ai/grammar";
+import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
 import {
 	getOpenAICodexTransportDetails,
 	prewarmOpenAICodexResponses,
@@ -35,6 +35,7 @@ import {
 	prompt,
 	Snowflake,
 } from "@oh-my-pi/pi-utils";
+import { ADVISOR_READONLY_TOOL_NAMES } from "./advisor";
 import { type AsyncJob, AsyncJobManager } from "./async";
 import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/controller";
 import { loadCapability } from "./capability";
@@ -557,12 +558,12 @@ export interface CreateAgentSessionResult {
 	eventBus: EventBus;
 }
 
-export type ToolCallFormat = "auto" | "native" | ToolCallSyntax;
+export type DialectFormat = "auto" | "native" | Dialect;
 
-export function resolveToolCallSyntax(
-	format: ToolCallFormat,
+export function resolveDialect(
+	format: DialectFormat,
 	model: Pick<Model, "supportsTools"> | undefined,
-): ToolCallSyntax | undefined {
+): Dialect | undefined {
 	if (format === "native") return undefined;
 	if (format === "auto") return model?.supportsTools === false ? "glm" : undefined;
 	return format;
@@ -1614,8 +1615,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		let startDeferredMCPDiscovery:
 			| ((liveSession: AgentSession, activation: DeferredMCPActivation) => void)
 			| undefined;
+		const startupQuiet = settings.get("startup.quiet");
 		const onMCPConnecting = (serverNames: string[]) => {
-			if (!options.hasUI || serverNames.length === 0) return;
+			if (!options.hasUI || startupQuiet || serverNames.length === 0) return;
 			eventBus.emit(MCP_CONNECTING_EVENT_CHANNEL, { serverNames } satisfies McpConnectingEvent);
 		};
 		const mcpDiscoverOptions = {
@@ -2172,10 +2174,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				}
 				appendPrompt = parts.join("\n\n");
 			}
-			// Owned/in-band tool syntax (non-native) repeats the catalog as `# Tool:`
+			// Owned/in-band tool dialect (non-native) repeats the catalog as `# Tool:`
 			// sections; native tool calling lets the compact name list suffice.
-			const nativeTools =
-				resolveToolCallSyntax(settings.get("tools.format"), agent?.state.model ?? model) === undefined;
+			const nativeTools = resolveDialect(settings.get("tools.format"), agent?.state.model ?? model) === undefined;
 			const defaultPrompt = await buildSystemPromptInternal({
 				cwd,
 				skills,
@@ -2520,7 +2521,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				return result;
 			},
 			intentTracing: !!intentField,
-			toolCallSyntax: resolveToolCallSyntax(settings.get("tools.format"), model),
+			dialect: resolveDialect(settings.get("tools.format"), model),
 			abortOnFabricatedToolResult: settings.get("tools.abortOnFabricatedResult"),
 			getToolChoice: () => session?.nextToolChoice(),
 			telemetry: options.telemetry,
@@ -2550,6 +2551,35 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				sessionManager.appendServiceTierChange(initialServiceTier);
 			}
 		}
+
+		// Hard-isolated read-only toolset for the advisor (built unconditionally so
+		// it can be toggled at runtime). Fresh ReadTool/SearchTool/FindTool bound to a
+		// DISTINCT ToolSession so the advisor's investigative reads never touch the
+		// primary's snapshot, seen-lines, conflict, or summary caches (all keyed on
+		// session identity). `cwd` stays dynamic; edit/yield capabilities are off.
+		const advisorToolSession: ToolSession = {
+			...toolSession,
+			get cwd() {
+				return sessionManager.getCwd();
+			},
+			hasEditTool: false,
+			requireYieldTool: false,
+			conflictHistory: undefined,
+			fileSnapshotStore: undefined,
+			getSessionId: () => {
+				const id = sessionManager.getSessionId?.();
+				return id ? `${id}-advisor` : null;
+			},
+			getAgentId: () => "advisor",
+		};
+		const built = await Promise.all(
+			[...ADVISOR_READONLY_TOOL_NAMES].map(name =>
+				BUILTIN_TOOLS[name as keyof typeof BUILTIN_TOOLS](advisorToolSession),
+			),
+		);
+		const advisorReadOnlyTools: Tool[] = built
+			.filter((tool): tool is Tool => tool != null)
+			.map(wrapToolWithMetaNotice);
 
 		session = new AgentSession({
 			agent,
@@ -2610,6 +2640,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			agentKind,
 			providerSessionId: options.providerSessionId,
 			parentEvalSessionId: options.parentEvalSessionId,
+			advisorReadOnlyTools,
 		});
 		hasSession = true;
 		if (asyncJobManager) {
@@ -2714,7 +2745,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 							type: "completed",
 							servers: result.servers,
 						};
-						eventBus.emit(LSP_STARTUP_EVENT_CHANNEL, event);
+						if (!startupQuiet) eventBus.emit(LSP_STARTUP_EVENT_CHANNEL, event);
 					} catch (error) {
 						const errorMessage = error instanceof Error ? error.message : String(error);
 						logger.warn("LSP server warmup failed", { cwd, error: errorMessage });
@@ -2726,7 +2757,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 							type: "failed",
 							error: errorMessage,
 						};
-						eventBus.emit(LSP_STARTUP_EVENT_CHANNEL, event);
+						if (!startupQuiet) eventBus.emit(LSP_STARTUP_EVENT_CHANNEL, event);
 					}
 				})();
 			}
