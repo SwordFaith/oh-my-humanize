@@ -118,6 +118,8 @@ const WORKFLOW_GRAPH_WORKBENCH_ULTRAWIDE_MAX_PANE_WIDTH = 96;
 const WORKFLOW_GRAPH_PANE_GAP_WIDTH = 3;
 const WORKFLOW_GRAPH_FRAME_CHROME_WIDTH = 4;
 const WORKFLOW_GRAPH_FLOW_MAP_HINT_MIN_WIDTH = 93;
+const WORKFLOW_GRAPH_MODEL_STATUS_SEGMENT_PATTERN =
+	/ · (?:[A-Za-z0-9_.-]+\/)?(?:gpt|claude|gemini|deepseek|llama|qwen|mistral|o\d)[A-Za-z0-9_.:+-]*/giu;
 
 function renderWorkflowGraphBlock(
 	view: WorkflowGraphView,
@@ -1258,7 +1260,7 @@ function workflowGraphOnFlightLines(
 function compactWorkflowGraphStatusLine(line: string, density: WorkflowGraphDensity): string {
 	if (density === "full") return line;
 	return line
-		.replace(/ · [A-Za-z0-9_.-]+\/[A-Za-z0-9_.:+-]+/gu, "")
+		.replace(WORKFLOW_GRAPH_MODEL_STATUS_SEGMENT_PATTERN, "")
 		.replace(/ · tool [^·]+(?= · |$)/gu, "")
 		.replace(/ · (\d+h\d{2}m|\d+m\d{2}s|\d+s) · \d+ tools? · \d+% ctx/gu, " · $1")
 		.replace(/\(watch\/intervene ([^)]+)\)/gu, "($1)");
