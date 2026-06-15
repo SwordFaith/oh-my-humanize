@@ -213,9 +213,10 @@ Agent Hub, steer, interrupt, stop, restart, and change affordances visible
 before the focused node, transcript monitor tabs, on-flight work, recent output,
 and compact node-state lanes. Progress and node-pulse summaries distinguish
 live/running work from checkpoint frontiers, so a stopped but resumable node is
-shown as `frontier` rather than as active on-flight work. On short terminals,
-the rail collapses to one action row so intervention controls stay visible while
-less urgent detail is clipped. Live agent targets are labeled as `monitor`;
+shown as `frontier` rather than as active on-flight work; the graph legend uses
+the same `◇ frontier` label. On short terminals, the rail collapses to one
+action row so intervention controls stay visible while less urgent detail is
+clipped. Live agent targets are labeled as `monitor`;
 non-live frontier or focused nodes are labeled as `focus` so the dashboard does
 not imply an Agent Hub transcript exists when there is no running agent to
 attach to. The right panel is titled `Live Workbench` only when actual work is

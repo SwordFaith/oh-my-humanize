@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Changed the workflow dashboard legend to label the `◇` node state as `frontier`, matching checkpoint/resume semantics instead of the vaguer `ready`.
 - Changed the workflow dashboard workbench title to reserve `Live Workbench` for actual running work, using `Operator Deck` for stopped or checkpoint-frontier dashboards.
 - Changed workflow dashboard progress and node-pulse summaries to report checkpoint frontier nodes separately from live/running work, avoiding misleading `active` or `live` labels when no node is on-flight.
 - Changed the workflow dashboard Operator rail to promote restart when a stopped or checkpointed frontier can safely resume, keeping the next lifecycle action visible beside focus and change controls.

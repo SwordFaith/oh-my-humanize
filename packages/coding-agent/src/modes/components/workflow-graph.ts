@@ -1234,7 +1234,7 @@ function workflowGraphFlowMapHintLine(label: string, hints: readonly string[], w
 
 function workflowGraphLegendLine(width: number): string | undefined {
 	if (width < 70) return undefined;
-	const legend = "Legend: ● live · ◇ ready · ✓ done · ! failed · × aborted · ↺ loop · ┬▶ branch";
+	const legend = "Legend: ● live · ◇ frontier · ✓ done · ! failed · × aborted · ↺ loop · ┬▶ branch";
 	return truncateToWidth(legend, width);
 }
 
