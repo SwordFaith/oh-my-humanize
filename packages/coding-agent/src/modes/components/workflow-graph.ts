@@ -489,7 +489,7 @@ function workflowGraphOperatorRailLines(
 ): string[] {
 	const selected = workflowGraphSelectedAgentTarget(view);
 	const subject = selected ?? view.focus?.nodeId ?? view.currentAttempt?.id ?? "workflow";
-	const primaryTokens = [`◉ monitor ${compactWorkflowGraphNodeId(subject)}`];
+	const primaryTokens = [workflowGraphOperatorRailPrimaryToken(subject, selected !== undefined)];
 	if (selected !== undefined) {
 		primaryTokens.push("◆ hub", "↵ steer");
 	}
@@ -507,6 +507,11 @@ function workflowGraphOperatorRailLines(
 	return [primaryTokens.join("  "), safetyTokens.join("  ")]
 		.filter(line => line.length > 0)
 		.map(line => truncateToWidth(line, Math.max(20, width)));
+}
+
+function workflowGraphOperatorRailPrimaryToken(subject: string, hasLiveAgentTarget: boolean): string {
+	const compactSubject = compactWorkflowGraphNodeId(subject);
+	return hasLiveAgentTarget ? `◉ monitor ${compactSubject}` : `◎ focus ${compactSubject}`;
 }
 
 function workflowGraphSelectedAgentTarget(view: WorkflowGraphView): string | undefined {

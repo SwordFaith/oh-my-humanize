@@ -209,6 +209,9 @@ Agent Hub, steer, interrupt, stop, and change affordances visible before the
 focused node, transcript monitor tabs, on-flight work, recent output, and
 compact node-state lanes. On short terminals, the rail collapses to one action
 row so intervention controls stay visible while less urgent detail is clipped.
+Live agent targets are labeled as `monitor`; non-live frontier or focused nodes
+are labeled as `focus` so the dashboard does not imply an Agent Hub transcript
+exists when there is no running agent to attach to.
 
 ![Workflow dashboard with parallel agent transcript tabs](images/workflow-dashboard-agent-tabs.png)
 

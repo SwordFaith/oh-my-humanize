@@ -607,7 +607,10 @@ describe("workflow graph view rendering", () => {
 		expect(text).not.toContain("agent:task");
 	});
 
-	it("shows checkpoint frontier as the focused node after a stopped workflow", () => {
+	it("shows checkpoint frontier as the focused node after a stopped workflow", async () => {
+		const theme = await getThemeByName("dark");
+		if (!theme) throw new Error("dark theme fixture is required");
+		setThemeInstance(theme);
 		const freeze = createFreeze({
 			name: "checkpoint-focus",
 			version: 1,
@@ -668,6 +671,13 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain("Focused node:");
 		expect(text).toContain("- Reviewer · Review frontier");
 		expect(text).toContain("Frontier: review to review");
+
+		const tuiText = stripAnsi(new WorkflowGraphComponent(view, { refreshMs: 0 }).render(140).join("\n"));
+
+		expect(tuiText).toContain("◎ focus review");
+		expect(tuiText).not.toContain("◉ monitor review");
+		expect(tuiText).not.toContain("◆ hub");
+		expect(tuiText).not.toContain("↵ steer");
 	});
 
 	it("labels repeated loop activations with the current round and focus target", () => {
