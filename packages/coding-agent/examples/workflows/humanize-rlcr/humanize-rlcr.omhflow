@@ -45,15 +45,15 @@ resources:
     kind: prompt
   - path: prompts/final-alignment-check.md
     kind: prompt
-  - path: scripts/plan-compliance-precheck.sh
+  - path: scripts/plan-compliance-precheck.js
     kind: script
-  - path: scripts/init-goal-tracker.sh
+  - path: scripts/init-goal-tracker.js
     kind: script
-  - path: scripts/write-round-summary.sh
+  - path: scripts/write-round-summary.js
     kind: script
-  - path: scripts/enter-review-phase.sh
+  - path: scripts/enter-review-phase.js
     kind: script
-  - path: scripts/finalize.sh
+  - path: scripts/finalize.js
     kind: script
 capabilities:
   agents:
@@ -72,23 +72,27 @@ sequence:
       id: planCompliancePrecheck
       type: script
       script:
-        language: sh
-        file: scripts/plan-compliance-precheck.sh
+        language: js
+        file: scripts/plan-compliance-precheck.js
       writes:
         - /humanize
   - node:
       id: planUnderstandingQuiz
       type: human
       prompt:
-        file: prompts/plan-understanding-quiz.md
+        template:
+          file: prompts/plan-understanding-quiz.md
+          bindings:
+            humanize:
+              state: /humanize
       reads:
         - /humanize
   - node:
       id: initializeGoalTracker
       type: script
       script:
-        language: sh
-        file: scripts/init-goal-tracker.sh
+        language: js
+        file: scripts/init-goal-tracker.js
       writes:
         - /humanize
   - template:
@@ -102,15 +106,19 @@ sequence:
               model:
                 role: builder
               prompt:
-                file: prompts/implementation-round.md
+                template:
+                  file: prompts/implementation-round.md
+                  bindings:
+                    humanize:
+                      state: /humanize
               reads:
                 - /humanize
           - node:
               id: writeRoundSummary
               type: script
               script:
-                language: sh
-                file: scripts/write-round-summary.sh
+                language: js
+                file: scripts/write-round-summary.js
               writes:
                 - /humanize
       review:
@@ -120,7 +128,13 @@ sequence:
         model:
           role: reviewer
         prompt:
-          file: prompts/codex-summary-review.md
+          template:
+            file: prompts/codex-summary-review.md
+            bindings:
+              humanize:
+                state: /humanize
+        reads:
+          - /humanize
         gates:
           - CONTINUE
           - COMPLETE
@@ -130,8 +144,8 @@ sequence:
       id: enterReviewPhase
       type: script
       script:
-        language: sh
-        file: scripts/enter-review-phase.sh
+        language: js
+        file: scripts/enter-review-phase.js
       writes:
         - /humanize
   - template:
@@ -143,7 +157,11 @@ sequence:
         model:
           role: builder
         prompt:
-          file: prompts/code-review-fix.md
+          template:
+            file: prompts/code-review-fix.md
+            bindings:
+              humanize:
+                state: /humanize
         reads:
           - /humanize
       review:
@@ -153,7 +171,13 @@ sequence:
         model:
           role: reviewer
         prompt:
-          file: prompts/codex-code-review.md
+          template:
+            file: prompts/codex-code-review.md
+            bindings:
+              humanize:
+                state: /humanize
+        reads:
+          - /humanize
         gates:
           - ISSUES
           - CLEAN
@@ -165,15 +189,21 @@ sequence:
       model:
         role: reviewer
       prompt:
-        file: prompts/final-alignment-check.md
+        template:
+          file: prompts/final-alignment-check.md
+          bindings:
+            humanize:
+              state: /humanize
+      reads:
+        - /humanize
       gates:
         - finish
   - node:
       id: finalize
       type: script
       script:
-        language: sh
-        file: scripts/finalize.sh
+        language: js
+        file: scripts/finalize.js
       writes:
         - /humanize
 ```

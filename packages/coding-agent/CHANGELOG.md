@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added workflow script execution context for program nodes (`workflowContext`
+  in JS eval scripts and `OMP_WORKFLOW_CONTEXT` for shell scripts), and upgraded
+  the built-in `humanize-rlcr` flow to maintain a durable multi-round RLCR
+  ledger with reviewer-controlled loop evidence.
 - Added built-in `humanize-rlcr`, `kda-humanize-reference`, `parallel-weak-implementation`, `agent-build-review-loop`, `human-interactive-dev`, `recflow-audit-events-cockpit`, and the `branch-conditional`, `loop-until-done`, and `parallel-join` control-flow primitive `.omhflow` artifacts, shared named workflow resolution for `/workflow start|freeze`, Humanize/KDA workflow demos, and a non-interactive `omp workflow` command for listing, freezing, starting, installing, and uninstalling workflow artifacts via `OMHFLOW_DIR`.
 - Fixed paste and image placeholders crashing when the editor renders before theme initialization.
 - Added `ModelRegistry.create(authStorage, modelsPath?)` async factory that runs the JSON → YAML migration step on `models.{yml,yaml}` asynchronously ahead of the sync constructor's bundled-model load. The sync `new ModelRegistry(...)` constructor still works (tests rely on it); production boot paths now use the factory so the migration's I/O lands off the event-loop hot path.

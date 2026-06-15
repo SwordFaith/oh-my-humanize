@@ -294,6 +294,10 @@ async function executeAndPersistActivation(
 			await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost, {
 				modelOverride: modelOverrideFromAudit(modelAudit),
 				signal: executionSignal,
+				context: {
+					state: context.state,
+					completedActivations: context.completedActivations,
+				},
 			}),
 			{
 				allowedWritePaths: node.writes,

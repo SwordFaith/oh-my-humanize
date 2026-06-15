@@ -107,6 +107,84 @@ describe("workflow artifact registry", () => {
 		}
 	});
 
+	it("runs bundled Humanize RLCR with durable ledger across reviewer-controlled rounds", async () => {
+		const spec = await resolveWorkflowFlowSpec("humanize-rlcr", { cwd: process.cwd(), flowDirs: [] });
+		const artifact = await loadWorkflowArtifact(spec.path);
+		const freeze = await freezeWorkflowArtifact(artifact);
+		const taskDir = await createTempDir();
+		await Bun.write(
+			path.join(taskDir, "task.md"),
+			[
+				"# Long-running RLCR ledger smoke",
+				"",
+				"Goal: make a documented behavior change with verification evidence.",
+				"Acceptance: implementation evidence, negative-test thinking, review cleanup, and final alignment.",
+			].join("\n"),
+		);
+		const host = createRunHost();
+		let implementationRound = 0;
+		let summaryReviewRound = 0;
+
+		const result = await runWorkflow({
+			host,
+			definition: freeze.definition,
+			runId: "humanize-ledger",
+			startNodeId: "planCompliancePrecheck",
+			runtimeHost: createSessionWorkflowRuntimeHost({
+				cwd: taskDir,
+				runEvalScript: request => runBunFunctionWorkflowScript(taskDir, request),
+				runHumanInput: async () => ({
+					response: "proceed: this changes documentation-facing behavior and validation evidence.",
+				}),
+				runAgentTask: async request => {
+					if (request.nodeId === "implementRound") {
+						implementationRound++;
+						return {
+							exitCode: 0,
+							output: `round ${implementationRound} implementation evidence with verification notes`,
+						};
+					}
+					if (request.nodeId === "codexSummaryReview") {
+						summaryReviewRound++;
+						return {
+							exitCode: 0,
+							output:
+								summaryReviewRound === 1
+									? "CONTINUE\nNeed negative-test evidence before code review."
+									: "COMPLETE\nAcceptance evidence and negative-test thinking are present.",
+						};
+					}
+					if (request.nodeId === "fixReviewIssues") {
+						return { exitCode: 0, output: "fixed all blocking code-review issues" };
+					}
+					if (request.nodeId === "codexCodeReview") {
+						return { exitCode: 0, output: "CLEAN\nNo blocking review issues remain." };
+					}
+					if (request.nodeId === "finalAlignmentCheck") {
+						return { exitCode: 0, output: "finish\nFinal alignment passes." };
+					}
+					return { exitCode: 0, output: `completed ${request.nodeId}` };
+				},
+			}),
+			packageRoot: artifact.resourceDir,
+			frozenResources: freeze.resourceSnapshots,
+			maxActivations: 24,
+		});
+
+		const nodeIds = result.scheduler.activations.map(activation => activation.nodeId);
+		expect(nodeIds.filter(nodeId => nodeId === "implementRound")).toHaveLength(2);
+		expect(nodeIds.filter(nodeId => nodeId === "writeRoundSummary")).toHaveLength(2);
+		expect(result.scheduler.activations.every(activation => activation.status === "completed")).toBe(true);
+		expect(result.scheduler.frontierNodeIds).toEqual([]);
+		const humanize = expectRecord(result.scheduler.state.humanize, "humanize state");
+		const ledger = expectRecord(humanize.ledger, "humanize ledger");
+		const rounds = expectArray(ledger.rounds, "humanize ledger rounds");
+		expect(ledger.currentRound).toBe(2);
+		expect(rounds).toHaveLength(2);
+		expect(expectRecord(humanize.reviewPhase, "humanize review phase").enteredAfterRound).toBe(2);
+		expect(expectRecord(humanize.final, "humanize final").rounds).toBe(2);
+	});
+
 	it("treats explicit paths as paths even when the basename matches an installed flow name", async () => {
 		const dir = await createTempDir();
 		const flowPath = await writeFlowArtifact(dir, "humanize-rlcr");
@@ -241,6 +319,59 @@ async function runBunWorkflowScript(
 		language: request.language,
 		...(exitCode === 0 ? {} : { error: stderr.trim() || stdout.trim() || `exit code ${exitCode}` }),
 	};
+}
+
+async function runBunFunctionWorkflowScript(
+	cwd: string,
+	request: WorkflowScriptEvalRequest,
+): Promise<WorkflowScriptEvalResult> {
+	const scriptPath = path.join(cwd, `.workflow-${request.activationId}.js`);
+	await Bun.write(
+		scriptPath,
+		[
+			"(async () => {",
+			request.code,
+			"})()",
+			"  .then(value => {",
+			"    if (value !== undefined) console.log(JSON.stringify(value));",
+			"  })",
+			"  .catch(error => {",
+			"    console.error(error instanceof Error ? error.stack ?? error.message : String(error));",
+			"    process.exit(1);",
+			"  });",
+		].join("\n"),
+	);
+	const proc = Bun.spawn([process.execPath, scriptPath], {
+		cwd,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [stdout, stderr, exitCode] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	return {
+		exitCode,
+		output: [stdout, stderr]
+			.filter(text => text.trim().length > 0)
+			.join("\n")
+			.trim(),
+		language: request.language,
+		...(exitCode === 0 ? {} : { error: stderr.trim() || stdout.trim() || `exit code ${exitCode}` }),
+	};
+}
+
+function expectRecord(value: unknown, label: string): Record<string, unknown> {
+	if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	throw new Error(`Expected ${label} to be a record`);
+}
+
+function expectArray(value: unknown, label: string): unknown[] {
+	if (Array.isArray(value)) return value;
+	throw new Error(`Expected ${label} to be an array`);
 }
 
 async function writeFlowArtifact(

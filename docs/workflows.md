@@ -232,6 +232,11 @@ or as `<dir>/<name>/<name>.omhflow` plus `<dir>/<name>/<name>/`.
 - Prefer small, reusable subflows over large monolithic graphs.
 - Use review node outputs and edge conditions for loops such as
   `CONTINUE`/`COMPLETE` or `ISSUES`/`CLEAN`.
+- Program nodes can read the current workflow execution context without
+  scraping logs or raw transcripts. JS eval scripts receive `workflowContext`;
+  shell scripts receive the same JSON as `OMP_WORKFLOW_CONTEXT`. Use it for
+  durable flow state such as round ledgers, issue queues, and checkpointable
+  progress summaries.
 - Freeze a flow before treating it as production-safe:
 
 ```sh

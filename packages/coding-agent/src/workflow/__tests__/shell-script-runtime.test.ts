@@ -44,6 +44,69 @@ describe.skipIf(!zshPath)("createShellScriptRunner", () => {
 		expect(result.error).toBeUndefined();
 		expect(result.output).toContain('"status":"0"');
 	});
+
+	it("exposes workflow context to sh scripts through OMP_WORKFLOW_CONTEXT", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-sh-context-");
+		previousShell = Bun.env.SHELL;
+		Bun.env.SHELL = zshPath ?? "";
+
+		const settings = await Settings.init();
+		const session: ToolSession = {
+			cwd: tempDir.path(),
+			hasUI: false,
+			getSessionFile: () => null,
+			getSessionSpawns: () => null,
+			settings,
+		};
+		const runner = createShellScriptRunner(session);
+
+		const result = await runner({
+			activationId: "activation-2",
+			nodeId: "recordLedger",
+			code: "printf '%s\\n' \"$OMP_WORKFLOW_CONTEXT\"",
+			language: "sh",
+			title: "record-ledger.sh",
+			context: {
+				activation: {
+					id: "activation-2",
+					nodeId: "recordLedger",
+					graphRevisionId: "graph-1",
+					parentActivationIds: ["activation-1"],
+				},
+				node: {
+					id: "recordLedger",
+					type: "script",
+				},
+				state: {
+					ledger: {
+						round: 2,
+					},
+				},
+				completedActivations: [],
+			},
+		});
+
+		expect(result.exitCode).toBe(0);
+		expect(result.error).toBeUndefined();
+		expect(JSON.parse(result.output)).toEqual({
+			activation: {
+				id: "activation-2",
+				nodeId: "recordLedger",
+				graphRevisionId: "graph-1",
+				parentActivationIds: ["activation-1"],
+			},
+			node: {
+				id: "recordLedger",
+				type: "script",
+			},
+			state: {
+				ledger: {
+					round: 2,
+				},
+			},
+			completedActivations: [],
+		});
+	});
 });
 
 function findZshPath(): string | undefined {

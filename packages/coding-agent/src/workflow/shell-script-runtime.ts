@@ -1,8 +1,13 @@
 import { executeBash } from "../exec/bash-executor";
 import type { ToolSession } from "../tools";
-import type { WorkflowScriptEvalResult, WorkflowShellScriptRunner } from "./session-runtime";
+import type {
+	WorkflowScriptEvalResult,
+	WorkflowShellScriptRequest,
+	WorkflowShellScriptRunner,
+} from "./session-runtime";
 
 const WORKFLOW_SHELL_TIMEOUT_MS = 60 * 60 * 1000;
+const WORKFLOW_CONTEXT_ENV = "OMP_WORKFLOW_CONTEXT";
 
 export function createShellScriptRunner(toolSession: ToolSession): WorkflowShellScriptRunner {
 	return async request => {
@@ -13,6 +18,7 @@ export function createShellScriptRunner(toolSession: ToolSession): WorkflowShell
 			sessionKey: workflowShellSessionKey(toolSession, request.activationId),
 			useUserShell: true,
 			outputMaxColumns: 0,
+			env: workflowShellContextEnv(request),
 		});
 		const scriptResult: WorkflowScriptEvalResult = {
 			exitCode: result.exitCode ?? 1,
@@ -31,6 +37,11 @@ export function createShellScriptRunner(toolSession: ToolSession): WorkflowShell
 		}
 		return scriptResult;
 	};
+}
+
+function workflowShellContextEnv(request: WorkflowShellScriptRequest): Record<string, string> | undefined {
+	if (request.context === undefined) return undefined;
+	return { [WORKFLOW_CONTEXT_ENV]: JSON.stringify(request.context) };
 }
 
 export function workflowShellCommand(code: string): string {

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { TempDir } from "@oh-my-pi/pi-utils";
+import { Settings } from "../../config/settings";
+import type { ToolSession } from "../../tools";
 import type { WorkflowDefinition, WorkflowNode } from "../definition";
+import { createEvalToolScriptRunner } from "../eval-tool-runtime";
 import { runWorkflow } from "../runner";
-import { createSessionWorkflowRuntimeHost } from "../session-runtime";
+import { createSessionWorkflowRuntimeHost, type WorkflowShellScriptRequest } from "../session-runtime";
 
 describe("createSessionWorkflowRuntimeHost review nodes", () => {
 	it("uses the first non-empty line as the verdict before falling back", async () => {
@@ -27,7 +31,7 @@ describe("createSessionWorkflowRuntimeHost review nodes", () => {
 			activation: {
 				id: "activation-1",
 				nodeId: node.id,
-				graphRevisionId: "graph-1",
+				graphRevisionId: "run-1:graph-0",
 				status: "running",
 				parentActivationIds: [],
 			},
@@ -54,6 +58,130 @@ describe("createSessionWorkflowRuntimeHost review nodes", () => {
 
 		expect(result.scheduler.activations.map(activation => activation.nodeId)).toEqual(["review", "done"]);
 		expect(result.scheduler.state).toEqual({ verdict: "COMPLETE" });
+	});
+
+	it("passes workflow state and activation context to shell script nodes", async () => {
+		const requests: WorkflowShellScriptRequest[] = [];
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: "/workspace",
+			runShellScript: async request => {
+				requests.push(request);
+				if (request.nodeId === "seed") {
+					return {
+						exitCode: 0,
+						output: JSON.stringify({
+							summary: "seeded",
+							statePatch: [{ op: "set", path: "/ledger", value: { round: 1 } }],
+						}),
+					};
+				}
+				return {
+					exitCode: 0,
+					output: JSON.stringify({ summary: "ledger observed" }),
+				};
+			},
+		});
+
+		const result = await runWorkflow({
+			host: new MemoryWorkflowHost(),
+			definition: contextScriptDefinition(),
+			runId: "run-1",
+			startNodeId: "seed",
+			runtimeHost: host,
+		});
+
+		expect(requests).toHaveLength(2);
+		expect(requests[1]?.context).toEqual({
+			activation: {
+				id: "activation-2",
+				nodeId: "record",
+				graphRevisionId: "run-1:graph-0",
+				parentActivationIds: ["activation-1"],
+			},
+			node: {
+				id: "record",
+				type: "script",
+			},
+			state: {
+				ledger: {
+					round: 1,
+				},
+			},
+			completedActivations: [
+				{
+					id: "activation-1",
+					nodeId: "seed",
+					graphRevisionId: "run-1:graph-0",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: "seeded",
+						statePatch: [{ op: "set", path: "/ledger", value: { round: 1 } }],
+					},
+				},
+			],
+		});
+		expect(result.scheduler.state).toEqual({ ledger: { round: 1 } });
+	});
+
+	it("exposes workflow context to js eval script nodes", async () => {
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: "/workspace",
+			runEvalScript: async request => {
+				const AsyncFunctionConstructor = Object.getPrototypeOf(async () => {}).constructor as new (
+					consoleName: string,
+					code: string,
+				) => (consoleValue: { log: (...items: unknown[]) => void }) => Promise<unknown>;
+				const logs: string[] = [];
+				const logger = {
+					log: (...items: unknown[]) => {
+						logs.push(items.map(item => String(item)).join(" "));
+					},
+				};
+				const execute = new AsyncFunctionConstructor("console", request.code).bind(undefined, logger);
+				await execute();
+				return {
+					exitCode: 0,
+					output: logs.join("\n"),
+				};
+			},
+		});
+
+		const result = await runWorkflow({
+			host: new MemoryWorkflowHost(),
+			definition: contextEvalDefinition(),
+			runId: "run-1",
+			startNodeId: "seed",
+			runtimeHost: host,
+		});
+
+		expect(result.scheduler.state).toEqual({ ledger: { round: 3 } });
+	});
+
+	it("captures returned js workflow script objects through the real eval tool runner", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-eval-context-");
+		const settings = await Settings.init();
+		const session: ToolSession = {
+			cwd: tempDir.path(),
+			hasUI: false,
+			getSessionFile: () => null,
+			getSessionSpawns: () => null,
+			settings,
+		};
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: tempDir.path(),
+			runEvalScript: createEvalToolScriptRunner(session),
+		});
+
+		const result = await runWorkflow({
+			host: new MemoryWorkflowHost(),
+			definition: contextEvalDefinition(),
+			runId: "run-real-eval",
+			startNodeId: "seed",
+			runtimeHost: host,
+		});
+
+		expect(result.scheduler.state).toEqual({ ledger: { round: 3 } });
 	});
 });
 
@@ -118,5 +246,68 @@ function retryReviewDefinition(): WorkflowDefinition {
 			{ from: "review", to: "retry", condition: { source: 'outputs.review.verdict == "CONTINUE"' } },
 			{ from: "review", to: "done", condition: { source: 'outputs.review.verdict != "CONTINUE"' } },
 		],
+	};
+}
+
+function contextScriptDefinition(): WorkflowDefinition {
+	return {
+		name: "script-context",
+		version: 1,
+		models: { roles: {}, defaults: {} },
+		nodes: [
+			{
+				id: "seed",
+				type: "script",
+				script: { language: "sh", code: "seed" },
+				writes: ["/ledger"],
+			},
+			{
+				id: "record",
+				type: "script",
+				script: { language: "sh", code: "record" },
+				reads: ["/ledger"],
+				writes: ["/ledger"],
+			},
+		],
+		edges: [{ from: "seed", to: "record" }],
+	};
+}
+
+function contextEvalDefinition(): WorkflowDefinition {
+	return {
+		name: "eval-context",
+		version: 1,
+		models: { roles: {}, defaults: {} },
+		nodes: [
+			{
+				id: "seed",
+				type: "script",
+				script: {
+					language: "js",
+					code: 'return { summary: "seeded", statePatch: [{ op: "set", path: "/ledger", value: { round: 2 } }] };',
+				},
+				writes: ["/ledger"],
+			},
+			{
+				id: "record",
+				type: "script",
+				script: {
+					language: "js",
+					code: [
+						"return {",
+						'  summary: "eval context observed",',
+						"  statePatch: [{",
+						'    op: "set",',
+						'    path: "/ledger/round",',
+						"    value: workflowContext.state.ledger.round + 1,",
+						"  }],",
+						"};",
+					].join("\n"),
+				},
+				reads: ["/ledger"],
+				writes: ["/ledger"],
+			},
+		],
+		edges: [{ from: "seed", to: "record" }],
 	};
 }

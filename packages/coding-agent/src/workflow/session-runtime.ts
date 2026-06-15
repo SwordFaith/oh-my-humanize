@@ -1,7 +1,7 @@
 import { workflowAgentTaskIdForNode } from "./agent-task-id";
 import type { WorkflowScriptLanguage } from "./definition";
 import { formatWorkflowAgentWorkItemLabel } from "./display";
-import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput } from "./node-runtime";
+import type { WorkflowNodeRuntimeHost, WorkflowReviewNodeOutput, WorkflowScriptContext } from "./node-runtime";
 import { WorkflowNodeRuntimeError } from "./node-runtime";
 import {
 	DEFAULT_WORKFLOW_MAX_SUMMARY_BYTES,
@@ -58,6 +58,7 @@ export interface WorkflowScriptEvalRequest {
 	code: string;
 	language: WorkflowScriptEvalLanguage;
 	title: string;
+	context?: WorkflowScriptContext;
 }
 
 export interface WorkflowShellScriptRequest {
@@ -67,6 +68,7 @@ export interface WorkflowShellScriptRequest {
 	language: WorkflowShellScriptLanguage;
 	title: string;
 	signal?: AbortSignal;
+	context?: WorkflowScriptContext;
 }
 
 export interface WorkflowScriptEvalResult {
@@ -194,7 +196,12 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 async function runEvalWorkflowScript(
 	nodeId: string,
 	code: string,
-	input: { activation: { id: string }; scriptLanguage?: WorkflowScriptLanguage; scriptPath?: string },
+	input: {
+		activation: { id: string };
+		scriptLanguage?: WorkflowScriptLanguage;
+		scriptPath?: string;
+		context?: WorkflowScriptContext;
+	},
 	options: WorkflowSessionRuntimeOptions,
 ): Promise<WorkflowScriptEvalResult> {
 	if (!options.runEvalScript) {
@@ -204,19 +211,46 @@ async function runEvalWorkflowScript(
 	if (language === "sh") {
 		throw new WorkflowNodeRuntimeError(`workflow script node "${nodeId}" requires a shell runtime adapter`);
 	}
-	return options.runEvalScript({
+	const context = input.context;
+	const request: WorkflowScriptEvalRequest = {
 		activationId: input.activation.id,
 		nodeId,
-		code,
+		code: context === undefined ? code : workflowEvalScriptWithContext(code, context),
 		language,
 		title: input.scriptPath ?? nodeId,
-	});
+	};
+	if (context !== undefined) {
+		request.context = context;
+	}
+	return options.runEvalScript(request);
+}
+
+function workflowEvalScriptWithContext(code: string, context: WorkflowScriptContext): string {
+	const serialized = JSON.stringify(context).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+	const contextLines = [
+		`const workflowContext = Object.freeze(${serialized});`,
+		`const OMP_WORKFLOW_CONTEXT = workflowContext;`,
+	];
+	if (!workflowEvalScriptUsesTopLevelReturn(code)) {
+		return [...contextLines, code].join("\n");
+	}
+	return [
+		...contextLines,
+		"const __workflowResult = await (async () => {",
+		code,
+		"})();",
+		"if (__workflowResult !== undefined) console.log(JSON.stringify(__workflowResult));",
+	].join("\n");
+}
+
+function workflowEvalScriptUsesTopLevelReturn(code: string): boolean {
+	return /^\s*return\b/mu.test(code);
 }
 
 async function runShellWorkflowScript(
 	nodeId: string,
 	code: string,
-	input: { activation: { id: string }; scriptPath?: string; signal?: AbortSignal },
+	input: { activation: { id: string }; scriptPath?: string; signal?: AbortSignal; context?: WorkflowScriptContext },
 	options: WorkflowSessionRuntimeOptions,
 ): Promise<WorkflowScriptEvalResult> {
 	if (!options.runShellScript) {
@@ -231,6 +265,9 @@ async function runShellWorkflowScript(
 	};
 	if (input.signal !== undefined) {
 		request.signal = input.signal;
+	}
+	if (input.context !== undefined) {
+		request.context = input.context;
 	}
 	return options.runShellScript(request);
 }

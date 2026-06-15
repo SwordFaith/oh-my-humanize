@@ -20,6 +20,7 @@ export interface WorkflowScriptNodeInput extends WorkflowNodeRuntimeInput {
 	scriptLanguage?: WorkflowScriptLanguage;
 	scriptPath?: string;
 	model?: WorkflowModelContext;
+	context?: WorkflowScriptContext;
 }
 
 export interface WorkflowHumanNodeInput extends WorkflowNodeRuntimeInput {
@@ -48,9 +49,22 @@ export interface WorkflowNodeRuntimeHost {
 	runReviewNode?: (input: WorkflowReviewNodeInput) => Promise<WorkflowReviewNodeOutput>;
 }
 
+export interface WorkflowNodeExecutionContext {
+	state: Record<string, unknown>;
+	completedActivations: WorkflowActivation[];
+}
+
+export interface WorkflowScriptContext {
+	activation: Pick<WorkflowActivation, "id" | "nodeId" | "graphRevisionId" | "parentActivationIds">;
+	node: Pick<WorkflowNode, "id" | "type">;
+	state: Record<string, unknown>;
+	completedActivations: WorkflowActivation[];
+}
+
 export interface WorkflowNodeRuntimeOptions {
 	modelOverride?: string;
 	signal?: AbortSignal;
+	context?: WorkflowNodeExecutionContext;
 }
 
 export class WorkflowNodeRuntimeError extends Error {
@@ -126,10 +140,36 @@ async function executeScriptNode(
 		scriptPath: node.script?.file,
 		model: node.model,
 	};
+	const context = workflowScriptContextSnapshot(node, activation, options.context);
+	if (context !== undefined) {
+		input.context = context;
+	}
 	if (options.signal !== undefined) {
 		input.signal = options.signal;
 	}
 	return host.runScriptNode(input);
+}
+
+function workflowScriptContextSnapshot(
+	node: WorkflowNode,
+	activation: WorkflowActivation,
+	context: WorkflowNodeExecutionContext | undefined,
+): WorkflowScriptContext | undefined {
+	if (context === undefined) return undefined;
+	return {
+		activation: {
+			id: activation.id,
+			nodeId: activation.nodeId,
+			graphRevisionId: activation.graphRevisionId,
+			parentActivationIds: [...activation.parentActivationIds],
+		},
+		node: {
+			id: node.id,
+			type: node.type,
+		},
+		state: structuredClone(context.state),
+		completedActivations: structuredClone(context.completedActivations),
+	};
 }
 
 async function executeHumanNode(
