@@ -1785,6 +1785,8 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain("Recent output");
 		expect(text).toContain("Controls");
 		expect(text).toContain("implementing the next review fix");
+		expect(text).not.toContain("watch: Agent Hub build-3");
+		expect(text).not.toContain("interrupt: selected live agent");
 		expect(text).not.toContain(" focused node ");
 		expect(text).not.toContain(" on-flight ");
 		expect(text).not.toContain("--deadline-ms");

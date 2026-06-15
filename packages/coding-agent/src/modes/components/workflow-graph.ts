@@ -1271,9 +1271,18 @@ function workflowGraphFocusLines(
 	width: number,
 	density: WorkflowGraphDensity = "full",
 ): string[] {
-	return formatWorkflowFocusLines(view).map(line =>
+	const allFocusLines = formatWorkflowFocusLines(view);
+	const focusLines =
+		workflowGraphSelectedAgentTarget(view) === undefined
+			? allFocusLines
+			: allFocusLines.filter(line => !workflowGraphIsRailDuplicateFocusControl(line));
+	return focusLines.map(line =>
 		truncateToWidth(replaceTabs(compactWorkflowGraphStatusLine(line, density)), Math.max(20, width)),
 	);
+}
+
+function workflowGraphIsRailDuplicateFocusControl(line: string): boolean {
+	return /^control: (Watch: Agent Hub|Interrupt:|Steer:)/u.test(line);
 }
 
 function workflowGraphOnFlightLines(
