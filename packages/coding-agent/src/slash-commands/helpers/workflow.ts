@@ -77,6 +77,7 @@ import {
 	type WorkflowRunnerLifecycleOptions,
 	type WorkflowRunnerModelResolutionOptions,
 } from "../../workflow/runner";
+import { DEFAULT_WORKFLOW_MAX_RUNTIME_MS } from "../../workflow/runtime-timeout";
 import type { WorkflowActivation } from "../../workflow/scheduler";
 import { applyWorkflowStatePatch } from "../../workflow/state";
 import type { ParsedSlashCommand, SlashCommandResult, SlashCommandRuntime } from "../types";
@@ -90,6 +91,7 @@ interface WorkflowStartArgs {
 	familyId?: string;
 	maxActivations?: number;
 	maxNodeActivations?: number;
+	maxRuntimeMs?: number;
 	background?: boolean;
 }
 
@@ -107,6 +109,7 @@ interface WorkflowInterruptArgs {
 interface WorkflowRestartArgs {
 	checkpointId: string;
 	freezeId?: string;
+	maxRuntimeMs?: number;
 	background?: boolean;
 }
 
@@ -355,6 +358,7 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 		modelResolution,
 		...(parsed.maxActivations !== undefined ? { maxActivations: parsed.maxActivations } : {}),
 		...(parsed.maxNodeActivations !== undefined ? { maxNodeActivations: parsed.maxNodeActivations } : {}),
+		maxRuntimeMs: parsed.maxRuntimeMs ?? DEFAULT_WORKFLOW_MAX_RUNTIME_MS,
 		...(stopController !== undefined ? { signal: stopController.signal } : {}),
 		...(nodeAbortController !== undefined ? { nodeAbortSignal: nodeAbortController.signal } : {}),
 		...(lifecycle !== undefined
@@ -898,6 +902,7 @@ async function handleRestartCommand(rest: string, runtime: SlashCommandRuntime):
 		completedActivations: checkpointCompletedActivations(located.family, located.checkpoint),
 		startParentActivationIds: located.checkpoint.completedActivationIds,
 		modelResolution,
+		maxRuntimeMs: parsed.maxRuntimeMs ?? DEFAULT_WORKFLOW_MAX_RUNTIME_MS,
 		signal: stopController.signal,
 		nodeAbortSignal: nodeAbortController.signal,
 		nodeAbortSignalForActivation: activation => nodeAbortSignalForActivation(nodeAbortControllers, activation),
@@ -984,6 +989,7 @@ function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: stri
 	let familyId: string | undefined;
 	let maxActivations: number | undefined;
 	let maxNodeActivations: number | undefined;
+	let maxRuntimeMs: number | undefined;
 	let background = false;
 	for (let index = 0; index < tokens.length; index += 1) {
 		const token = tokens[index];
@@ -1031,6 +1037,15 @@ function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: stri
 			index += 1;
 			continue;
 		}
+		if (token === "--max-runtime-ms") {
+			const value = tokens[index + 1];
+			if (!value) return { error: workflowUsage() };
+			const parsedLimit = parseWorkflowActivationLimit(value, "Workflow max runtime");
+			if ("error" in parsedLimit) return parsedLimit;
+			maxRuntimeMs = parsedLimit.value;
+			index += 1;
+			continue;
+		}
 		if (token.startsWith("--")) {
 			return { error: `Unknown workflow start option: ${token}\n${workflowUsage()}` };
 		}
@@ -1048,6 +1063,7 @@ function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: stri
 	if (familyId !== undefined) args.familyId = familyId;
 	if (maxActivations !== undefined) args.maxActivations = maxActivations;
 	if (maxNodeActivations !== undefined) args.maxNodeActivations = maxNodeActivations;
+	if (maxRuntimeMs !== undefined) args.maxRuntimeMs = maxRuntimeMs;
 	if (background) args.background = true;
 	return args;
 }
@@ -1359,6 +1375,7 @@ function parseWorkflowRestartArgs(rest: string): WorkflowRestartArgs | { error: 
 	const tokens = parseCommandArgs(rest);
 	let checkpointId: string | undefined;
 	let freezeId: string | undefined;
+	let maxRuntimeMs: number | undefined;
 	let background = false;
 	for (let index = 0; index < tokens.length; index += 1) {
 		const token = tokens[index];
@@ -1374,6 +1391,15 @@ function parseWorkflowRestartArgs(rest: string): WorkflowRestartArgs | { error: 
 			index += 1;
 			continue;
 		}
+		if (token === "--max-runtime-ms") {
+			const value = tokens[index + 1];
+			if (!value) return { error: workflowUsage() };
+			const parsedLimit = parseWorkflowActivationLimit(value, "Workflow max runtime");
+			if ("error" in parsedLimit) return parsedLimit;
+			maxRuntimeMs = parsedLimit.value;
+			index += 1;
+			continue;
+		}
 		if (token.startsWith("--")) return { error: `Unknown workflow restart option: ${token}\n${workflowUsage()}` };
 		if (checkpointId !== undefined)
 			return { error: `Unexpected workflow restart argument: ${token}\n${workflowUsage()}` };
@@ -1382,6 +1408,7 @@ function parseWorkflowRestartArgs(rest: string): WorkflowRestartArgs | { error: 
 	if (!checkpointId) return { error: workflowUsage() };
 	const args: WorkflowRestartArgs = { checkpointId };
 	if (freezeId !== undefined) args.freezeId = freezeId;
+	if (maxRuntimeMs !== undefined) args.maxRuntimeMs = maxRuntimeMs;
 	if (background) args.background = true;
 	return args;
 }
@@ -2812,14 +2839,14 @@ function workflowUsage(): string {
 		"Usage: /workflow graph [--family-id <id>]",
 		"Usage: /workflow manager [--family-id <id>]",
 		"Usage: /workflow freeze <flow-or-path> [--family-id <id>]",
-		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--background]",
+		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--max-runtime-ms <n>] [--background]",
 		"Usage: /workflow request-change <file> [--family-id <id>] [--attempt-id <id>]",
 		"Usage: /workflow approve-change <change-request-id> [--actor <actor>]",
 		"Usage: /workflow reject-change <change-request-id> [--actor <actor>] [--reason <text>]",
 		"Usage: /workflow apply-change <change-request-id> (--freeze-id <id>|--draft-id <id>|--draft-path <path>) [--actor <actor>] [--reason <text>]",
 		"Usage: /workflow stop <attempt-id> [--deadline-ms <n>]",
 		"Usage: /workflow interrupt <attempt-id> <activation-or-node-id> [--deadline-ms <n>]",
-		"Usage: /workflow restart <checkpoint-id> [--freeze-id <id>] [--background]",
+		"Usage: /workflow restart <checkpoint-id> [--freeze-id <id>] [--max-runtime-ms <n>] [--background]",
 	].join("\n");
 }
 

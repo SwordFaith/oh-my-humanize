@@ -2996,6 +2996,102 @@ edges:
 		});
 	});
 
+	it("checkpoints background workflow starts when max runtime elapses", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "runtime-timeout"), { recursive: true });
+		await Bun.write(
+			path.join(dir, "runtime-timeout.omhflow"),
+			`---
+name: runtime-timeout-demo
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 50
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Runtime Timeout Demo
+
+\`\`\`yaml workflow
+nodes:
+  build:
+    type: script
+    script:
+      inline: |
+        return { summary: "built" };
+  review:
+    type: script
+    script:
+      inline: |
+        return { summary: "reviewed" };
+edges:
+  - from: build
+    to: review
+\`\`\`
+`,
+		);
+		const entries: CapturedEntry[] = [];
+		const buildStarted = Promise.withResolvers<void>();
+		const buildAborted = Promise.withResolvers<void>();
+		const releaseBuild = Promise.withResolvers<void>();
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runScriptNode: async input => {
+				if (input.node.id === "build") {
+					buildStarted.resolve();
+					if (input.signal?.aborted) {
+						buildAborted.resolve();
+					} else {
+						input.signal?.addEventListener("abort", () => buildAborted.resolve(), { once: true });
+					}
+					await Promise.race([buildAborted.promise, releaseBuild.promise]);
+					throw new Error(input.signal?.reason ?? "workflow max runtime elapsed");
+				}
+				return { summary: "review should not run" };
+			},
+		};
+		const { output, runtime } = createRuntime(entries, runtimeHost);
+
+		const start = executeAcpBuiltinSlashCommand(
+			`/workflow start ${path.join(dir, "runtime-timeout.omhflow")} --run-id run-runtime-timeout --family-id family-runtime-timeout --max-runtime-ms 5 --background`,
+			runtime,
+		);
+		expect(await start).toEqual({ consumed: true });
+		expect(output.join("\n")).toContain("Workflow background attempt started: run-runtime-timeout:attempt-1");
+		const startedResult = await Promise.race([
+			buildStarted.promise.then(() => "started"),
+			Bun.sleep(200).then(() => "timeout"),
+		]);
+		expect(startedResult).toBe("started");
+		const timeoutResult = await Promise.race([
+			buildAborted.promise.then(() => "aborted"),
+			Bun.sleep(200).then(() => "timeout"),
+		]);
+		expect(timeoutResult).toBe("aborted");
+		releaseBuild.resolve();
+		await Bun.sleep(10);
+
+		const family = reconstructWorkflowFamilies(entries)[0];
+		expect(
+			output.some(entry => entry.includes("Workflow background attempt started: run-runtime-timeout:attempt-1")),
+		).toBeTrue();
+		expect(family?.attempts.map(attempt => [attempt.id, attempt.status])).toEqual([
+			["run-runtime-timeout:attempt-1", "stopped"],
+		]);
+		expect(family?.attempts[0]?.activations[0]).toMatchObject({
+			nodeId: "build",
+			status: "aborted",
+			reason: "workflow max runtime elapsed after 5ms",
+		});
+		expect(family?.checkpoints[0]).toMatchObject({
+			id: "run-runtime-timeout:attempt-1:checkpoint-1",
+			completedActivationIds: [],
+			abortedActivationIds: ["activation-1"],
+			frontierNodeIds: ["build"],
+			sourceMapping: { build: "build" },
+		});
+	});
+
 	it("stops a live foreground workflow attempt before scheduling downstream nodes", async () => {
 		const dir = await createTempDir();
 		await fs.mkdir(path.join(dir, "live-foreground-stop"), { recursive: true });

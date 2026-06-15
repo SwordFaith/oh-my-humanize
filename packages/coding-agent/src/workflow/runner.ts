@@ -36,6 +36,7 @@ import {
 	type WorkflowRunSnapshot,
 	type WorkflowRunStoreHost,
 } from "./run-store";
+import { workflowMaxRuntimeStopReason } from "./runtime-timeout";
 import {
 	runWorkflowScheduler,
 	type WorkflowActivation,
@@ -70,6 +71,7 @@ export interface WorkflowRunnerOptions {
 	signal?: AbortSignal;
 	nodeAbortSignal?: AbortSignal;
 	nodeAbortSignalForActivation?: (activation: WorkflowActivation) => AbortSignal | undefined;
+	maxRuntimeMs?: number;
 	packageRoot?: string;
 	maxPromptBytes?: number;
 	frozenResources?: FlowFreezeResourceSnapshot[];
@@ -106,23 +108,76 @@ export async function runWorkflow(options: WorkflowRunnerOptions): Promise<Workf
 		runId: options.runId,
 		graphRevisionId: options.graphRevisionId,
 	});
-	const scheduler = await runWorkflowScheduler(options.definition, {
-		startNodeId: options.startNodeId,
-		maxActivations: options.maxActivations,
-		maxNodeActivations: options.maxNodeActivations,
-		initialState: options.initialState,
-		completedActivations: options.completedActivations,
-		startNodeIds: options.startNodeIds,
-		startParentActivationIds: options.startParentActivationIds,
-		signal: options.signal,
-		nodeAbortSignal: options.nodeAbortSignal,
-		nodeAbortSignalForActivation: options.nodeAbortSignalForActivation,
-		graphRevisionId: run.currentGraphRevisionId,
-		executeNode: async (activation, node, context) =>
-			executeAndPersistActivation(options, run, activation, node, context),
-	});
-	finishLifecycleAttempt(options, scheduler);
-	return { run, scheduler };
+	const runtimeSignal = workflowRuntimeSignal(options);
+	try {
+		const scheduler = await runWorkflowScheduler(options.definition, {
+			startNodeId: options.startNodeId,
+			maxActivations: options.maxActivations,
+			maxNodeActivations: options.maxNodeActivations,
+			initialState: options.initialState,
+			completedActivations: options.completedActivations,
+			startNodeIds: options.startNodeIds,
+			startParentActivationIds: options.startParentActivationIds,
+			signal: runtimeSignal.signal,
+			nodeAbortSignal: runtimeSignal.nodeAbortSignal,
+			nodeAbortSignalForActivation: runtimeSignal.nodeAbortSignalForActivation,
+			graphRevisionId: run.currentGraphRevisionId,
+			executeNode: async (activation, node, context) =>
+				executeAndPersistActivation(options, run, activation, node, context),
+		});
+		finishLifecycleAttempt(options, scheduler, runtimeSignal.signal);
+		return { run, scheduler };
+	} finally {
+		runtimeSignal.dispose();
+	}
+}
+
+interface WorkflowRuntimeSignal {
+	signal?: AbortSignal;
+	nodeAbortSignal?: AbortSignal;
+	nodeAbortSignalForActivation?: (activation: WorkflowActivation) => AbortSignal | undefined;
+	dispose: () => void;
+}
+
+function workflowRuntimeSignal(options: WorkflowRunnerOptions): WorkflowRuntimeSignal {
+	const maxRuntimeMs = options.maxRuntimeMs;
+	if (maxRuntimeMs === undefined) {
+		return {
+			signal: options.signal,
+			nodeAbortSignal: options.nodeAbortSignal,
+			nodeAbortSignalForActivation: options.nodeAbortSignalForActivation,
+			dispose: () => {},
+		};
+	}
+	const timeoutController = new AbortController();
+	const timeout = setTimeout(() => timeoutController.abort(workflowMaxRuntimeStopReason(maxRuntimeMs)), maxRuntimeMs);
+	const timeoutSignal = timeoutController.signal;
+	const signal = combineAbortSignals(options.signal, timeoutSignal);
+	const nodeAbortSignal = combineAbortSignals(options.nodeAbortSignal, timeoutSignal);
+	return {
+		signal,
+		nodeAbortSignal,
+		nodeAbortSignalForActivation:
+			options.nodeAbortSignalForActivation === undefined
+				? undefined
+				: activation => combineAbortSignals(options.nodeAbortSignalForActivation?.(activation), timeoutSignal),
+		dispose: () => clearTimeout(timeout),
+	};
+}
+
+function combineAbortSignals(first: AbortSignal | undefined, second: AbortSignal): AbortSignal {
+	if (first === undefined) return second;
+	const controller = new AbortController();
+	const abortFrom = (signal: AbortSignal): void => {
+		if (!controller.signal.aborted) {
+			controller.abort(signal.reason);
+		}
+	};
+	if (first.aborted) abortFrom(first);
+	if (second.aborted) abortFrom(second);
+	first.addEventListener("abort", () => abortFrom(first), { once: true });
+	second.addEventListener("abort", () => abortFrom(second), { once: true });
+	return controller.signal;
 }
 
 function startLifecycleAttempt(options: WorkflowRunnerOptions): void {
@@ -155,7 +210,11 @@ function startLifecycleAttempt(options: WorkflowRunnerOptions): void {
 	startWorkflowAttempt(options.host, attemptOptions);
 }
 
-function finishLifecycleAttempt(options: WorkflowRunnerOptions, scheduler: WorkflowSchedulerResult): void {
+function finishLifecycleAttempt(
+	options: WorkflowRunnerOptions,
+	scheduler: WorkflowSchedulerResult,
+	signal: AbortSignal | undefined,
+): void {
 	const lifecycle = options.lifecycle;
 	if (!lifecycle) return;
 	const failed = scheduler.activations.find(activation => activation.status === "failed");
@@ -181,7 +240,7 @@ function finishLifecycleAttempt(options: WorkflowRunnerOptions, scheduler: Workf
 		});
 		return;
 	}
-	const checkpointReason = workflowCheckpointReason(options, scheduler);
+	const checkpointReason = workflowCheckpointReason(scheduler, signal);
 	if (checkpointReason !== undefined) {
 		requestWorkflowAttemptStop(options.host, {
 			attemptId: lifecycle.attemptId,
@@ -211,12 +270,12 @@ function finishLifecycleAttempt(options: WorkflowRunnerOptions, scheduler: Workf
 }
 
 function workflowCheckpointReason(
-	options: WorkflowRunnerOptions,
 	scheduler: WorkflowSchedulerResult,
+	signal: AbortSignal | undefined,
 ): string | undefined {
 	if (scheduler.limitReached) return "activation limit reached";
-	if (scheduler.frontierNodeIds.length === 0 || !options.signal?.aborted) return undefined;
-	const reason: unknown = options.signal.reason;
+	if (scheduler.frontierNodeIds.length === 0 || !signal?.aborted) return undefined;
+	const reason: unknown = signal.reason;
 	if (reason instanceof Error) return reason.message;
 	if (typeof reason === "string" && reason.length > 0) return reason;
 	if (reason !== undefined && reason !== null) return String(reason);

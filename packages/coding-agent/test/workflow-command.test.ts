@@ -34,6 +34,7 @@ describe("resolveWorkflowCommandArgs", () => {
 				start: "planCompliancePrecheck",
 				"max-activations": 5,
 				"max-node-activations": 3,
+				"max-runtime-ms": 1234,
 				cwd: "/tmp/project",
 			}),
 		).toEqual({
@@ -46,6 +47,7 @@ describe("resolveWorkflowCommandArgs", () => {
 				startNodeId: "planCompliancePrecheck",
 				maxActivations: 5,
 				maxNodeActivations: 3,
+				maxRuntimeMs: 1234,
 				cwd: "/tmp/project",
 			},
 		});

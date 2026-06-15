@@ -101,6 +101,11 @@ human gate, interrupt agents, or approve changes:
 /workflow manager --family-id demo-humanize
 ```
 
+Production workflow starts and restarts have a default max runtime of five days.
+When that deadline elapses, `omp` stops scheduling new nodes, aborts in-flight
+nodes, and records a checkpoint that can be restarted. Use `--max-runtime-ms`
+when a shorter smoke or validation bound is needed.
+
 In the demo graph, expect the implementation loop to revisit the build and
 summary-review nodes until the reviewer returns `COMPLETE`, then the code-review
 loop runs until the reviewer returns `CLEAN`. Node badges show how many times
@@ -192,6 +197,7 @@ smoke runs without opening the TUI.
 omp workflow freeze humanize-rlcr
 omp workflow start ./my-flow.omhflow --run-id run-1 --max-activations 20
 omp workflow start humanize-rlcr --json --max-activations 1
+omp workflow start humanize-rlcr --json --max-runtime-ms 60000
 ```
 
 Headless workflow runs reuse the existing `omp` runtime boundary. Shell and JS

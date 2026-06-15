@@ -35,6 +35,9 @@ export default class Workflow extends Command {
 		"max-node-activations": Flags.integer({
 			description: "Maximum activations per node before checkpoint stop (start)",
 		}),
+		"max-runtime-ms": Flags.integer({
+			description: "Maximum workflow runtime in milliseconds before checkpoint stop (start)",
+		}),
 		cwd: Flags.string({ description: "Working directory for path resolution and headless execution" }),
 	};
 

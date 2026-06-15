@@ -236,7 +236,7 @@ async function executeSchedulerActivation(
 			}),
 		};
 	} catch (error) {
-		const abortReason = workflowAbortReason(context.nodeAbortSignal);
+		const abortReason = workflowAbortReason(context.nodeAbortSignal) ?? workflowAbortReason(context.signal);
 		if (abortReason) {
 			return {
 				activation,

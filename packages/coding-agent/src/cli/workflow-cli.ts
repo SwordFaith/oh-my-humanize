@@ -15,6 +15,7 @@ import { reconstructWorkflowFamilies } from "../workflow/lifecycle";
 import { loadWorkflowArtifact, loadWorkflowPackage } from "../workflow/package-loader";
 import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../workflow/run-store";
 import { runWorkflow } from "../workflow/runner";
+import { DEFAULT_WORKFLOW_MAX_RUNTIME_MS } from "../workflow/runtime-timeout";
 import { createSessionWorkflowRuntimeHost, type WorkflowAgentTaskRequest } from "../workflow/session-runtime";
 
 export type WorkflowAction = "list" | "freeze" | "start" | "install" | "uninstall";
@@ -30,6 +31,7 @@ export interface WorkflowCommandArgs {
 		startNodeId?: string;
 		maxActivations?: number;
 		maxNodeActivations?: number;
+		maxRuntimeMs?: number;
 		cwd?: string;
 	};
 }
@@ -68,6 +70,7 @@ export function resolveWorkflowCommandArgs(
 			...(typeof flagsInput["max-node-activations"] === "number"
 				? { maxNodeActivations: flagsInput["max-node-activations"] }
 				: {}),
+			...(typeof flagsInput["max-runtime-ms"] === "number" ? { maxRuntimeMs: flagsInput["max-runtime-ms"] } : {}),
 			...(typeof flagsInput.cwd === "string" ? { cwd: flagsInput.cwd } : {}),
 		},
 	};
@@ -189,12 +192,21 @@ async function handleStart(command: WorkflowCommandArgs): Promise<void> {
 		...(command.flags.maxNodeActivations !== undefined
 			? { maxNodeActivations: command.flags.maxNodeActivations }
 			: {}),
+		maxRuntimeMs: command.flags.maxRuntimeMs ?? DEFAULT_WORKFLOW_MAX_RUNTIME_MS,
 		...(lifecycle !== undefined ? { lifecycle } : {}),
 	});
 	const runs = reconstructWorkflowRuns(host.getBranch());
 	const families = reconstructWorkflowFamilies(host.getBranch());
 	const failed = result.scheduler.activations.find(activation => activation.status === "failed");
-	const status = failed ? "failed" : result.scheduler.limitReached ? "stopped" : "completed";
+	const lifecycleAttempt =
+		attemptId === undefined
+			? undefined
+			: families.flatMap(family => family.attempts).find(attempt => attempt.id === attemptId);
+	const status = failed
+		? "failed"
+		: lifecycleAttempt?.status === "stopped" || result.scheduler.limitReached
+			? "stopped"
+			: "completed";
 	if (command.flags.json) {
 		writeJson({
 			flow: flowSpecJson(spec),
@@ -205,6 +217,7 @@ async function handleStart(command: WorkflowCommandArgs): Promise<void> {
 				completed: result.scheduler.activations.filter(activation => activation.status === "completed").length,
 				failed: result.scheduler.activations.filter(activation => activation.status === "failed").length,
 				frontier: result.scheduler.frontierNodeIds,
+				maxRuntimeMs: command.flags.maxRuntimeMs ?? DEFAULT_WORKFLOW_MAX_RUNTIME_MS,
 			},
 			families: families.map(family => ({
 				id: family.id,

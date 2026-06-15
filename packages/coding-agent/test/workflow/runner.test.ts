@@ -472,6 +472,59 @@ edges: []
 		]);
 	});
 
+	it("checkpoints lifecycle attempts when max runtime elapses", async () => {
+		const host = createHost();
+		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
+		const runtimeElapsed = Promise.withResolvers<void>();
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async input => {
+				input.signal?.addEventListener("abort", () => runtimeElapsed.resolve(), { once: true });
+				await runtimeElapsed.promise;
+				throw new Error(input.signal?.reason ?? "workflow max runtime elapsed");
+			},
+			runReviewNode: async () => ({ summary: "review should not run", verdict: "finish" }),
+		};
+
+		const result = await runWorkflow({
+			host,
+			definition,
+			runId: "run-max-runtime",
+			startNodeId: "build",
+			runtimeHost,
+			maxRuntimeMs: 1,
+			lifecycle: {
+				familyId: "family-max-runtime",
+				attemptId: "attempt-max-runtime-1",
+				freeze: createFreeze("flowfreeze:max-runtime", definition),
+				runtimeBindingSnapshot: binding("binding-max-runtime"),
+			},
+		});
+
+		expect(result.scheduler.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "aborted"],
+		]);
+		const families = reconstructWorkflowFamilies(host.getBranch());
+		expect(families[0]?.attempts.map(attempt => [attempt.id, attempt.status, attempt.error])).toEqual([
+			["attempt-max-runtime-1", "stopped", undefined],
+		]);
+		expect(families[0]?.attempts[0]?.activations[0]).toMatchObject({
+			nodeId: "build",
+			status: "aborted",
+			reason: "workflow max runtime elapsed after 1ms",
+		});
+		expect(families[0]?.checkpoints).toMatchObject([
+			{
+				id: "attempt-max-runtime-1:checkpoint-1",
+				attemptId: "attempt-max-runtime-1",
+				completedActivationIds: [],
+				abortedActivationIds: ["activation-1"],
+				frontierNodeIds: ["build"],
+				state: {},
+				sourceMapping: { build: "build" },
+			},
+		]);
+	});
+
 	it("uses approved change request mappings when checkpointing activation-limited attempts", async () => {
 		const host = createHost();
 		const definition = parseWorkflowDefinition(source, { sourcePath: "workflow.yml" });
