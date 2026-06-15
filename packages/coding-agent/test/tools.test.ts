@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -268,6 +268,13 @@ describe("Coding Agent Tools", () => {
 	let searchTool: SearchTool;
 	let findTool: FindTool;
 	let originalEditVariant: string | undefined;
+
+	beforeAll(async () => {
+		// Warm the process-global shell snapshot + persistent session once. The
+		// first real bash command otherwise folds ~40ms of one-time shell setup
+		// into its own measured body time; this hoists it out of every test.
+		await new BashTool(createTestToolSession(os.tmpdir())).execute("warm-shell", { command: "true" });
+	});
 
 	beforeEach(() => {
 		// Force replace mode for edit tool tests using old_text/new_text
@@ -1288,7 +1295,7 @@ function b() {
 			const updates: string[] = [];
 			const result = await bashTool.execute(
 				"test-call-8-stream",
-				{ command: "for i in 1 2 3; do echo $i; sleep 0.1; done" },
+				{ command: "printf '1\\n'; sleep 0.03; printf '2\\n3\\n'" },
 				undefined,
 				update => {
 					const text = update.content?.find(c => c.type === "text")?.text ?? "";
@@ -1313,7 +1320,10 @@ function b() {
 
 		it("should write truncated output to artifacts", async () => {
 			const result = await bashTool.execute("test-call-8-artifact", {
-				command: "printf 'a%.0s' {1..60000}",
+				// A single line past the 768-byte column cap is the minimal output
+				// that trips truncation + artifact spill; the old 60K-arg brace
+				// expansion paid ~60ms of shell time to prove the same path.
+				command: "printf 'a%.0s' {1..2000}",
 			});
 
 			const artifactId = result.details?.meta?.truncation?.artifactId;
@@ -1390,7 +1400,7 @@ function b() {
 			);
 
 			const result = await autoBackgroundBashTool.execute("test-call-9-auto-running", {
-				command: "printf 'start\\n'; sleep 0.05; printf 'done\\n'",
+				command: "printf 'start\\n'; sleep 0.03; printf 'done\\n'",
 			});
 
 			expect(result.details?.async?.state).toBe("running");
@@ -1435,18 +1445,19 @@ function b() {
 				),
 			);
 			// Drive the effective timeout via the production clamp seam so the
-			// backgrounded job times out in ~0.5s instead of a real wall-clock
-			// second. 0.5s still renders as "1 seconds" in the executor message
-			// (Math.round), so that delivery assertion is unchanged; the
-			// auto-background-on-timeout decision path is identical.
-			vi.spyOn(toolTimeouts, "clampTimeout").mockReturnValue(0.5);
+			// backgrounded job hits its timeout in ~0.1s instead of a real
+			// wall-clock second. The auto-background-on-timeout decision path is
+			// unchanged; we assert the timeout-notice prefix rather than the
+			// rounded seconds (it reads "0" here only because the seam
+			// deliberately undercuts the 1s production floor).
+			vi.spyOn(toolTimeouts, "clampTimeout").mockReturnValue(0.05);
 
 			const result = await autoBackgroundBashTool.execute("test-call-9-auto-timeout-background", {
-				command: "printf 'start\\n'; sleep 1.2; printf 'done\\n'",
+				command: "printf 'start\\n'; sleep 0.5; printf 'done\\n'",
 				timeout: 1,
 			});
 
-			expect(result.details?.timeoutSeconds).toBe(0.5);
+			expect(result.details?.timeoutSeconds).toBe(0.05);
 			expect(result.details?.async?.state).toBe("running");
 			expect(getTextOutput(result)).toContain("Background job");
 			const jobId = result.details?.async?.jobId;
@@ -1459,7 +1470,7 @@ function b() {
 			await asyncJobManager.drainDeliveries({ timeoutMs: 1 });
 			expect(deliveries).toHaveLength(1);
 			expect(deliveries[0]?.jobId).toBe(jobId);
-			expect(deliveries[0]?.text).toContain("Command timed out after 1 seconds");
+			expect(deliveries[0]?.text).toContain("Command timed out after");
 			await asyncJobManager.dispose();
 		});
 
@@ -1476,7 +1487,7 @@ function b() {
 		it("should respect timeout", async () => {
 			// Reduce the effective timeout through the production clamp seam; the
 			// real subprocess kill-on-timeout path is still exercised, just faster.
-			vi.spyOn(toolTimeouts, "clampTimeout").mockReturnValue(0.1);
+			vi.spyOn(toolTimeouts, "clampTimeout").mockReturnValue(0.05);
 			await expect(bashTool.execute("test-call-10", { command: "sleep 5", timeout: 1 })).rejects.toThrow(
 				/timed out/i,
 			);

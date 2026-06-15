@@ -60,6 +60,22 @@ const resettingSessions = new Map<string, Promise<void>>();
 // SIGILL/SIGSEGV. Callers that pass a larger per-cell budget still dominate.
 const WORKER_INIT_TIMEOUT_MS = 15_000;
 const WORKER_CLOSE_TIMEOUT_MS = 1_000;
+// Active graceful-close grace period before a worker that ack'd `close` but never
+// emitted its `close` event is force-terminated. Defaults to the production floor;
+// tests override it (and restore it) to exercise the close-timeout -> terminate
+// path without a real wall-clock wait.
+let workerCloseTimeoutMs: number = WORKER_CLOSE_TIMEOUT_MS;
+
+/**
+ * Test-only seam: override the graceful-close grace period (ms). Returns the
+ * previous value so callers can restore it. Production always uses
+ * {@link WORKER_CLOSE_TIMEOUT_MS}; never call this outside tests.
+ */
+export function setWorkerCloseTimeoutMsForTests(ms: number): number {
+	const previous = workerCloseTimeoutMs;
+	workerCloseTimeoutMs = ms;
+	return previous;
+}
 
 export async function executeInVmContext(options: {
 	sessionKey: string;
@@ -125,20 +141,26 @@ export async function disposeAllVmContexts(): Promise<void> {
 	await Promise.all(all.map(session => killSession(session, new ToolError("JS context disposed"), { force: false })));
 }
 
+/**
+ * Smoke probe: spawn the JS eval worker through the worker-host entry and prove
+ * it answers the `init` handshake on a real worker thread (not the inline
+ * fallback). Catches the silent worker-load and init-message-drop regressions
+ * that otherwise strand every cell on the init timeout in a distribution build —
+ * the failure mode that motivated `installWorkerInbox`. Wired into
+ * `omp --smoke-test` so binary / source / tarball installs all exercise it.
+ */
 export async function smokeTestJsEvalWorker({
 	timeoutMs = WORKER_INIT_TIMEOUT_MS,
 }: {
 	timeoutMs?: number;
 } = {}): Promise<void> {
 	const worker = spawnJsWorker();
-	const session: JsSession = {
-		sessionKey: "smoke",
-		worker,
-		state: "alive",
-		pending: new Map(),
-	};
+	const session: JsSession = { sessionKey: "smoke", worker, state: "alive", pending: new Map() };
 	try {
 		await initWorker(session, { cwd: process.cwd(), sessionId: "smoke" }, timeoutMs);
+		if (worker.mode !== "worker") {
+			throw new Error("JS eval worker smoke fell back to the inline worker (real worker failed to start)");
+		}
 	} finally {
 		await worker.terminate().catch(() => undefined);
 	}
@@ -450,7 +472,7 @@ function spawnJsWorker(): WorkerHandle {
 	try {
 		const hostEntry = workerHostEntry();
 		const worker = hostEntry
-			? new Worker(hostEntry, { type: "module", argv: ["__omp_js_eval_worker"] })
+			? new Worker(hostEntry, { type: "module", argv: ["__omp_worker_js_eval"] })
 			: new Worker(new URL("./worker-entry.ts", import.meta.url).href, { type: "module" });
 		return wrapBunWorker(worker);
 	} catch (err) {
@@ -511,7 +533,7 @@ function wrapBunWorker(worker: Worker): WorkerHandle {
 				finishIfClosed();
 			});
 			worker.addEventListener("close", onClose);
-			timeout = setTimeout(() => finish(false), WORKER_CLOSE_TIMEOUT_MS);
+			timeout = setTimeout(() => finish(false), workerCloseTimeoutMs);
 			worker.postMessage({ type: "close" } satisfies WorkerInbound);
 			return await closed;
 		},
@@ -576,7 +598,7 @@ function spawnInlineWorker(): WorkerHandle {
 				if (msg.type === "closed") finish(true);
 			});
 			this.send({ type: "close" });
-			timeout = setTimeout(() => finish(false), WORKER_CLOSE_TIMEOUT_MS);
+			timeout = setTimeout(() => finish(false), workerCloseTimeoutMs);
 			return await closed;
 		},
 		async terminate() {
