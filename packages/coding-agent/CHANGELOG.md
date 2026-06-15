@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Changed the workflow dashboard to render Flow Lens and Live Workbench as responsive TUI panels, tightened default node boxes, and added loopback direction arrows so long-running workflow structure is easier to read at a glance.
 - Changed the workflow graph TUI dashboard to use a progress summary, a wide-terminal inspector pane, compact loop/branch flow-map hints, and anchored graph layouts so long-running workflow runs are easier to monitor and intervene in.
 - Changed the workflow graph TUI monitor into a resident Workflow Dashboard with a concise status strip, a responsive Flow Lens, and a Live Workbench for focused agents, recent output, and intervention controls.
 

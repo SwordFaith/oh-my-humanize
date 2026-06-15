@@ -127,8 +127,11 @@ describe("workflow graph view rendering", () => {
 		expect(loopColumn).toBeDefined();
 		expect(loopCloseIndex).toBeGreaterThan(loopLineIndex);
 		for (let index = loopLineIndex + 1; index < loopCloseIndex; index += 1) {
-			expect(charAtVisibleColumn(diagram[index]!, loopColumn!)).toBe("│");
+			const connector = charAtVisibleColumn(diagram[index]!, loopColumn!);
+			expect(connector).toBeDefined();
+			expect(["│", "▲"]).toContain(connector!);
 		}
+		expect(rendered).toContain("▲");
 		expect(rendered).toContain("when verdict is retry; back to build");
 		expect(rendered).not.toContain("review back to build");
 		expect(rendered).not.toContain("loopbacks");
@@ -1587,6 +1590,8 @@ describe("workflow graph view rendering", () => {
 		const text = stripAnsi(component.render(120).join("\n"));
 
 		expect(text).toContain("Workflow Dashboard");
+		expect(text).toContain("╭─ Flow Lens");
+		expect(text).toContain("╭─ Live Workbench");
 		expect(text).toContain("Flow Lens");
 		expect(text).toContain("Live Workbench");
 		expect(text).toContain("Flow: branch points 1 / loops 1 · 3 nodes");
@@ -1715,6 +1720,9 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain("Progress:");
 		expect(text).toContain("Flow Lens");
 		expect(text).toContain("Live Workbench");
+		expect(text).toContain("╭─ Flow Lens");
+		expect(text).toContain("╭─ Live Workbench");
+		expect(text).toContain("Path");
 		expect(text).toContain("Focus");
 		expect(text).toContain("On-flight");
 		expect(text).toContain("Recent output");
@@ -1872,6 +1880,15 @@ describe("workflow graph view rendering", () => {
 		expect(mediumText).toContain("Flow Lens");
 		expect(mediumText).toContain("[○ plan] ─▶ [○ inspect] ─▶ [○ build]");
 
+		const tallLines = new WorkflowGraphComponent(view, { refreshMs: 0, heightProvider: () => 48 }).render(156);
+		const tallText = stripAnsi(tallLines.join("\n"));
+
+		expect(tallLines.length).toBeGreaterThan(42);
+		expect(tallLines.length).toBeLessThanOrEqual(48);
+		expect(tallText).toContain("Loops:");
+		expect(tallText).toContain("Branches:");
+		expect(tallText).not.toContain("workflow graph rows hidden");
+
 		const tinyLines = new WorkflowGraphComponent(view, { refreshMs: 0, heightProvider: () => 10 }).render(96);
 		const tinyText = stripAnsi(tinyLines.join("\n"));
 
@@ -1888,7 +1905,8 @@ describe("workflow graph view rendering", () => {
 
 		expect(narrowLines.length).toBeLessThanOrEqual(30);
 		expect(hiddenMarkerIndex).toBeGreaterThan(-1);
-		expect(beforeHiddenMarker).not.toMatch(/[│║].*(runs \d+|Reviewer|Builder|frontier|running|pending|completed)/u);
+		expect(beforeHiddenMarker).not.toMatch(/[┌└║]/u);
+		expect(beforeHiddenMarker).not.toContain("runs ");
 	});
 
 	it("renders selected workflow routes in the live TUI graph component", async () => {

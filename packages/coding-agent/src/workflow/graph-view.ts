@@ -194,9 +194,9 @@ export interface WorkflowGraphActiveAgentRetryState {
 const WORKFLOW_DETAIL_PREVIEW_CHARS = 180;
 const WORKFLOW_RECENT_OUTPUT_LINES = 4;
 const WORKFLOW_RECENT_OUTPUT_PER_AGENT = 2;
-const MIN_NODE_WIDTH = 27;
+const MIN_NODE_WIDTH = 23;
 const DEFAULT_NODE_WIDTH = 43;
-const MAX_NODE_WIDTH = 57;
+const MAX_NODE_WIDTH = 41;
 const NODE_GAP_WIDTH = 3;
 const LOOP_RAIL_GAP_WIDTH = 3;
 const LOOP_RAIL_STEP_WIDTH = 4;
@@ -679,6 +679,15 @@ function drawWorkflowGraphLoopbackPath(lines: string[], path: WorkflowGraphLoopb
 	for (let lineIndex = topLine + 1; lineIndex < bottomLine; lineIndex += 1) {
 		drawWorkflowGraphConnectorAtColumn(lines, lineIndex, path.railColumn, { up: true, down: true });
 	}
+	const arrowLine = sourceGoesUp ? path.targetLine + 1 : path.targetLine - 1;
+	if (arrowLine > topLine && arrowLine < bottomLine) {
+		drawWorkflowGraphConnectorAtColumn(
+			lines,
+			arrowLine,
+			path.railColumn,
+			sourceGoesUp ? { up: true, down: true, arrowUp: true } : { up: true, down: true, arrowDown: true },
+		);
+	}
 	drawWorkflowGraphLoopBranch(lines, path.sourceLine, path.sourceRight, path.railColumn);
 	drawWorkflowGraphConnectorAtColumn(
 		lines,
@@ -719,7 +728,8 @@ function drawWorkflowGraphConnectorAtColumn(
 		down: existing.down || directions.down === true,
 		left: existing.left || directions.left === true,
 		right: existing.right || directions.right === true,
-		arrowDown: existing.arrowDown,
+		arrowDown: existing.arrowDown || directions.arrowDown === true,
+		arrowUp: existing.arrowUp || directions.arrowUp === true,
 		doubleVertical: existing.doubleVertical,
 	};
 	lines[lineIndex] = putWorkflowGraphTextAtColumn(
@@ -739,10 +749,23 @@ function workflowGraphCharAtColumn(line: string, column: number): string | undef
 }
 
 function workflowGraphConnectorCellFromChar(char: string | undefined): WorkflowGraphConnectorCell {
-	const cell: WorkflowGraphConnectorCell = { up: false, down: false, left: false, right: false, arrowDown: false };
+	const cell: WorkflowGraphConnectorCell = {
+		up: false,
+		down: false,
+		left: false,
+		right: false,
+		arrowDown: false,
+		arrowUp: false,
+	};
 	switch (char) {
+		case "▲":
+			cell.up = true;
+			cell.down = true;
+			cell.arrowUp = true;
+			break;
 		case "▼":
 			cell.up = true;
+			cell.down = true;
 			cell.arrowDown = true;
 			break;
 		case "│":
@@ -841,6 +864,8 @@ function workflowGraphConnectorCellFromChar(char: string | undefined): WorkflowG
 }
 
 function workflowGraphConnectorCellToChar(cell: WorkflowGraphConnectorCell, roundedCorner: boolean): string {
+	if (cell.arrowUp) return "▲";
+	if (cell.arrowDown) return "▼";
 	if (cell.doubleVertical === true && cell.up && cell.down) {
 		if (cell.left && cell.right) return "╫";
 		if (cell.right) return "╟";
@@ -891,6 +916,7 @@ interface ConnectorCell {
 	left: boolean;
 	right: boolean;
 	arrowDown: boolean;
+	arrowUp: boolean;
 }
 
 type ConnectorDirection = "up" | "down" | "left" | "right";
@@ -905,6 +931,7 @@ function createConnectorGrid(rows: number, width: number): ConnectorGrid {
 			left: false,
 			right: false,
 			arrowDown: false,
+			arrowUp: false,
 		})),
 	);
 }
@@ -949,6 +976,7 @@ function connectorRowToString(row: ConnectorCell[]): string {
 }
 
 function connectorCellToChar(cell: ConnectorCell): string {
+	if (cell.arrowUp) return "▲";
 	if (cell.arrowDown) return "▼";
 	const { up, down, left, right } = cell;
 	if (up && down && left && right) return "┼";
