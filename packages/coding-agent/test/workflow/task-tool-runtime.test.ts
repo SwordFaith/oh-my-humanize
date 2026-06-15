@@ -100,6 +100,57 @@ describe("workflow task tool runtime adapter", () => {
 		});
 	});
 
+	it("preserves the final successful yield data for workflow agent nodes", async () => {
+		const taskTool = {
+			execute: async (): Promise<AgentToolResult<TaskToolDetails>> => ({
+				content: [{ type: "text", text: "task tool completed" }],
+				details: {
+					projectAgentsDir: null,
+					totalDurationMs: 12,
+					results: [
+						{
+							index: 0,
+							id: "build",
+							agent: "task",
+							agentSource: "project",
+							task: "Implement the workflow feature.",
+							assignment: "Implement the workflow feature.",
+							description: "Builder · Build",
+							exitCode: 0,
+							output: "agent completed",
+							stderr: "",
+							truncated: false,
+							durationMs: 12,
+							tokens: 0,
+							requests: 1,
+							extractedToolData: {
+								yield: [
+									{ data: { status: "draft" }, status: "success" },
+									{
+										data: {
+											status: "verified",
+											verification: [{ command: "bun test", result: "pass" }],
+										},
+										status: "success",
+									},
+								],
+							},
+						},
+					],
+				},
+			}),
+		};
+		vi.spyOn(taskModule.TaskTool, "create").mockResolvedValue(taskTool as unknown as taskModule.TaskTool);
+		const runner = createTaskToolAgentRunner(createToolSession());
+
+		const result = await runner(createRequest());
+
+		expect(result.data).toEqual({
+			status: "verified",
+			verification: [{ command: "bun test", result: "pass" }],
+		});
+	});
+
 	it("keeps workflow task execution synchronous when parent async tasks are enabled", async () => {
 		const parentSettings = Settings.isolated({ "async.enabled": true });
 		let capturedSession: ToolSession | undefined;

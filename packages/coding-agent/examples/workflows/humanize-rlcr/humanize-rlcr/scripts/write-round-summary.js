@@ -22,6 +22,21 @@ const implementationOutput = parentOutputs.at(-1) ?? {};
 const implementationSummary =
 	typeof implementationOutput.summary === "string" ? implementationOutput.summary : "implementation round completed";
 const boundedImplementationSummary = implementationSummary.slice(0, implementationSummaryLimit);
+const implementationData =
+	implementationOutput.data && typeof implementationOutput.data === "object" && !Array.isArray(implementationOutput.data)
+		? implementationOutput.data
+		: {};
+const evidenceValueLimit = 4000;
+const boundedEvidenceValue = (value, fallback) => {
+	if (value === undefined) return fallback;
+	const serialized = JSON.stringify(value);
+	if (serialized === undefined) return fallback;
+	if (serialized.length <= evidenceValueLimit) return value;
+	return {
+		truncated: true,
+		preview: serialized.slice(0, evidenceValueLimit),
+	};
+};
 const roundNumber = currentRound + 1;
 const entry = {
 	round: roundNumber,
@@ -30,9 +45,14 @@ const entry = {
 	implementationActivationIds: parents,
 	implementationSummary: boundedImplementationSummary,
 	evidence: {
-		negativeTests: "required-before-complete",
-		verification: "required-before-complete",
-		acceptanceDelta: "reviewer-must-check",
+		status: boundedEvidenceValue(implementationData.status, "not-reported"),
+		changedFiles: boundedEvidenceValue(implementationData.changedFiles, "not-reported"),
+		negativeTests: boundedEvidenceValue(
+			implementationData.negativeAndRegressionRiskScenarios,
+			"required-before-complete",
+		),
+		verification: boundedEvidenceValue(implementationData.verification, "required-before-complete"),
+		acceptanceDelta: boundedEvidenceValue(implementationData.acceptanceCriteriaEvidence, "reviewer-must-check"),
 		longRunningMinimum: longRunningRequested ? (minimumSatisfied ? "satisfied" : "not-yet-satisfied") : "not-requested",
 	},
 };

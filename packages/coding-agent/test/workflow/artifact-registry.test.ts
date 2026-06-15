@@ -208,6 +208,88 @@ describe("workflow artifact registry", () => {
 		expect(expectRecord(humanize.final, "humanize final").rounds).toBe(2);
 	});
 
+	it("carries bundled Humanize RLCR implementation yield evidence into summary review prompts", async () => {
+		const spec = await resolveWorkflowFlowSpec("humanize-rlcr", { cwd: process.cwd(), flowDirs: [] });
+		const artifact = await loadWorkflowArtifact(spec.path);
+		const freeze = await freezeWorkflowArtifact(artifact);
+		const taskDir = await createTempDir();
+		await Bun.write(
+			path.join(taskDir, "task.md"),
+			[
+				"# Humanize RLCR evidence propagation",
+				"",
+				"Goal: implement a change and let summary review judge concrete verification evidence.",
+				"Acceptance: the reviewer sees the observed command result instead of evidence placeholders.",
+			].join("\n"),
+		);
+		const host = createRunHost();
+		const summaryReviewAssignments: string[] = [];
+
+		const result = await runWorkflow({
+			host,
+			definition: freeze.definition,
+			runId: "humanize-yield-evidence",
+			startNodeId: "planCompliancePrecheck",
+			runtimeHost: createSessionWorkflowRuntimeHost({
+				cwd: taskDir,
+				runEvalScript: request => runBunFunctionWorkflowScript(taskDir, request),
+				runHumanInput: async () => ({
+					response: "proceed: this is a bounded smoke validation for evidence propagation.",
+				}),
+				runAgentTask: async request => {
+					if (request.nodeId === "implementRound") {
+						return {
+							exitCode: 0,
+							output: JSON.stringify({
+								status: "implementation_verified_not_long_running_final",
+								summary: "implemented evaluator and tests",
+								verification: [{ command: "bun test", result: "pass" }],
+								negativeAndRegressionRiskScenarios: ["division by zero throws"],
+								acceptanceCriteriaEvidence: [
+									{
+										criterion: "verify locally",
+										evidence: "bun test passed",
+									},
+								],
+							}),
+							data: {
+								status: "implementation_verified_not_long_running_final",
+								summary: "implemented evaluator and tests",
+								verification: [{ command: "bun test", result: "pass" }],
+								negativeAndRegressionRiskScenarios: ["division by zero throws"],
+								acceptanceCriteriaEvidence: [
+									{
+										criterion: "verify locally",
+										evidence: "bun test passed",
+									},
+								],
+							},
+						};
+					}
+					if (request.nodeId === "codexSummaryReview") {
+						summaryReviewAssignments.push(request.task.assignment);
+						return {
+							exitCode: 0,
+							output: "COMPLETE\nObserved verification and negative-test evidence are present.",
+						};
+					}
+					return { exitCode: 0, output: `completed ${request.nodeId}` };
+				},
+			}),
+			packageRoot: artifact.resourceDir,
+			frozenResources: freeze.resourceSnapshots,
+			maxActivations: 7,
+		});
+
+		expect(result.scheduler.activations.find(activation => activation.status === "failed")?.error).toBeUndefined();
+		expect(summaryReviewAssignments).toHaveLength(1);
+		const summaryReviewAssignment = summaryReviewAssignments[0] ?? "";
+		expect(summaryReviewAssignment).toContain('"command":"bun test"');
+		expect(summaryReviewAssignment).toContain("division by zero throws");
+		expect(summaryReviewAssignment).not.toContain('"verification":"required-before-complete"');
+		expect(summaryReviewAssignment).not.toContain('"negativeTests":"required-before-complete"');
+	});
+
 	it("routes bundled Humanize RLCR through a hold loop after implementation completes before the long-running gate is satisfied", async () => {
 		const spec = await resolveWorkflowFlowSpec("humanize-rlcr", { cwd: process.cwd(), flowDirs: [] });
 		const artifact = await loadWorkflowArtifact(spec.path);

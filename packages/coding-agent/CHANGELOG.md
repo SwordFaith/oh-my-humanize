@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Fixed workflow agent nodes so structured subagent `yield` data is preserved
+  as activation data, allowing the built-in `humanize-rlcr` summary reviewer to
+  see concrete verification and negative-test evidence instead of placeholder
+  fields.
 - Fixed session materialization so workflow events appended while a background
   run is starting or stopping remain on the visible JSONL session file instead
   of being written to a replaced file handle.

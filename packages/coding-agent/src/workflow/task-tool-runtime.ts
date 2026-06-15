@@ -34,10 +34,29 @@ export function createTaskToolAgentRunner(toolSession: ToolSession): WorkflowAge
 			agentId: taskResult.id,
 		};
 		if (taskResult.error !== undefined) output.error = taskResult.error;
+		const data = finalSuccessfulYieldData(taskResult.extractedToolData);
+		if (data !== undefined) output.data = data;
 		if (taskResult.outputPath !== undefined) output.outputPath = taskResult.outputPath;
 		if (taskResult.sessionFile !== undefined) output.sessionFile = taskResult.sessionFile;
 		return output;
 	};
+}
+
+function finalSuccessfulYieldData(
+	extractedToolData: Record<string, unknown[]> | undefined,
+): Record<string, unknown> | undefined {
+	const yieldItems = extractedToolData?.yield;
+	if (!Array.isArray(yieldItems)) return undefined;
+	for (let index = yieldItems.length - 1; index >= 0; index -= 1) {
+		const item = yieldItems[index];
+		if (!isRecord(item) || item.status === "aborted") continue;
+		if (isRecord(item.data)) return item.data;
+	}
+	return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function synchronousTaskToolSession(toolSession: ToolSession): Promise<ToolSession> {

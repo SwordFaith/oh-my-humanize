@@ -380,6 +380,51 @@ describe("session workflow runtime host", () => {
 		});
 	});
 
+	it("preserves structured yield data from agent task results", async () => {
+		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
+		const node = definition.nodes.find(candidate => candidate.id === "build");
+		if (!node) throw new Error("expected build node");
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runAgentTask: async () => ({
+				exitCode: 0,
+				output: JSON.stringify(
+					{
+						status: "implementation_verified_not_long_running_final",
+						summary: "implemented evaluator and tests",
+						verification: [{ command: "bun test", result: "pass" }],
+					},
+					null,
+					2,
+				),
+				agentId: "build",
+				data: {
+					status: "implementation_verified_not_long_running_final",
+					summary: "implemented evaluator and tests",
+					verification: [{ command: "bun test", result: "pass" }],
+				},
+			}),
+		});
+
+		const output = await host.runAgentNode?.({
+			node,
+			activation: activation(node.id),
+			agent: "task",
+			prompt: node.prompt,
+			model: node.model,
+		});
+
+		expect(output).toEqual({
+			summary: "implemented evaluator and tests",
+			data: {
+				status: "implementation_verified_not_long_running_final",
+				summary: "implemented evaluator and tests",
+				verification: [{ command: "bun test", result: "pass" }],
+			},
+			artifacts: ["agent-output://build"],
+		});
+	});
+
 	it("treats agent JSON with object summary as unstructured task output", async () => {
 		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
 		const node = definition.nodes.find(candidate => candidate.id === "build");

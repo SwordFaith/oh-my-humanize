@@ -42,6 +42,7 @@ export interface WorkflowAgentTaskResult {
 	output: string;
 	stderr?: string;
 	error?: string;
+	data?: Record<string, unknown>;
 	agentId?: string;
 	outputPath?: string;
 	sessionFile?: string;
@@ -355,6 +356,20 @@ function activationOutputFromTaskResult(nodeId: string, result: WorkflowAgentTas
 		throw new WorkflowNodeRuntimeError(`workflow agent node "${nodeId}" failed: ${reason}`);
 	}
 	const artifacts = taskResultArtifactReferences(result);
+	if (result.data !== undefined) {
+		const summarySource =
+			typeof result.data.summary === "string" && result.data.summary.trim().length > 0
+				? result.data.summary
+				: result.output;
+		const boundedSummary = boundWorkflowSummary(summarySource, `agent node "${nodeId}" completed`);
+		return mergeActivationArtifacts(
+			{
+				summary: boundedSummary.summary,
+				data: result.data,
+			},
+			artifacts,
+		);
+	}
 	const structured = parseStructuredActivationOutput(result.output, { allowObjectSummaryFallback: true });
 	if (structured) {
 		return mergeActivationArtifacts(structured, artifacts);
