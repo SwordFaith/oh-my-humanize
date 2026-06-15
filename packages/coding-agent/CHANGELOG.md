@@ -4,29 +4,16 @@
 
 ### Changed
 
-- Changed the workflow dashboard legend to label the `◇` node state as `frontier`, matching checkpoint/resume semantics instead of the vaguer `ready`.
-- Changed the workflow dashboard workbench title to reserve `Live Workbench` for actual running work, using `Operator Deck` for stopped or checkpoint-frontier dashboards.
-- Changed workflow dashboard progress and node-pulse summaries to report checkpoint frontier nodes separately from live/running work, avoiding misleading `active` or `live` labels when no node is on-flight.
-- Changed the workflow dashboard Operator rail to promote restart when a stopped or checkpointed frontier can safely resume, keeping the next lifecycle action visible beside focus and change controls.
-- Changed workflow dashboard Operator rail labels so live agent targets use `monitor`, while non-live frontier or focused nodes use `focus` instead of implying an Agent Hub monitor target exists.
-- Changed compact workflow dashboard clipping to preserve the Operator rail and collapse it to one action row, so monitor, Agent Hub, steer, interrupt, stop, and change affordances remain visible on short terminals.
-- Changed ultrawide workflow dashboard layout to reserve more width for the Operator Deck, so focused activity, recent output, routes, and change summaries remain readable while the Flow Lens still owns the graph.
-- Changed the workflow Operator Deck focused-node summary to omit watch, steer, and interrupt control lines when the Operator rail already exposes those actions, keeping the focus panel on node context and output.
-- Changed the workflow Operator Deck to show a compact Operator rail above node details, keeping the selected live agent, Agent Hub handoff, steering, interrupt, stop, and change actions visible before deeper monitoring sections.
-- Changed the workflow Operator Deck to surface live workflow agents as switchable transcript-monitor tabs before on-flight details, making parallel workflow agents feel like focusable subagents.
-- Changed workflow graph condition labels in the dashboard diagram to render as compact decision chips such as `if CONTINUE`, while keeping full conditions in route/review detail text.
-- Changed the workflow dashboard topology summary to describe independent root nodes as parallel roots instead of calling the flow linear.
-- Changed the workflow dashboard compact profile for 30-line terminals so it reduces graph detail before falling back to whole-dashboard clipping.
-- Changed compact workflow dashboard status rows to hide bare model identifiers by default, keeping the monitor focused on node progress and operator action.
-- Changed the workflow dashboard wide canvas to use available terminal width for loop diagrams, add a compact Node pulse lane in the Operator Deck, and render operator actions as command-free controls.
-- Changed the workflow dashboard into a wider operator flight deck with equal-height Flow Lens/Operator Deck panels, richer live-agent context, human-facing gate labels, and responsive wide-screen workbench sizing.
-- Changed the workflow dashboard wide layout to spend more of the available terminal height on focused graph context, so long loop workflows show neighboring nodes instead of collapsing to a single-node lens.
-- Changed the workflow dashboard to render Flow Lens and Live Workbench as responsive TUI panels, tightened default node boxes, and added loopback direction arrows so long-running workflow structure is easier to read at a glance.
-- Changed the workflow graph TUI dashboard to use a progress summary, a wide-terminal inspector pane, compact loop/branch flow-map hints, and anchored graph layouts so long-running workflow runs are easier to monitor and intervene in.
-- Changed the workflow graph TUI monitor into a resident Workflow Dashboard with a concise status strip, a responsive Flow Lens, and a Live Workbench for focused agents, recent output, and intervention controls.
+- Changed the workflow graph TUI monitor into a resident Workflow Dashboard with a concise status strip, responsive Flow Lens, and Operator Deck for focused agents, recent output, and intervention controls.
+- Changed the Flow Lens to render directed graph diagrams with loopback rails, compact branch/loop hints, decision chips such as `if CONTINUE`, node run counts, and width-aware layouts.
+- Changed the Operator Deck to keep a compact action rail above details, exposing monitor/focus, Agent Hub, steer, interrupt, stop, restart, and change controls before deeper context.
+- Changed live workflow agents to appear as switchable transcript-monitor tabs with recent output and node-pulse lanes, making parallel workflow agents feel like focusable subagents.
+- Changed dashboard responsive behavior for compact, wide, and ultrawide terminals so the graph and operator controls stay visible while less urgent details are clipped.
+- Changed dashboard status language to distinguish live/running work from checkpoint frontiers, using `focus`/`frontier`/`Operator Deck` labels when no Agent Hub target is on-flight.
 
 ### Fixed
 
+- Fixed workflow dashboard monitor targeting so stale focused-agent ids without a matching active workflow agent no longer advertise Agent Hub, hub, or steer controls.
 - Fixed bundled practical workflow artifacts that still declared the non-canonical `shell` tool capability, so runtime binding diagnostics use the canonical `bash` capability that the workflow host can resolve.
 - Fixed workflow dashboard height clipping so the hidden-rows marker preserves the outer TUI frame and renders as a dashboard divider instead of looking like broken nested panel content.
 - Fixed workflow monitor activation in the TUI so the welcome/onboarding panel is removed from the current viewport when a workflow dashboard becomes active.

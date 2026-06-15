@@ -1627,6 +1627,27 @@ describe("workflow graph view rendering", () => {
 		expect(view.actions.join("\n")).not.toContain("Focused prompt");
 	});
 
+	it("does not treat stale focus agent ids as live monitor targets", async () => {
+		const theme = await getThemeByName("dark");
+		if (!theme) throw new Error("dark theme fixture is required");
+		setThemeInstance(theme);
+		const view = singleNodeView("running");
+		view.focus = {
+			nodeId: "build",
+			label: "Build",
+			role: "Program",
+			status: "running",
+			focusAgentId: "stale-agent",
+		};
+
+		const text = stripAnsi(new WorkflowGraphComponent(view, { refreshMs: 0 }).render(120).join("\n"));
+
+		expect(text).toContain("◎ focus build");
+		expect(text).not.toContain("◉ monitor stale-agent");
+		expect(text).not.toContain("◆ hub");
+		expect(text).not.toContain("↵ steer");
+	});
+
 	it("renders the live TUI graph as a resident workflow dashboard before the diagram", async () => {
 		const theme = await getThemeByName("dark");
 		if (!theme) throw new Error("dark theme fixture is required");

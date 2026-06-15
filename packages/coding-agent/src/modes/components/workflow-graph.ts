@@ -99,6 +99,25 @@ export class WorkflowGraphComponent implements Component, NativeScrollbackLiveRe
 }
 
 type WorkflowGraphDensity = "full" | "compact";
+type WorkflowGraphActionKind = "refresh" | "stop" | "restart" | "interrupt" | "agentHub" | "steer" | "watch" | "change";
+
+interface WorkflowGraphActionMeta {
+	kind: WorkflowGraphActionKind;
+	pattern: RegExp;
+	glyph: string;
+	railToken?: string;
+}
+
+const WORKFLOW_GRAPH_ACTION_META: readonly WorkflowGraphActionMeta[] = [
+	{ kind: "refresh", pattern: /^Refresh\b/u, glyph: "⟳" },
+	{ kind: "stop", pattern: /^Stop\b/u, glyph: "■", railToken: "■ stop" },
+	{ kind: "restart", pattern: /^Restart\b/u, glyph: "▶", railToken: "▶ restart" },
+	{ kind: "interrupt", pattern: /^Interrupt\b/u, glyph: "!", railToken: "! interrupt" },
+	{ kind: "agentHub", pattern: /^Open Agent Hub\b/u, glyph: "⌘" },
+	{ kind: "steer", pattern: /^Steer\b/u, glyph: "↵" },
+	{ kind: "watch", pattern: /^Watch\b/u, glyph: "◉" },
+	{ kind: "change", pattern: /^(?:Propose change|Request change)\b/u, glyph: "±", railToken: "± change" },
+];
 
 interface WorkflowGraphCompactProfile {
 	overviewLines: number;
@@ -129,7 +148,9 @@ function renderWorkflowGraphBlock(
 	const full = renderWorkflowGraphBlockAtDensity(view, safeWidth, "full", undefined);
 	if (heightBudget === undefined || full.length <= heightBudget) return full;
 	const compact = renderWorkflowGraphBlockAtDensity(view, safeWidth, "compact", heightBudget);
-	return compact.length <= heightBudget ? compact : fitWorkflowGraphRowsToHeight(compact, safeWidth, heightBudget);
+	return compact.length <= heightBudget
+		? compact
+		: fitWorkflowGraphDashboardRowsToHeight(compact, safeWidth, heightBudget);
 }
 
 function renderWorkflowGraphBlockAtDensity(
@@ -501,12 +522,11 @@ function workflowGraphOperatorRailLines(
 	if (selected !== undefined) {
 		primaryTokens.push("◆ hub", "↵ steer");
 	}
+	const actionKinds = workflowGraphActionKinds(view);
 	const safetyTokens: string[] = [];
-	if (workflowGraphHasAction(view, "Interrupt")) safetyTokens.push("! interrupt");
-	if (workflowGraphHasAction(view, "Stop attempt")) safetyTokens.push("■ stop");
-	if (workflowGraphHasAction(view, "Restart")) safetyTokens.push("▶ restart");
-	if (workflowGraphHasAction(view, "Request change") || workflowGraphHasAction(view, "Propose change")) {
-		safetyTokens.push("± change");
+	for (const kind of ["interrupt", "stop", "restart", "change"] satisfies WorkflowGraphActionKind[]) {
+		const railToken = workflowGraphActionMeta(kind)?.railToken;
+		if (railToken !== undefined && actionKinds.has(kind)) safetyTokens.push(railToken);
 	}
 	if (density !== "full") {
 		return [[...primaryTokens, ...safetyTokens].join("  ")]
@@ -524,13 +544,26 @@ function workflowGraphOperatorRailPrimaryToken(subject: string, hasLiveAgentTarg
 }
 
 function workflowGraphSelectedAgentTarget(view: WorkflowGraphView): string | undefined {
+	const agents = view.activeAgents ?? [];
 	const focusAgentId = view.focus?.focusAgentId;
-	if (focusAgentId !== undefined) return focusAgentId;
-	return view.activeAgents?.[0]?.focusAgentId;
+	return agents.find(agent => agent.focusAgentId === focusAgentId)?.focusAgentId ?? agents[0]?.focusAgentId;
 }
 
-function workflowGraphHasAction(view: WorkflowGraphView, actionLabel: string): boolean {
-	return view.actions.some(action => action.startsWith(actionLabel));
+function workflowGraphActionKinds(view: WorkflowGraphView): ReadonlySet<WorkflowGraphActionKind> {
+	const kinds = new Set<WorkflowGraphActionKind>();
+	for (const action of view.actions) {
+		const kind = workflowGraphActionKind(compactWorkflowGraphControl(action));
+		if (kind !== undefined) kinds.add(kind);
+	}
+	return kinds;
+}
+
+function workflowGraphActionKind(label: string): WorkflowGraphActionKind | undefined {
+	return WORKFLOW_GRAPH_ACTION_META.find(meta => meta.pattern.test(label))?.kind;
+}
+
+function workflowGraphActionMeta(kind: WorkflowGraphActionKind): WorkflowGraphActionMeta | undefined {
+	return WORKFLOW_GRAPH_ACTION_META.find(meta => meta.kind === kind);
 }
 
 function workflowGraphWorkbenchGroup(
@@ -1245,13 +1278,13 @@ function workflowGraphIsBackEdge(edge: { from: string; to: string }, order: Read
 	return target <= source;
 }
 
-function fitWorkflowGraphRowsToHeight(lines: string[], width: number, heightBudget: number): string[] {
+function fitWorkflowGraphDashboardRowsToHeight(lines: string[], width: number, heightBudget: number): string[] {
 	if (lines.length <= heightBudget) return lines;
 	const safeHeight = Math.max(1, heightBudget);
-	if (safeHeight === 1) return [truncateToWidth("... workflow graph clipped ...", width)];
-	let headRows = Math.max(1, Math.floor((safeHeight - 1) / 2));
-	let tailRows = Math.max(1, safeHeight - headRows - 1);
+	if (safeHeight === 1) return fitWorkflowGraphRowsToHeight(lines, width, heightBudget);
 	const actionAnchor = workflowGraphRowsActionAnchor(lines);
+	const plainRows = fitWorkflowGraphRowsToHeight(lines, width, heightBudget);
+	const tailRows = workflowGraphFittedTailRows(safeHeight);
 	const tailStart = lines.length - tailRows;
 	if (actionAnchor !== undefined && actionAnchor < tailStart) {
 		const actionEnd = workflowGraphRowsActionAnchorEnd(lines, actionAnchor);
@@ -1260,21 +1293,41 @@ function fitWorkflowGraphRowsToHeight(lines: string[], width: number, heightBudg
 		const minimumHeadRows = diagramAnchor === undefined ? 1 : diagramAnchor + 1;
 		const remainingRows = safeHeight - actionRows - 1;
 		if (remainingRows >= 2 && minimumHeadRows < actionAnchor) {
-			headRows = Math.min(Math.max(minimumHeadRows, Math.floor(remainingRows / 2)), remainingRows - 1);
-			tailRows = remainingRows - headRows;
-			const anchoredTailStart = Math.max(actionEnd, lines.length - tailRows);
+			const anchoredHeadRows = Math.min(Math.max(minimumHeadRows, Math.floor(remainingRows / 2)), remainingRows - 1);
+			const anchoredTailRows = remainingRows - anchoredHeadRows;
+			const anchoredTailStart = Math.max(actionEnd, lines.length - anchoredTailRows);
 			const tail = lines.slice(anchoredTailStart);
-			const hidden = Math.max(0, lines.length - headRows - actionRows - tail.length);
+			const hidden = Math.max(0, lines.length - anchoredHeadRows - actionRows - tail.length);
 			const marker = renderWorkflowGraphClippedRowsMarker(hidden, width);
-			return [...lines.slice(0, headRows), marker, ...lines.slice(actionAnchor, actionEnd), ...tail];
+			return [...lines.slice(0, anchoredHeadRows), marker, ...lines.slice(actionAnchor, actionEnd), ...tail];
 		}
 		const anchoredTailRows = lines.length - actionAnchor;
-		tailRows = Math.min(anchoredTailRows, Math.max(1, safeHeight - 2));
-		headRows = Math.max(1, safeHeight - tailRows - 1);
+		const anchoredTailCount = Math.min(anchoredTailRows, Math.max(1, safeHeight - 2));
+		const anchoredHeadRows = Math.max(1, safeHeight - anchoredTailCount - 1);
+		const hidden = Math.max(0, lines.length - anchoredHeadRows - anchoredTailCount);
+		const marker = renderWorkflowGraphClippedRowsMarker(hidden, width);
+		return [...lines.slice(0, anchoredHeadRows), marker, ...lines.slice(lines.length - anchoredTailCount)];
 	}
+	return plainRows;
+}
+
+function fitWorkflowGraphRowsToHeight(lines: string[], width: number, heightBudget: number): string[] {
+	if (lines.length <= heightBudget) return lines;
+	const safeHeight = Math.max(1, heightBudget);
+	if (safeHeight === 1) return [truncateToWidth("... workflow graph clipped ...", width)];
+	const headRows = workflowGraphFittedHeadRows(safeHeight);
+	const tailRows = workflowGraphFittedTailRows(safeHeight);
 	const hidden = Math.max(0, lines.length - headRows - tailRows);
 	const marker = renderWorkflowGraphClippedRowsMarker(hidden, width);
 	return [...lines.slice(0, headRows), marker, ...lines.slice(lines.length - tailRows)];
+}
+
+function workflowGraphFittedHeadRows(safeHeight: number): number {
+	return Math.max(1, Math.floor((safeHeight - 1) / 2));
+}
+
+function workflowGraphFittedTailRows(safeHeight: number): number {
+	return Math.max(1, safeHeight - workflowGraphFittedHeadRows(safeHeight) - 1);
 }
 
 function workflowGraphRowsActionAnchor(lines: readonly string[]): number | undefined {
@@ -1317,15 +1370,9 @@ function workflowGraphControlLines(view: WorkflowGraphView, density: WorkflowGra
 }
 
 function decorateWorkflowGraphControl(label: string): string {
-	if (/^Refresh\b/u.test(label)) return `⟳ ${label}`;
-	if (/^Stop\b/u.test(label)) return `■ ${label}`;
-	if (/^Restart\b/u.test(label)) return `▶ ${label}`;
-	if (/^Interrupt\b/u.test(label)) return `! ${label}`;
-	if (/^Open Agent Hub\b/u.test(label)) return `⌘ ${label}`;
-	if (/^Steer\b/u.test(label)) return `↵ ${label}`;
-	if (/^Watch\b/u.test(label)) return `◉ ${label}`;
-	if (/^Propose change\b/u.test(label) || /^Request change\b/u.test(label)) return `± ${label}`;
-	return `• ${label}`;
+	const kind = workflowGraphActionKind(label);
+	const glyph = kind === undefined ? "•" : (workflowGraphActionMeta(kind)?.glyph ?? "•");
+	return `${glyph} ${label}`;
 }
 
 function workflowGraphSubflowLines(view: WorkflowGraphView): string[] {
