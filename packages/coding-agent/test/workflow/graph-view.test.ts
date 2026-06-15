@@ -114,10 +114,10 @@ describe("workflow graph view rendering", () => {
 
 		const diagram = renderWorkflowGraphDiagram(view, { width: 80 });
 		const rendered = diagram.join("\n");
-		const loopCloseIndex = diagram.findIndex(line => line.includes("review back to build when verdict is retry"));
-		const loopColumn = visibleColumnsOf(diagram[loopCloseIndex] ?? "", "╰")[0];
+		const loopCloseIndex = diagram.findIndex(line => line.includes("review back to build"));
+		const loopColumn = visibleColumnsOf(diagram[loopCloseIndex] ?? "", "╯")[0];
 		const loopLineIndex = diagram.findIndex(
-			(line, index) => index < loopCloseIndex && charAtVisibleColumn(line, loopColumn ?? -1) === "╭",
+			(line, index) => index < loopCloseIndex && charAtVisibleColumn(line, loopColumn ?? -1) === "╮",
 		);
 
 		expect(loopLineIndex).toBeGreaterThan(-1);
@@ -126,8 +126,97 @@ describe("workflow graph view rendering", () => {
 		for (let index = loopLineIndex + 1; index < loopCloseIndex; index += 1) {
 			expect(charAtVisibleColumn(diagram[index]!, loopColumn!)).toBe("│");
 		}
-		expect(rendered).toContain("review back to build when verdict is retry");
+		expect(rendered).toContain("review back to build when verdict is");
 		expect(rendered).not.toContain("loopbacks");
+	});
+
+	it("draws loopback rails as connected node-to-node controls near the graph", () => {
+		const view = createView({
+			name: "connected-loop-control",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "build", type: "agent" },
+				{ id: "review", type: "review" },
+				{ id: "ship", type: "script" },
+			],
+			edges: [
+				{ from: "build", to: "review" },
+				{
+					from: "review",
+					to: "ship",
+					condition: {
+						source: 'state.releaseDecision == "finish" && state.reviewConclusion == "ship-after-long-label"',
+					},
+				},
+				{ from: "review", to: "build", condition: { source: 'state.verdict == "retry"' } },
+			],
+		});
+
+		const diagram = renderWorkflowGraphDiagram(view, { width: 96 });
+		const targetLine = diagram.find(line => line.includes("├") && line.includes("╮"));
+		const sourceLine = diagram.find(line => line.includes("├") && line.includes("╯"));
+		const targetJointColumn = visibleColumnsOf(targetLine ?? "", "├").at(-1);
+		const sourceJointColumn = visibleColumnsOf(sourceLine ?? "", "├").at(-1);
+		const targetRailColumn = visibleColumnsOf(targetLine ?? "", "╮")[0];
+		const sourceRailColumn = visibleColumnsOf(sourceLine ?? "", "╯")[0];
+
+		expect(targetJointColumn).toBeDefined();
+		expect(sourceJointColumn).toBeDefined();
+		expect(targetRailColumn).toBe(sourceRailColumn);
+		expect(targetRailColumn! - targetJointColumn!).toBeLessThanOrEqual(8);
+		expect(sourceRailColumn! - sourceJointColumn!).toBeLessThanOrEqual(8);
+		expect(targetLine).toContain("├──");
+		expect(sourceLine).toContain("├──");
+		expect(sourceLine).toContain("review back to build when verdict is");
+	});
+
+	it("keeps loop diagrams inside the requested terminal width at common sizes", () => {
+		const view = createView({
+			name: "responsive-loop-control",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "implementRound", type: "agent" },
+				{ id: "writeRoundSummary", type: "script" },
+				{ id: "codexSummaryReview", type: "review" },
+				{ id: "enterReviewPhase", type: "script" },
+				{ id: "fixReviewIssues", type: "agent" },
+				{ id: "codexCodeReview", type: "review" },
+			],
+			edges: [
+				{ from: "implementRound", to: "writeRoundSummary" },
+				{ from: "writeRoundSummary", to: "codexSummaryReview" },
+				{
+					from: "codexSummaryReview",
+					to: "implementRound",
+					condition: { source: 'outputs.codexSummaryReview.verdict != "COMPLETE"' },
+				},
+				{
+					from: "codexSummaryReview",
+					to: "enterReviewPhase",
+					condition: { source: 'outputs.codexSummaryReview.verdict == "COMPLETE"' },
+				},
+				{ from: "enterReviewPhase", to: "fixReviewIssues" },
+				{ from: "fixReviewIssues", to: "codexCodeReview" },
+				{
+					from: "codexCodeReview",
+					to: "fixReviewIssues",
+					condition: { source: 'outputs.codexCodeReview.verdict == "ISSUES"' },
+				},
+			],
+		});
+
+		for (const width of [64, 96, 132]) {
+			const diagram = renderWorkflowGraphDiagram(view, { width });
+			const tooWide = diagram.filter(line => visibleWidth(line) > width);
+			const connectedLoopLine = diagram.find(
+				line => line.includes("├") && (line.includes("╯") || line.includes("╮")),
+			);
+
+			expect(tooWide).toEqual([]);
+			expect(connectedLoopLine).toBeDefined();
+		}
 	});
 
 	it("keeps nested loop rails aligned without crossing readable labels", () => {
@@ -161,22 +250,23 @@ describe("workflow graph view rendering", () => {
 
 		const diagram = renderWorkflowGraphDiagram(view, { width: 104 });
 		const rendered = diagram.join("\n");
-		const implementRunsLine = diagram.find(line => line.includes("runs 4") && line.includes("╭"));
-		const loopColumns = visibleColumnsOf(implementRunsLine ?? "", "╭");
-		const summaryLabelLine = diagram.find(line =>
-			line.includes("summaryReview back to implement when summary verdict is CONTINUE"),
+		const implementRunsLine = diagram.find(
+			line => line.includes("runs 4") && line.includes("┬") && line.includes("╮"),
 		);
-		const codeLabelLine = diagram.find(line =>
-			line.includes("codeReview back to implement when code verdict is CONTINUE"),
-		);
+		const loopColumns = [
+			...visibleColumnsOf(implementRunsLine ?? "", "┬"),
+			...visibleColumnsOf(implementRunsLine ?? "", "╮"),
+		];
+		const summaryLabelLine = diagram.find(line => line.includes("summaryReview back to implement"));
+		const codeLabelLine = diagram.find(line => line.includes("codeReview back to implement"));
 
 		expect(loopColumns).toHaveLength(2);
-		expect(charAtVisibleColumn(summaryLabelLine ?? "", loopColumns[0]!)).toBe("╰");
+		expect(charAtVisibleColumn(summaryLabelLine ?? "", loopColumns[0]!)).toBe("╯");
 		expect(charAtVisibleColumn(summaryLabelLine ?? "", loopColumns[1]!)).toBe("│");
-		expect(charAtVisibleColumn(codeLabelLine ?? "", loopColumns[1]!)).toBe("╰");
+		expect(charAtVisibleColumn(codeLabelLine ?? "", loopColumns[1]!)).toBe("╯");
 		expect(rendered).toContain("runs 0");
 		expect(rendered).not.toContain("CONTINUE│");
-		expect(rendered).not.toContain("CONTINUE╰");
+		expect(rendered).not.toContain("CONTINUE╯");
 	});
 
 	it("summarizes branch, parallel, loop, join, and subflow topology for the operator cockpit", () => {
@@ -736,7 +826,7 @@ describe("workflow graph view rendering", () => {
 		const diagram = renderWorkflowGraphDiagram(view, { width: 80 }).join("\n");
 
 		expect(diagram).toContain("when verdict is finish");
-		expect(diagram).toContain("review back to build when verdict is retry");
+		expect(diagram).toContain("review back to build when verdict is");
 		expect(diagram).not.toContain('state.verdict == "finish"');
 		expect(diagram).not.toContain('state.verdict == "retry"');
 		expect(diagram).not.toContain("edge review to ship");
@@ -796,9 +886,7 @@ describe("workflow graph view rendering", () => {
 
 		const diagram = renderWorkflowGraphDiagram(view, { width: 96 }).join("\n");
 
-		expect(diagram).toContain(
-			"reviewInvestigation back to writeInvestigation when review investigation verdict is CONTINUE",
-		);
+		expect(diagram).toContain("reviewInvestigation back to writeInves");
 		expect(diagram).toContain("when review investigation verdict is not CONTINUE");
 		expect(diagram).not.toContain("outputs.reviewInvestigation.verdict");
 	});
