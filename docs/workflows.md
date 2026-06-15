@@ -207,7 +207,8 @@ the routes and review details. The right Operator Deck is the human intervention
 surface: its top Operator rail keeps the selected live agent and its watch,
 Agent Hub, steer, interrupt, stop, and change affordances visible before the
 focused node, transcript monitor tabs, on-flight work, recent output, and
-compact node-state lanes.
+compact node-state lanes. On short terminals, the rail collapses to one action
+row so intervention controls stay visible while less urgent detail is clipped.
 
 ![Workflow dashboard with parallel agent transcript tabs](images/workflow-dashboard-agent-tabs.png)
 

@@ -444,7 +444,7 @@ function workflowGraphLiveWorkbenchLines(
 	const maxTabs =
 		density === "full" ? 4 : width >= WORKFLOW_GRAPH_WORKBENCH_MIN_WIDTH && profile.onFlightLines > 0 ? 2 : 0;
 	const lines: string[] = [];
-	const railLines = workflowGraphOperatorRailLines(view, width);
+	const railLines = workflowGraphOperatorRailLines(view, width, density);
 	if (railLines.length > 0) {
 		lines.push(...workflowGraphWorkbenchGroup("Operator rail", railLines, width, density === "full" ? 2 : 1));
 	}
@@ -482,7 +482,11 @@ function workflowGraphLiveWorkbenchLines(
 	return lines.map(line => truncateToWidth(line, width));
 }
 
-function workflowGraphOperatorRailLines(view: WorkflowGraphView, width: number): string[] {
+function workflowGraphOperatorRailLines(
+	view: WorkflowGraphView,
+	width: number,
+	density: WorkflowGraphDensity,
+): string[] {
 	const selected = workflowGraphSelectedAgentTarget(view);
 	const subject = selected ?? view.focus?.nodeId ?? view.currentAttempt?.id ?? "workflow";
 	const primaryTokens = [`◉ monitor ${compactWorkflowGraphNodeId(subject)}`];
@@ -494,6 +498,11 @@ function workflowGraphOperatorRailLines(view: WorkflowGraphView, width: number):
 	if (workflowGraphHasAction(view, "Stop attempt")) safetyTokens.push("■ stop");
 	if (workflowGraphHasAction(view, "Request change") || workflowGraphHasAction(view, "Propose change")) {
 		safetyTokens.push("± change");
+	}
+	if (density !== "full") {
+		return [[...primaryTokens, ...safetyTokens].join("  ")]
+			.filter(line => line.length > 0)
+			.map(line => truncateToWidth(line, Math.max(20, width)));
 	}
 	return [primaryTokens.join("  "), safetyTokens.join("  ")]
 		.filter(line => line.length > 0)
@@ -1223,11 +1232,51 @@ function fitWorkflowGraphRowsToHeight(lines: string[], width: number, heightBudg
 	if (lines.length <= heightBudget) return lines;
 	const safeHeight = Math.max(1, heightBudget);
 	if (safeHeight === 1) return [truncateToWidth("... workflow graph clipped ...", width)];
-	const headRows = Math.max(1, Math.floor((safeHeight - 1) / 2));
-	const tailRows = Math.max(1, safeHeight - headRows - 1);
+	let headRows = Math.max(1, Math.floor((safeHeight - 1) / 2));
+	let tailRows = Math.max(1, safeHeight - headRows - 1);
+	const actionAnchor = workflowGraphRowsActionAnchor(lines);
+	const tailStart = lines.length - tailRows;
+	if (actionAnchor !== undefined && actionAnchor < tailStart) {
+		const actionEnd = workflowGraphRowsActionAnchorEnd(lines, actionAnchor);
+		const actionRows = actionEnd - actionAnchor;
+		const diagramAnchor = workflowGraphRowsDiagramAnchor(lines, actionAnchor);
+		const minimumHeadRows = diagramAnchor === undefined ? 1 : diagramAnchor + 1;
+		const remainingRows = safeHeight - actionRows - 1;
+		if (remainingRows >= 2 && minimumHeadRows < actionAnchor) {
+			headRows = Math.min(Math.max(minimumHeadRows, Math.floor(remainingRows / 2)), remainingRows - 1);
+			tailRows = remainingRows - headRows;
+			const anchoredTailStart = Math.max(actionEnd, lines.length - tailRows);
+			const tail = lines.slice(anchoredTailStart);
+			const hidden = Math.max(0, lines.length - headRows - actionRows - tail.length);
+			const marker = renderWorkflowGraphClippedRowsMarker(hidden, width);
+			return [...lines.slice(0, headRows), marker, ...lines.slice(actionAnchor, actionEnd), ...tail];
+		}
+		const anchoredTailRows = lines.length - actionAnchor;
+		tailRows = Math.min(anchoredTailRows, Math.max(1, safeHeight - 2));
+		headRows = Math.max(1, safeHeight - tailRows - 1);
+	}
 	const hidden = Math.max(0, lines.length - headRows - tailRows);
 	const marker = renderWorkflowGraphClippedRowsMarker(hidden, width);
 	return [...lines.slice(0, headRows), marker, ...lines.slice(lines.length - tailRows)];
+}
+
+function workflowGraphRowsActionAnchor(lines: readonly string[]): number | undefined {
+	const index = lines.findIndex(line => line.includes("Operator rail"));
+	return index === -1 ? undefined : index;
+}
+
+function workflowGraphRowsActionAnchorEnd(lines: readonly string[], start: number): number {
+	let end = start + 1;
+	while (end < lines.length && end < start + 3) {
+		if (lines[end]?.includes("╭─ ") === true) break;
+		end += 1;
+	}
+	return end;
+}
+
+function workflowGraphRowsDiagramAnchor(lines: readonly string[], beforeIndex: number): number | undefined {
+	const index = lines.findIndex((line, lineIndex) => lineIndex < beforeIndex && line.includes("diagram rows hidden"));
+	return index === -1 ? undefined : index;
 }
 
 function renderWorkflowGraphClippedRowsMarker(hiddenRows: number, width: number): string {

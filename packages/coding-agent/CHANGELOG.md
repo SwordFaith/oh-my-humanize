@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Changed compact workflow dashboard clipping to preserve the Operator rail and collapse it to one action row, so monitor, Agent Hub, steer, interrupt, stop, and change affordances remain visible on short terminals.
 - Changed ultrawide workflow dashboard layout to reserve more width for the Operator Deck, so focused activity, recent output, routes, and change summaries remain readable while the Flow Lens still owns the graph.
 - Changed the workflow Operator Deck focused-node summary to omit watch, steer, and interrupt control lines when the Operator rail already exposes those actions, keeping the focus panel on node context and output.
 - Changed the workflow Operator Deck to show a compact Operator rail above node details, keeping the selected live agent, Agent Hub handoff, steering, interrupt, stop, and change actions visible before deeper monitoring sections.

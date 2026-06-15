@@ -2016,6 +2016,7 @@ describe("workflow graph view rendering", () => {
 		expect(text).toContain("On-flight");
 		expect(text).toContain("diagram");
 		expect(text).toContain("Controls");
+		expect(text).toContain("◉ monitor build-4  ◆ hub  ↵ steer  ! interrupt  ■ stop  ± change");
 		expect(text).toContain("diagram rows hidden");
 		expect(text).toContain("9m12s");
 		expect(text).toContain("Refresh");
