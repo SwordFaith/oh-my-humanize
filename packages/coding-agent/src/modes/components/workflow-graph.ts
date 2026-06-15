@@ -861,6 +861,17 @@ function workflowGraphCompactProfile(
 			pathLine: false,
 		};
 	}
+	if ((heightBudget ?? 0) <= 32) {
+		return {
+			overviewLines: 4,
+			focusLines: 1,
+			onFlightLines: 1,
+			recentActivityLines: 0,
+			controlLines: 2,
+			diagramChromeRows: 26,
+			pathLine: false,
+		};
+	}
 	if ((heightBudget ?? 0) <= 40) {
 		return {
 			overviewLines: 5,
@@ -1181,8 +1192,15 @@ function fitWorkflowGraphRowsToHeight(lines: string[], width: number, heightBudg
 	const headRows = Math.max(1, Math.floor((safeHeight - 1) / 2));
 	const tailRows = Math.max(1, safeHeight - headRows - 1);
 	const hidden = Math.max(0, lines.length - headRows - tailRows);
-	const marker = theme.fg("muted", truncateToWidth(`+${hidden} workflow graph rows hidden`, width));
+	const marker = renderWorkflowGraphClippedRowsMarker(hidden, width);
 	return [...lines.slice(0, headRows), marker, ...lines.slice(lines.length - tailRows)];
+}
+
+function renderWorkflowGraphClippedRowsMarker(hiddenRows: number, width: number): string {
+	const innerWidth = Math.max(0, width - WORKFLOW_GRAPH_FRAME_CHROME_WIDTH);
+	const marker = truncateToWidth(`+${hiddenRows} workflow graph rows hidden`, innerWidth);
+	const padded = padWorkflowGraphLine(marker, innerWidth);
+	return `${theme.fg("borderMuted", "│")} ${theme.fg("muted", padded)} ${theme.fg("borderMuted", "│")}`;
 }
 
 function workflowGraphHeightBudget(value: number | undefined): number | undefined {

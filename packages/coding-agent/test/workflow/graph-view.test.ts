@@ -2109,6 +2109,15 @@ describe("workflow graph view rendering", () => {
 		expect(tinyText).toContain("diagram");
 		expect(tinyText).not.toContain("workflow graph rows hidden");
 
+		const microLines = new WorkflowGraphComponent(view, { refreshMs: 0, heightProvider: () => 6 }).render(96);
+		const microTextLines = microLines.map(line => stripAnsi(line));
+		const graphRowsMarker = microTextLines.find(line => line.includes("workflow graph rows hidden"));
+
+		expect(graphRowsMarker).toBeDefined();
+		expect(graphRowsMarker?.startsWith("│ ")).toBeTrue();
+		expect(graphRowsMarker?.endsWith(" │")).toBeTrue();
+		expect(visibleWidth(graphRowsMarker ?? "")).toBe(96);
+
 		const narrowLines = new WorkflowGraphComponent(view, { refreshMs: 0, heightProvider: () => 30 }).render(96);
 		const narrowTextLines = narrowLines.map(line => stripAnsi(line));
 		const hiddenMarkerIndex = narrowTextLines.findIndex(line => line.includes("diagram rows hidden"));
