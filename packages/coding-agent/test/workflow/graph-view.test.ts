@@ -353,6 +353,23 @@ describe("workflow graph view rendering", () => {
 		);
 	});
 
+	it("describes multiple root nodes as parallel roots instead of linear flow", () => {
+		const view = createView({
+			name: "parallel-roots",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "buildUi", type: "agent" },
+				{ id: "buildApi", type: "agent" },
+			],
+			edges: [],
+		});
+		const text = renderWorkflowGraphText(view);
+
+		expect(text).toContain("Flow: parallel roots 2 · 2 nodes");
+		expect(text).not.toContain("Flow: linear · 2 nodes");
+	});
+
 	it("surfaces running workflow agents as operator-visible live work items", () => {
 		const freeze = createFreeze({
 			name: "agent-observability",

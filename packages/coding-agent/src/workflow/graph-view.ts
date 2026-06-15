@@ -1767,6 +1767,17 @@ export function formatOmittedAbortedOutputs(count: number): string {
 }
 
 export function formatWorkflowTopology(topology: WorkflowGraphTopologyView): string {
+	return formatWorkflowTopologyParts(topology).join(" / ") || "linear";
+}
+
+function formatWorkflowViewTopology(view: WorkflowGraphView): string {
+	const parts = formatWorkflowTopologyParts(view.topology);
+	const rootCount = workflowGraphRootNodeCount(view.nodes, view.edges);
+	if (rootCount > 1) parts.unshift(`parallel roots ${rootCount}`);
+	return parts.join(" / ") || "linear";
+}
+
+function formatWorkflowTopologyParts(topology: WorkflowGraphTopologyView): string[] {
 	const parts: string[] = [];
 	if (topology.parallelFanOuts > 0) {
 		parts.push(`parallel fan-outs ${topology.parallelFanOuts}`);
@@ -1775,7 +1786,15 @@ export function formatWorkflowTopology(topology: WorkflowGraphTopologyView): str
 	if (topology.joins > 0) parts.push(`joins ${topology.joins}`);
 	if (topology.loops > 0) parts.push(`loops ${topology.loops}`);
 	if (topology.subflows > 0) parts.push(`subflows ${topology.subflows}`);
-	return parts.length === 0 ? "linear" : parts.join(" / ");
+	return parts;
+}
+
+function workflowGraphRootNodeCount(
+	nodes: readonly WorkflowGraphNodeView[],
+	edges: readonly WorkflowGraphEdgeView[],
+): number {
+	const targetIds = new Set(edges.map(edge => edge.to));
+	return nodes.filter(node => !targetIds.has(node.id)).length;
 }
 
 export function formatWorkflowOverviewLines(view: WorkflowGraphView): string[] {
@@ -1788,7 +1807,7 @@ export function formatWorkflowOverviewLines(view: WorkflowGraphView): string[] {
 			attempt.checkpointId === undefined ? "" : ` from ${formatWorkflowShortId(attempt.checkpointId)}`;
 		lines.push(`Run: ${formatWorkflowShortId(attempt.id)} ${attempt.status}${checkpoint}`);
 	}
-	lines.push(`Flow: ${formatWorkflowTopology(view.topology)} · ${view.nodes.length} ${pluralNode(view.nodes.length)}`);
+	lines.push(`Flow: ${formatWorkflowViewTopology(view)} · ${view.nodes.length} ${pluralNode(view.nodes.length)}`);
 	lines.push(`Focus: ${formatWorkflowOperatorFocus(view)}`);
 	lines.push(`On-flight: ${formatWorkflowOnFlightSummary(view)}`);
 	lines.push(`Changes: ${formatWorkflowChangeCounts(view.changes)}`);
