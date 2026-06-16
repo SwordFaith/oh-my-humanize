@@ -5,7 +5,7 @@
  * - Table view: every registered agent except Main (Main IS the ambient
  *   chat), live from the global AgentRegistry — status, unread irc count,
  *   current/last task, last activity. Select with j/k, Enter opens a chat,
- *   `r` revives a parked agent, `x` aborts + releases one.
+ *   `r` revives a revivable parked agent, `x` aborts + releases one.
  * - Chat view: per-agent transcript (incremental session-file tail, absorbed
  *   from the old session observer overlay) plus an input line. Submitting
  *   revives a parked agent, then prompts/steers it; the message lands in the
@@ -87,14 +87,17 @@ function sanitizeLine(text: string, maxWidth?: number): string {
 const STATUS_ORDER: Record<AgentStatus, number> = { running: 0, idle: 1, parked: 2, aborted: 3 };
 
 /** Glyph + status word, colored per theme status conventions. */
-function statusBadge(status: AgentStatus): string {
+function statusBadge(status: AgentStatus, revivable = true): string {
 	switch (status) {
 		case "running":
 			return theme.fg("accent", `${theme.status.running} running`);
 		case "idle":
 			return theme.fg("success", `${theme.status.enabled} idle`);
 		case "parked":
-			return theme.fg("muted", `${theme.status.shadowed} parked`);
+			return theme.fg(
+				"muted",
+				revivable ? `${theme.status.shadowed} parked` : `${theme.status.shadowed} history-only`,
+			);
 		case "aborted":
 			return theme.fg("error", `${theme.status.aborted} aborted`);
 	}
@@ -462,9 +465,16 @@ export class AgentHubOverlayComponent extends Container {
 			lines.push(` ${theme.fg("error", sanitizeLine(this.#notice, Math.max(10, width - 2)))}`);
 		}
 		lines.push("");
-		lines.push(` ${theme.fg("dim", "j/k:select  Enter:open  r:revive  x:kill  Esc/←←:close")}`);
+		lines.push(` ${theme.fg("dim", this.#tableHint())}`);
 		lines.push(...new DynamicBorder().render(width));
 		return lines;
+	}
+
+	#tableHint(): string {
+		const parts = ["j/k:select", "Enter:open"];
+		if (this.#rows.some(ref => this.#canRevive(ref))) parts.push("r:revive");
+		parts.push("x:kill", "Esc/←←:close");
+		return parts.join("  ");
 	}
 
 	#statusSummary(): string {
@@ -485,7 +495,7 @@ export class AgentHubOverlayComponent extends Container {
 		const observed = this.#observableFor(ref.id);
 		const task = observed?.description ?? observed?.progress?.task;
 		const workflowWorkItem = isWorkflowOperatorWorkItem(ref, task);
-		const parts: string[] = [statusBadge(ref.status)];
+		const parts: string[] = [statusBadge(ref.status, this.#canRevive(ref))];
 		if (workflowWorkItem) {
 			parts.push(theme.bold(sanitizeLine(task ?? ref.displayName, TRUNCATE_LENGTHS.TITLE)));
 		} else {
@@ -502,6 +512,12 @@ export class AgentHubOverlayComponent extends Container {
 		}
 		parts.push(theme.fg("dim", formatAge(Math.max(1, Math.round((Date.now() - ref.lastActivity) / 1000)))));
 		return truncateToWidth(` ${cursor} ${parts.join(theme.sep.dot)}`, Math.max(10, width - 1));
+	}
+
+	#canRevive(ref: AgentRef): boolean {
+		if (ref.status !== "parked") return false;
+		if (this.#remote) return true;
+		return this.#lifecycle().canRevive(ref.id);
 	}
 
 	#handleTableInput(keyData: string): void {
@@ -577,6 +593,11 @@ export class AgentHubOverlayComponent extends Container {
 		if (!ref) return;
 		if (ref.status !== "parked") {
 			this.#notice = `Agent "${ref.id}" is ${ref.status} — only parked agents can be revived.`;
+			this.#requestRender();
+			return;
+		}
+		if (!this.#canRevive(ref)) {
+			this.#notice = `Agent "${ref.id}" is history-only; read history://${ref.id} instead of reviving it.`;
 			this.#requestRender();
 			return;
 		}

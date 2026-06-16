@@ -32,6 +32,7 @@
 - Fixed workflow monitor activation in the TUI so the welcome/onboarding panel is removed from the current viewport when a workflow dashboard becomes active.
 - Fixed workflow-owned task agents remaining live after their node result was captured, so completed workflow activations preserve transcripts without continuing to mutate workspaces or receive IRC wakeups outside the workflow frontier.
 - Fixed bundled KDA Humanize evidence recording so its script runs under the workflow eval runtime instead of using module-only import syntax.
+- Fixed Agent Hub labeling for parked agents that have no reviver, showing them as history-only transcript entries instead of implying they can be revived.
 
 ## [16.0.1] - 2026-06-15
 

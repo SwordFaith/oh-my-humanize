@@ -11,6 +11,7 @@ import { SelectorController } from "@oh-my-pi/pi-coding-agent/modes/controllers/
 import { SessionObserverRegistry } from "@oh-my-pi/pi-coding-agent/modes/session-observer-registry";
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
+import { AgentLifecycleManager } from "@oh-my-pi/pi-coding-agent/registry/agent-lifecycle";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { TempDir } from "@oh-my-pi/pi-utils";
@@ -138,6 +139,36 @@ describe("Agent hub Enter activation", () => {
 		expect(rendered).not.toContain("buildRound ·");
 		expect(rendered).not.toContain("sub · of buildRound");
 		expect(rendered).not.toContain("task · sub");
+		hub.dispose();
+	});
+
+	it("labels parked agents without revivers as history-only instead of revivable", () => {
+		const agents = new AgentRegistry();
+		const lifecycle = new AgentLifecycleManager(agents);
+		agents.register({
+			id: "buildRound",
+			displayName: "Builder · Build round",
+			kind: "sub",
+			parentId: "buildRound",
+			session: null,
+			sessionFile: "/tmp/buildRound.jsonl",
+			status: "parked",
+		});
+		const hub = new AgentHubOverlayComponent({
+			observers: new SessionObserverRegistry(),
+			hubKeys: [],
+			onDone: () => {},
+			requestRender: () => {},
+			registry: agents,
+			lifecycle,
+			irc: new IrcBus(agents),
+			focusAgent: async () => {},
+		});
+
+		const rendered = Bun.stripANSI(hub.render(120).join("\n"));
+
+		expect(rendered).toContain("history-only");
+		expect(rendered).not.toContain("r:revive");
 		hub.dispose();
 	});
 
