@@ -410,6 +410,8 @@ describe("workflow artifact registry", () => {
 			"Objective: harden parser recovery. Validation Command: bun test parser.test.ts",
 		);
 		let candidateAssignment = "";
+		let fixerAssignment = "";
+		let codeReviewGateAttempts = 0;
 
 		const result = await runWorkflow({
 			host: createRunHost(),
@@ -464,6 +466,7 @@ describe("workflow artifact registry", () => {
 						return { exitCode: 0, output: "Nested implementation has enough evidence.\nCOMPLETE" };
 					}
 					if (request.nodeId === "humanize__fixCodeReviewIssues") {
+						fixerAssignment = request.task.assignment;
 						return {
 							exitCode: 0,
 							output: JSON.stringify({
@@ -473,6 +476,13 @@ describe("workflow artifact registry", () => {
 						};
 					}
 					if (request.nodeId === "humanize__codeReviewGate") {
+						codeReviewGateAttempts += 1;
+						if (codeReviewGateAttempts === 1) {
+							return {
+								exitCode: 0,
+								output: "Blocking issue: parser recovery evidence is missing from the handoff.\nISSUES",
+							};
+						}
 						return { exitCode: 0, output: "No blockers remain.\nCLEAN" };
 					}
 					if (request.nodeId === "humanize__finalize") {
@@ -499,11 +509,28 @@ describe("workflow artifact registry", () => {
 			}),
 			packageRoot: artifact.resourceDir,
 			frozenResources: freeze.resourceSnapshots,
-			maxActivations: 15,
+			maxActivations: 14,
 		});
 
 		expect(result.scheduler.activations.find(activation => activation.status === "failed")?.error).toBeUndefined();
 		expect(result.scheduler.frontierNodeIds).toEqual(["validateCandidate"]);
+		expect(result.scheduler.activations.map(activation => activation.nodeId)).toEqual([
+			"loadTaskContract",
+			"inspectWorkspace",
+			"draftPlan",
+			"humanize__planCompliance",
+			"humanize__planUnderstandingQuiz",
+			"humanize__recordOperatorGate",
+			"humanize__initializeGoalTracker",
+			"humanize__implementRound",
+			"humanize__implementationReview",
+			"humanize__codeReviewGate",
+			"humanize__fixCodeReviewIssues",
+			"humanize__codeReviewGate",
+			"humanize__finalize",
+			"implementCandidate",
+		]);
+		expect(fixerAssignment).toContain("Blocking issue: parser recovery evidence is missing from the handoff.");
 		expect(candidateAssignment).toContain("nested Humanize handoff summary");
 	});
 

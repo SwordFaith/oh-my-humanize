@@ -1,7 +1,7 @@
 import type { WorkflowNode } from "./definition";
 
 export function formatWorkflowNodeRole(node: WorkflowNode): string {
-	if (node.type === "agent") return workflowAgentRoleFromNodeId(node.id);
+	if (node.type === "agent") return workflowAgentRoleFromNode(node);
 	if (node.type === "review") return workflowReviewRoleFromNodeId(node.id);
 	if (node.type === "script") return workflowProgramRoleFromNodeId(node.id);
 	if (node.type === "human") return "Human checkpoint";
@@ -19,6 +19,21 @@ export function formatWorkflowNodeDisplayName(nodeId: string): string {
 
 export function formatWorkflowAgentWorkItemLabel(node: WorkflowNode): string {
 	return `${formatWorkflowNodeRole(node)} · ${formatWorkflowNodeDisplayName(node.id)}`;
+}
+
+function workflowAgentRoleFromNode(node: WorkflowNode): string {
+	const semanticRole = semanticWorkflowAgentRole(node.model?.role);
+	if (semanticRole !== undefined) return semanticRole;
+	return workflowAgentRoleFromNodeId(node.id);
+}
+
+function semanticWorkflowAgentRole(role: string | undefined): string | undefined {
+	const normalized = role?.trim().toLowerCase();
+	if (normalized === "builder") return "Builder";
+	if (normalized === "reviewer") return "Reviewer";
+	if (normalized === "planner") return "Planner";
+	if (normalized === "investigator") return "Investigator";
+	return undefined;
 }
 
 function workflowAgentRoleFromNodeId(nodeId: string): string {

@@ -153,6 +153,7 @@ nodes:
     reads:
       - /plan
       - /implementationSummary
+      - /summary
     writes:
       - /codeReviewFix
     prompt:
@@ -161,20 +162,28 @@ nodes:
         bindings:
           plan:
             state: /plan
+          reviewFindings:
+            output:
+              node: codeReviewGate
+              path: /summary
+              activation: latest-completed
   - id: codeReviewGate
     type: review
     agent: reviewer
     model:
       role: reviewer
     reads:
+      - /plan
       - /summary
     prompt:
       template:
         file: prompts/code-review.md
         bindings:
-          fixSummary:
+          plan:
+            state: /plan
+          reviewContext:
             output:
-              node: fixCodeReviewIssues
+              node: implementationReview
               path: /summary
               activation: latest-completed
     gates:
@@ -223,7 +232,7 @@ edges:
     to: stopSubflow
     when: outputs.implementationReview.verdict == "STOP"
   - from: implementationReview
-    to: fixCodeReviewIssues
+    to: codeReviewGate
     when: outputs.implementationReview.verdict == "COMPLETE"
   - from: fixCodeReviewIssues
     to: codeReviewGate

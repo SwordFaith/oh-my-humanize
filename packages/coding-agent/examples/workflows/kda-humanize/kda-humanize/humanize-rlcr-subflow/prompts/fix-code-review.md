@@ -1,7 +1,11 @@
-Fix blocking issues from the code-review phase while preserving the KDA plan
-scope.
+Fix blocking issues reported by the KDA code-review gate while preserving the
+KDA plan scope.
 
+Plan:
 {{plan}}
+
+Blocking review findings:
+{{reviewFindings}}
 
 Address only issues that block the candidate's acceptance, validation, or safe
 promotion. Keep advisory improvements recorded without turning them into scope

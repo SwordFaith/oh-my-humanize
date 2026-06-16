@@ -489,6 +489,77 @@ describe("workflow graph view rendering", () => {
 		expect(text).not.toContain("Focus agent: /agents");
 	});
 
+	it("uses semantic builder role labels for fixer agent nodes even when their ids mention review", async () => {
+		const freeze = createFreeze({
+			name: "agent-role-labels",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{
+					id: "fixCodeReviewIssues",
+					type: "agent",
+					agent: "task",
+					model: { role: "builder" },
+				},
+			],
+			edges: [],
+		});
+		const view = buildWorkflowGraphView({
+			id: "agent-role-labels-family",
+			freezes: [freeze],
+			attempts: [
+				{
+					id: "attempt-1",
+					familyId: "agent-role-labels-family",
+					freezeId: freeze.id,
+					startNodeId: "fixCodeReviewIssues",
+					status: "running",
+					runtimeBindingSnapshot: createBinding(),
+					activations: [
+						{
+							id: "activation-1",
+							nodeId: "fixCodeReviewIssues",
+							parentActivationIds: [],
+							status: "running",
+						},
+					],
+				},
+			],
+			checkpoints: [],
+			changeRequests: [],
+		});
+
+		expect(view.activeAgents).toEqual([
+			{
+				activationId: "activation-1",
+				focusAgentId: "fixCodeReviewIssues",
+				nodeId: "fixCodeReviewIssues",
+				label: "Fix code review issues",
+				role: "Builder",
+				status: "running",
+			},
+		]);
+		expect(view.focus?.role).toBe("Builder");
+
+		const text = renderWorkflowGraphText(view);
+		expect(text).toContain("- Builder · Fix code review issues live");
+		expect(text).not.toContain("- Reviewer · Fix code review issues live");
+
+		const root = path.resolve("temp", "workflow-monitor-history", String(Bun.nanoseconds()));
+		try {
+			const snapshotPath = await writeWorkflowGraphMonitorSnapshot(view, {
+				agentDir: path.join(root, "agent"),
+				now: new Date("2026-01-02T03:04:05.006Z"),
+			});
+			const snapshot = await Bun.file(snapshotPath).json();
+			expect(snapshot.view.activeAgents[0].role).toBe("Builder");
+			expect(snapshot.renderedText).toContain("Builder · Fix code review issues");
+			expect(snapshot.renderedText).not.toContain("Reviewer · Fix code review issues");
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("summarizes active workflow agent model binding and live progress for the cockpit", () => {
 		const freeze = createFreeze({
 			name: "agent-progress-cockpit",
