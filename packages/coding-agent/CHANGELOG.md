@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- Fixed bundled KDA Humanize so long-running task contracts enter a duration hold/check loop before evidence recording and promotion instead of completing immediately after candidate validation.
 - Fixed bundled KDA Humanize plan-compliance handoff so repairable validation gaps are not rejected solely because the target validation artifact does not exist before implementation.
 - Fixed bundled KDA Humanize evidence recording so durable evidence falls back to completed workflow activation outputs when agents/reviews return summaries without state patches.
 - Fixed bundled agent build/review workflow startup so it records the declared validation command without executing heavy project verification before the first build round.

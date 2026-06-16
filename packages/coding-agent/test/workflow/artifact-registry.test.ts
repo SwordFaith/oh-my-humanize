@@ -626,6 +626,103 @@ describe("workflow artifact registry", () => {
 		expect(evidenceText).toContain("Verdict: promote");
 	});
 
+	it("keeps bundled KDA at a long-running hold frontier before promotion when the duration floor is pending", async () => {
+		const spec = await resolveWorkflowFlowSpec("kda-humanize", { cwd: process.cwd(), flowDirs: [] });
+		const artifact = await loadWorkflowArtifact(spec.path);
+		const freeze = await freezeWorkflowArtifact(artifact);
+		const taskDir = await createTempDir();
+		await Bun.write(
+			path.join(taskDir, "task.md"),
+			[
+				"# KDA long-running gate",
+				"",
+				"Objective: promote a validated candidate only after long-running evidence.",
+				"Long Running: yes",
+				"Minimum Runtime: 8 hours",
+				"Maximum Runtime: 5 days",
+				"Validation Command: bun test",
+			].join("\n"),
+		);
+
+		const edgeSummary = freeze.definition.edges.map(edge => ({
+			from: edge.from,
+			to: edge.to,
+			condition: edge.condition?.source,
+		}));
+		expect(edgeSummary).toContainEqual({
+			from: "validateCandidate",
+			to: "longRunningHold",
+			condition: '!(outputs.validateCandidate.verdict == "revise")',
+		});
+		expect(edgeSummary).toContainEqual({ from: "longRunningHold", to: "longRunningHoldCheck", condition: undefined });
+		expect(edgeSummary).toContainEqual({
+			from: "longRunningHoldCheck",
+			to: "longRunningHold",
+			condition: "state.kda.runtime.longRunning.minimumSatisfied == false",
+		});
+		expect(edgeSummary).toContainEqual({
+			from: "longRunningHoldCheck",
+			to: "recordEvidence",
+			condition: "!(state.kda.runtime.longRunning.minimumSatisfied == false)",
+		});
+
+		const parsedContract = await runWorkflow({
+			host: createRunHost(),
+			definition: freeze.definition,
+			runId: "kda-long-running-contract",
+			startNodeId: "loadTaskContract",
+			runtimeHost: createSessionWorkflowRuntimeHost({
+				cwd: taskDir,
+				runEvalScript: request => runBunFunctionWorkflowScript(taskDir, request),
+			}),
+			packageRoot: artifact.resourceDir,
+			frozenResources: freeze.resourceSnapshots,
+			maxActivations: 1,
+		});
+		const parsedKda = expectRecord(parsedContract.scheduler.state.kda, "parsed KDA state");
+		const parsedRuntime = expectRecord(parsedKda.runtime, "parsed KDA runtime");
+		const parsedLongRunning = expectRecord(parsedRuntime.longRunning, "parsed KDA long-running runtime");
+		expect(parsedLongRunning.requested).toBe(true);
+		expect(parsedLongRunning.minimumRuntimeMs).toBe(28_800_000);
+		expect(parsedLongRunning.maximumRuntimeMs).toBe(432_000_000);
+		expect(parsedLongRunning.minimumSatisfied).toBe(false);
+
+		const pendingCheck = await runWorkflow({
+			host: createRunHost(),
+			definition: freeze.definition,
+			runId: "kda-long-running-check-pending",
+			startNodeId: "longRunningHoldCheck",
+			initialState: {
+				kda: {
+					runtime: {
+						startedAtMs: Date.now(),
+						elapsedMs: 0,
+						longRunning: {
+							requested: true,
+							minimumRuntimeMs: 28_800_000,
+							maximumRuntimeMs: 432_000_000,
+							minimumSatisfied: false,
+						},
+					},
+				},
+			},
+			runtimeHost: createSessionWorkflowRuntimeHost({
+				cwd: taskDir,
+				runEvalScript: request => runBunFunctionWorkflowScript(taskDir, request),
+			}),
+			packageRoot: artifact.resourceDir,
+			frozenResources: freeze.resourceSnapshots,
+			maxActivations: 1,
+		});
+		expect(pendingCheck.scheduler.activations.map(activation => activation.nodeId)).toEqual(["longRunningHoldCheck"]);
+		expect(pendingCheck.scheduler.frontierNodeIds).toEqual(["longRunningHold"]);
+		const checkedKda = expectRecord(pendingCheck.scheduler.state.kda, "checked KDA state");
+		const checkedRuntime = expectRecord(checkedKda.runtime, "checked KDA runtime");
+		const checkedLongRunning = expectRecord(checkedRuntime.longRunning, "checked KDA long-running runtime");
+		expect(checkedLongRunning.requested).toBe(true);
+		expect(checkedLongRunning.minimumSatisfied).toBe(false);
+	});
+
 	it("blocks bundled parallel implementation review before agents when task contract is missing", async () => {
 		const spec = await resolveWorkflowFlowSpec("parallel-implementation-review", {
 			cwd: process.cwd(),

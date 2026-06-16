@@ -43,6 +43,10 @@ resources:
     kind: prompt
   - path: scripts/record-evidence.js
     kind: script
+  - path: scripts/long-running-hold.js
+    kind: script
+  - path: scripts/long-running-hold-check.js
+    kind: script
 sequence:
   - node:
       id: loadTaskContract
@@ -52,6 +56,7 @@ sequence:
         file: scripts/load-task-contract.js
       writes:
         - /taskContract
+        - /kda
   - node:
       id: inspectWorkspace
       type: agent
@@ -138,6 +143,27 @@ sequence:
           - promote
         fallbackVerdict: revise
       retryWhen: outputs.validateCandidate.verdict == "revise"
+  - template:
+      kind: retry_until
+      body:
+        id: longRunningHold
+        type: script
+        script:
+          language: js
+          file: scripts/long-running-hold.js
+        reads:
+          - /kda
+      reviewType: script
+      review:
+        id: longRunningHoldCheck
+        script:
+          language: js
+          file: scripts/long-running-hold-check.js
+        reads:
+          - /kda
+        writes:
+          - /kda
+      retryWhen: state.kda.runtime.longRunning.minimumSatisfied == false
   - node:
       id: recordEvidence
       type: script
