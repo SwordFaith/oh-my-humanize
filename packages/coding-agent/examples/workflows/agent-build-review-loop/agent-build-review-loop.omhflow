@@ -27,7 +27,7 @@ stateSchema:
     verdict: string
     archive: object
 resources:
-  - path: scripts/seed-progress.sh
+  - path: scripts/initialize-loop.sh
     kind: script
   - path: scripts/archive-loop.sh
     kind: script
@@ -40,13 +40,14 @@ capabilities:
     - bash
   agents:
     - task
+    - reviewer
 sequence:
   - node:
-      id: seedProgress
+      id: initializeLoop
       type: script
       script:
         language: sh
-        file: scripts/seed-progress.sh
+        file: scripts/initialize-loop.sh
       writes:
         - /progress
   - template:
@@ -67,7 +68,7 @@ sequence:
       review:
         id: reviewRound
         type: review
-        agent: task
+        agent: reviewer
         model:
           role: reviewer
         reads:

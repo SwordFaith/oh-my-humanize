@@ -31,6 +31,7 @@ stateSchema:
   version: 1
   shape:
     humanize: object
+    /humanize/operatorGate/decision: string
     /humanize/operatorGate/minimumSatisfied: boolean
     verdict: string
 resources:
@@ -49,6 +50,8 @@ resources:
   - path: scripts/plan-compliance-precheck.js
     kind: script
   - path: scripts/record-operator-gate.js
+    kind: script
+  - path: scripts/operator-gate-exit.js
     kind: script
   - path: scripts/init-goal-tracker.js
     kind: script
@@ -98,6 +101,15 @@ nodes:
     script:
       language: js
       file: scripts/record-operator-gate.js
+    reads:
+      - /humanize
+    writes:
+      - /humanize
+  - id: operatorGateExit
+    type: script
+    script:
+      language: js
+      file: scripts/operator-gate-exit.js
     reads:
       - /humanize
     writes:
@@ -225,6 +237,10 @@ edges:
     to: recordOperatorGate
   - from: recordOperatorGate
     to: initializeGoalTracker
+    when: state.humanize.operatorGate.decision == "proceed"
+  - from: recordOperatorGate
+    to: operatorGateExit
+    when: state.humanize.operatorGate.decision != "proceed"
   - from: initializeGoalTracker
     to: implementRound
   - from: implementRound

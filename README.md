@@ -33,7 +33,7 @@ distributable `.omhflow + resources` artifact, run it with a live TUI graph,
 stop/checkpoint a production attempt, approve flow changes, and restart safely.
 Built-in flows are practical, generic workflows that are meant to work
 out-of-the-box on a real project directory: `humanize-rlcr`,
-`kda-humanize-reference`, `parallel-weak-implementation`, and
+`kda-humanize`, `parallel-implementation-review`, and
 `agent-build-review-loop`. Smaller control-flow primitives and seed-bound
 examples ship as workflow demos, not promoted built-ins. External flows can be
 installed with `omp workflow install` or discovered through `OMHFLOW_DIR`.

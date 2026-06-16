@@ -1,5 +1,5 @@
 ---
-name: kda-humanize-reference
+name: kda-humanize
 version: 1
 schema: omhflow/v1
 models:
@@ -16,12 +16,12 @@ changePolicy:
   agentsCanPropose: true
   humansCanApprove: true
 ---
-# KDA with Humanize subflow
+# KDA Humanize
 
 ```yaml workflow
 imports:
   humanize:
-    path: ./kda-humanize-reference/humanize-rlcr-reference.omhflow
+    path: ./kda-humanize/humanize-rlcr-subflow.omhflow
 capabilities:
   agents:
     - task

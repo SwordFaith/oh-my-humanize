@@ -1,5 +1,5 @@
 ---
-name: parallel-weak-implementation
+name: parallel-implementation-review
 version: 1
 schema: omhflow/v1
 models:
@@ -16,7 +16,7 @@ changePolicy:
   agentsCanPropose: true
   humansCanApprove: true
 ---
-# Parallel weak implementation
+# Parallel implementation review
 
 ```yaml workflow
 resources:
@@ -28,7 +28,9 @@ resources:
     kind: prompt
   - path: prompts/implement-docs.md
     kind: prompt
-  - path: prompts/weak-review.md
+  - path: prompts/integration-review.md
+    kind: prompt
+  - path: prompts/strong-review.md
     kind: prompt
 capabilities:
   agents:
@@ -89,7 +91,7 @@ sequence:
                 plan:
                   state: /plan
     join:
-      id: weakReview
+      id: integrationReview
       type: review
       agent: reviewer
       model:
@@ -98,11 +100,28 @@ sequence:
         - /plan
       prompt:
         template:
-          file: prompts/weak-review.md
+          file: prompts/integration-review.md
           bindings:
             plan:
               state: /plan
       gates:
         - continue
         - finish
+  - node:
+      id: strongReview
+      type: review
+      agent: reviewer
+      model:
+        role: reviewer
+      reads:
+        - /plan
+      prompt:
+        template:
+          file: prompts/strong-review.md
+          bindings:
+            plan:
+              state: /plan
+      gates:
+        - reject
+        - promote
 ```

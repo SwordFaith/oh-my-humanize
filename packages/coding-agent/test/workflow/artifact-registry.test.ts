@@ -42,12 +42,7 @@ afterEach(async () => {
 
 describe("workflow artifact registry", () => {
 	it("resolves and freezes only bundled practical workflow artifacts by name", async () => {
-		const expected = [
-			"humanize-rlcr",
-			"kda-humanize-reference",
-			"parallel-weak-implementation",
-			"agent-build-review-loop",
-		];
+		const expected = ["humanize-rlcr", "kda-humanize", "parallel-implementation-review", "agent-build-review-loop"];
 		const listed = await listWorkflowFlowSpecs({ cwd: process.cwd(), flowDirs: [] });
 
 		expect(listed.map(spec => spec.name)).toEqual([...expected].sort());
@@ -71,6 +66,13 @@ describe("workflow artifact registry", () => {
 					node => node.type === "agent" || node.type === "review" || node.type === "human",
 				),
 			).toBe(true);
+			const reviewNodes = freeze.definition.nodes.filter(node => node.type === "review");
+			if (reviewNodes.length > 0) {
+				expect(freeze.definition.capabilities?.agents ?? []).toContain("reviewer");
+			}
+			for (const node of reviewNodes) {
+				expect(node.agent).toBe("reviewer");
+			}
 			expect(freeze.resourceSnapshots.some(resource => resource.path.startsWith("seed/"))).toBe(false);
 		}
 	});
@@ -83,6 +85,8 @@ describe("workflow artifact registry", () => {
 			"human-interactive-dev",
 			"recflow-audit-events-cockpit",
 			"recflow-lab-audit-events-demo",
+			"kda-humanize-reference",
+			"parallel-weak-implementation",
 		];
 		const listedNames = (await listWorkflowFlowSpecs({ cwd: process.cwd(), flowDirs: [] })).map(spec => spec.name);
 
@@ -494,6 +498,51 @@ describe("workflow artifact registry", () => {
 		const humanize = expectRecord(result.scheduler.state.humanize, "humanize state");
 		const operatorGate = expectRecord(humanize.operatorGate, "humanize operator gate");
 		expect(operatorGate.decision).toBe("proceed");
+	});
+
+	it("stops bundled Humanize RLCR before implementation when the operator gate says stop", async () => {
+		const spec = await resolveWorkflowFlowSpec("humanize-rlcr", { cwd: process.cwd(), flowDirs: [] });
+		const artifact = await loadWorkflowArtifact(spec.path);
+		const freeze = await freezeWorkflowArtifact(artifact);
+		const taskDir = await createTempDir();
+		await Bun.write(
+			path.join(taskDir, "task.md"),
+			[
+				"# Humanize RLCR operator stop",
+				"",
+				"Goal: verify the operator gate can stop the flow before implementation.",
+			].join("\n"),
+		);
+		const host = createRunHost();
+
+		const result = await runWorkflow({
+			host,
+			definition: freeze.definition,
+			runId: "humanize-operator-stop",
+			startNodeId: "planCompliancePrecheck",
+			runtimeHost: createSessionWorkflowRuntimeHost({
+				cwd: taskDir,
+				runEvalScript: request => runBunFunctionWorkflowScript(taskDir, request),
+				runHumanInput: async () => ({ response: "stop: the plan is not ready for implementation." }),
+				runAgentTask: async request => ({ exitCode: 0, output: `unexpected ${request.nodeId}` }),
+			}),
+			packageRoot: artifact.resourceDir,
+			frozenResources: freeze.resourceSnapshots,
+			maxActivations: 12,
+		});
+
+		const nodeIds = result.scheduler.activations.map(activation => activation.nodeId);
+		expect(nodeIds).toContain("recordOperatorGate");
+		expect(nodeIds).toContain("operatorGateExit");
+		expect(nodeIds).not.toContain("initializeGoalTracker");
+		expect(nodeIds).not.toContain("implementRound");
+		expect(result.scheduler.frontierNodeIds).toEqual([]);
+		const humanize = expectRecord(result.scheduler.state.humanize, "humanize state");
+		const operatorGate = expectRecord(humanize.operatorGate, "humanize operator gate");
+		expect(operatorGate.decision).toBe("stop");
+		const operatorExit = expectRecord(humanize.operatorExit, "humanize operator exit");
+		expect(operatorExit.status).toBe("stopped-by-operator");
+		expect(operatorExit.decision).toBe("stop");
 	});
 
 	it("keeps bundled Humanize RLCR in a hold loop without growing implementation prompts", async () => {

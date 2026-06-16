@@ -301,7 +301,7 @@
   and `omp workflow start` default to a five-day runtime limit and accept
   `--max-runtime-ms` for shorter bounded runs; elapsed runs stop scheduling,
   abort in-flight nodes, and checkpoint for restart.
-- Added practical built-in `humanize-rlcr`, `kda-humanize-reference`, `parallel-weak-implementation`, and `agent-build-review-loop` `.omhflow` artifacts, moved control-flow primitives and seed-bound examples into workflow demos, added shared named workflow resolution for `/workflow start|freeze`, and added a non-interactive `omp workflow` command for listing, freezing, starting, installing, and uninstalling workflow artifacts via `OMHFLOW_DIR`.
+- Added practical built-in `humanize-rlcr`, `kda-humanize`, `parallel-implementation-review`, and `agent-build-review-loop` `.omhflow` artifacts, moved control-flow primitives and seed-bound examples into workflow demos, added shared named workflow resolution for `/workflow start|freeze`, and added a non-interactive `omp workflow` command for listing, freezing, starting, installing, and uninstalling workflow artifacts via `OMHFLOW_DIR`.
 - Added isolated profile support via `--profile <name>` / `OMP_PROFILE` and shell alias bootstrap via `--alias <command>`, including launch/ACP bootstrap handling, extension-flag-safe parsing, profile-scoped user config discovery, and symlinked extension-directory discovery.
 - Fixed paste and image placeholders crashing when the editor renders before theme initialization.
 

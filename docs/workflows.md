@@ -36,17 +36,16 @@ avoid bundled seed-project assumptions.
 - `humanize-rlcr` — a Humanize-style review loop with implementation and review
   rounds. It is intended for interactive, task-driven implementation with
   explicit operator understanding and optional long-running evidence gates.
-- `kda-humanize-reference` — a KDA-style flow that imports a Humanize subflow.
+- `kda-humanize` — a KDA-style flow that imports a Humanize subflow.
   It is a project-generic KDA structure for contract, inspection, planning,
   candidate validation, and promotion; it is not GPU performance evidence unless
   the task and environment provide that validation.
-- `parallel-weak-implementation` — a compact parallel fan-out/gather
-  implementation pattern with core, test, and docs/evidence branches plus a
-  weak integration review. Use a later strong review before production
-  promotion.
+- `parallel-implementation-review` — a compact parallel fan-out/gather
+  implementation pattern with core, test, and docs/evidence branches, followed
+  by integration review and final strong review.
 - `agent-build-review-loop` — a generator/critic refinement loop for repeated
-  build and review rounds. It expects `task.md` and optionally
-  `workflow-task/verify.sh`.
+  build and review rounds. It uses `task.md` as the default task contract, and
+  verification comes from commands declared by that contract.
 
 The built-in set is intentionally small. Primitive examples, UX probes, and
 seed-bound demos are useful for learning or validation, but they are not exposed
@@ -137,7 +136,7 @@ steering, and workflow mutation are TUI-first.
 
 ## KDA Workflow
 
-Use `kda-humanize-reference` when a task needs a KDA-style outer flow that
+Use `kda-humanize` when a task needs a KDA-style outer flow that
 defines a contract, inspects the workspace, drafts a plan, then calls Humanize
 as a reusable subflow before candidate validation and promotion.
 
@@ -161,7 +160,7 @@ omp
 Run it in the TUI:
 
 ```text
-/workflow start kda-humanize-reference --family-id demo-kda --background
+/workflow start kda-humanize --family-id demo-kda --background
 /workflow graph --family-id demo-kda
 /workflow manager --family-id demo-kda
 ```
@@ -177,7 +176,7 @@ start is intentionally not the KDA workflow path because the first node asks the
 human operator to define the task contract:
 
 ```sh
-omp workflow freeze kda-humanize-reference --json
+omp workflow freeze kda-humanize --json
 ```
 
 ## Interactive Use

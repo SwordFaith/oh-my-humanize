@@ -1,5 +1,5 @@
 ---
-name: humanize-rlcr-reference
+name: humanize-rlcr-subflow
 version: 1
 schema: omhflow/v1
 models:
@@ -16,7 +16,7 @@ changePolicy:
   agentsCanPropose: true
   humansCanApprove: true
 ---
-# Humanize RLCR reference
+# Humanize RLCR subflow
 
 ```yaml workflow
 capabilities:
