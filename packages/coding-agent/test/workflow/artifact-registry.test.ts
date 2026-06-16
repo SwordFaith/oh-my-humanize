@@ -357,6 +357,49 @@ describe("workflow artifact registry", () => {
 		expect(failed?.error).toContain("FAIL_RELEVANCE");
 	});
 
+	it("allows bundled KDA plan compliance to hand off plans that repair missing validation artifacts", async () => {
+		const spec = await resolveWorkflowFlowSpec("kda-humanize", { cwd: process.cwd(), flowDirs: [] });
+		const artifact = await loadWorkflowArtifact(spec.path);
+		const freeze = await freezeWorkflowArtifact(artifact);
+		const taskDir = await createTempDir();
+		let assignment = "";
+
+		const result = await runWorkflow({
+			host: createRunHost(),
+			definition: freeze.definition,
+			runId: "kda-humanize-repairable-validation-gap",
+			startNodeId: "humanize__planCompliance",
+			initialState: {
+				plan: [
+					"Objective: make the declared validation command executable.",
+					"Current validation gap: tests/test_render.py is absent.",
+					"Candidate: create a meaningful tests/test_render.py with Console/Text integration assertions.",
+					"Validation Command: python -m pytest tests/test_console.py tests/test_render.py tests/test_text.py -q",
+				].join("\n"),
+			},
+			runtimeHost: createSessionWorkflowRuntimeHost({
+				cwd: taskDir,
+				runEvalScript: request => runBunFunctionWorkflowScript(taskDir, request),
+				runAgentTask: async request => {
+					assignment = request.task.assignment;
+					return { exitCode: 0, output: "Plan repairs the missing validation target in bounded scope.\nPASS" };
+				},
+			}),
+			packageRoot: artifact.resourceDir,
+			frozenResources: freeze.resourceSnapshots,
+			maxActivations: 1,
+		});
+
+		expect(result.scheduler.activations.map(activation => activation.nodeId)).toEqual(["humanize__planCompliance"]);
+		expect(result.scheduler.activations[0]?.status).toBe("completed");
+		const normalizedAssignment = assignment.replace(/\s+/g, " ");
+		expect(normalizedAssignment).toContain("Do not return `FAIL_RELEVANCE` solely because");
+		expect(normalizedAssignment).toContain("missing validation file");
+		expect(normalizedAssignment).toContain(
+			"plan explicitly makes creating or fixing that artifact part of the candidate scope",
+		);
+	});
+
 	it("feeds bundled KDA nested Humanize handoff into candidate implementation", async () => {
 		const spec = await resolveWorkflowFlowSpec("kda-humanize", { cwd: process.cwd(), flowDirs: [] });
 		const artifact = await loadWorkflowArtifact(spec.path);
