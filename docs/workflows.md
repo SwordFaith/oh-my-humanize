@@ -283,13 +283,21 @@ omp workflow list
 omp workflow start team-release-hardening
 ```
 
-For a named lookup, `omp` searches built-ins first, then each external flow
-directory. External flow names must be unambiguous across `OMHFLOW_DIR` entries.
+For a named lookup, `omp` treats bundled and external artifacts as peers. A flow
+name must resolve to exactly one artifact across bundled flows and
+`OMHFLOW_DIR`; if a bundled flow and an external flow share the same name, the
+lookup is rejected as ambiguous. Use an explicit `.omhflow` path to select a
+specific artifact.
 Each flow can be laid out either as `<dir>/<name>.omhflow` plus `<dir>/<name>/`,
 or as `<dir>/<name>/<name>.omhflow` plus `<dir>/<name>/<name>/`.
 
 ## Authoring Notes
 
+- Flows use the workflow infrastructure only through stable artifact/runtime
+  interfaces: node types, declared resources, model/tool capabilities,
+  workflow context, state, review verdicts, and lifecycle commands. They should
+  not depend on `omp` source paths, private implementation details, or a special
+  built-in execution path.
 - Keep model and tool selections as portable defaults or capability
   declarations in the flow; actual resolution happens through `omp` settings and
   runtime configuration.

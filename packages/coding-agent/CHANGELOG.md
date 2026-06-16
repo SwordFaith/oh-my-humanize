@@ -10,6 +10,7 @@
 - Changed live workflow agents to appear as switchable transcript-monitor tabs with recent output and node-pulse lanes, making parallel workflow agents feel like focusable subagents.
 - Changed dashboard responsive behavior for compact, wide, and ultrawide terminals so the graph and operator controls stay visible while less urgent details are clipped.
 - Changed dashboard status language to distinguish live/running work from checkpoint frontiers, using `focus`/`frontier`/`Operator Deck` labels when no Agent Hub target is on-flight.
+- Changed named workflow lookup to treat bundled and `OMHFLOW_DIR` artifacts as peers: same-name matches are now rejected as ambiguous instead of silently preferring the bundled flow.
 
 ### Fixed
 

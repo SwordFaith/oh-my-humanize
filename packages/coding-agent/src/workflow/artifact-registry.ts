@@ -69,16 +69,18 @@ export async function resolveWorkflowFlowSpec(
 		return { kind: "path", input, path: pathCandidate };
 	}
 
-	const builtin = await firstNamedFlowCandidate(options.builtinRoot ?? getBuiltinWorkflowRoot(), input, "builtin");
-	if (builtin !== undefined) return builtin;
-
-	const external = await externalNamedFlowCandidates(input, workflowFlowDirs(options));
-	if (external.length > 1) {
+	const namedCandidates = [
+		...(await namedFlowCandidates(options.builtinRoot ?? getBuiltinWorkflowRoot(), input, "builtin")),
+		...(await externalNamedFlowCandidates(input, workflowFlowDirs(options))),
+	];
+	if (namedCandidates.length > 1) {
 		throw new WorkflowArtifactRegistryError(
-			`workflow flow "${input}" is ambiguous in ${OMHFLOW_DIR_ENV}:\n${external.map(match => `- ${match.path}`).join("\n")}`,
+			`workflow flow "${input}" is ambiguous across bundled and ${OMHFLOW_DIR_ENV} artifacts:\n${namedCandidates
+				.map(match => `- ${match.source}: ${match.path}`)
+				.join("\n")}\nUse an explicit .omhflow path to select one artifact.`,
 		);
 	}
-	if (external[0] !== undefined) return external[0];
+	if (namedCandidates[0] !== undefined) return namedCandidates[0];
 
 	throw new WorkflowArtifactRegistryError(
 		`workflow flow "${input}" was not found. Use a path, a built-in flow name, or add a .omhflow artifact to ${OMHFLOW_DIR_ENV}.`,

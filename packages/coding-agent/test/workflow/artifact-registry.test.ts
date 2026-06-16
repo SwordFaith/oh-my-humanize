@@ -573,6 +573,15 @@ describe("workflow artifact registry", () => {
 		).rejects.toThrow(/workflow flow "dupe-flow" is ambiguous/);
 	});
 
+	it("rejects ambiguous flow names between bundled and OMHFLOW_DIR artifacts", async () => {
+		const installRoot = await createTempDir();
+		await writeFlowArtifact(path.join(installRoot, "humanize-rlcr"), "humanize-rlcr");
+
+		await expect(
+			resolveWorkflowFlowSpec("humanize-rlcr", { cwd: process.cwd(), flowDirs: [installRoot] }),
+		).rejects.toThrow(/workflow flow "humanize-rlcr" is ambiguous/);
+	});
+
 	it("installs, lists, and uninstalls distributable .omhflow artifacts in the target flow dir", async () => {
 		const sourceRoot = await createTempDir();
 		const installRoot = await createTempDir();
