@@ -194,6 +194,9 @@ export async function handleWorkflowAcp(
 	if (verb === "manager") {
 		return handleManagerCommand(rest, runtime);
 	}
+	if (verb === "status") {
+		return handleStatusCommand(rest, runtime);
+	}
 	if (verb === "start") {
 		return handleStartCommand(rest, runtime);
 	}
@@ -280,11 +283,24 @@ async function handleGraphCommand(rest: string, runtime: SlashCommandRuntime): P
 async function handleManagerCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
 	const parsed = parseWorkflowManagerArgs(rest);
 	if ("error" in parsed) return usage(parsed.error, runtime);
+	return outputWorkflowManager(parsed, runtime);
+}
+
+async function handleStatusCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+	const parsed = parseWorkflowStatusArgs(rest);
+	if ("error" in parsed) return usage(parsed.error, runtime);
+	return outputWorkflowManager(parsed, runtime);
+}
+
+async function outputWorkflowManager(
+	args: WorkflowManagerArgs,
+	runtime: SlashCommandRuntime,
+): Promise<SlashCommandResult> {
 	let families = reconstructWorkflowFamilies(runtime.sessionManager.getBranch());
-	if (parsed.familyId !== undefined) families = families.filter(family => family.id === parsed.familyId);
+	if (args.familyId !== undefined) families = families.filter(family => family.id === args.familyId);
 	if (families.length === 0) {
 		await runtime.output(
-			parsed.familyId ? `Workflow family not found: ${parsed.familyId}` : "No workflow families found.",
+			args.familyId ? `Workflow family not found: ${args.familyId}` : "No workflow families found.",
 		);
 		return commandConsumed();
 	}
@@ -1118,9 +1134,13 @@ function parseWorkflowManagerArgs(rest: string): WorkflowManagerArgs | { error: 
 	return parseWorkflowFamilySelectorArgs(rest, "manager");
 }
 
+function parseWorkflowStatusArgs(rest: string): WorkflowManagerArgs | { error: string } {
+	return parseWorkflowFamilySelectorArgs(rest, "status");
+}
+
 function parseWorkflowFamilySelectorArgs(
 	rest: string,
-	commandName: "list" | "graph" | "manager",
+	commandName: "list" | "graph" | "manager" | "status",
 ): WorkflowListArgs | { error: string } {
 	const tokens = parseCommandArgs(rest);
 	let familyId: string | undefined;
@@ -2370,6 +2390,7 @@ function workflowUsage(): string {
 		"Usage: /workflow list [--family-id <id>]",
 		"Usage: /workflow graph [--family-id <id>]",
 		"Usage: /workflow manager [--family-id <id>]",
+		"Usage: /workflow status [--family-id <id>]",
 		"Usage: /workflow freeze <flow-or-path> [--family-id <id>]",
 		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--max-runtime-ms <n>] [--background]",
 		"Usage: /workflow request-change <file> [--family-id <id>] [--attempt-id <id>]",

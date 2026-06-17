@@ -5029,6 +5029,32 @@ edges:
 		);
 	});
 
+	it("accepts workflow status as a human-facing manager view alias", async () => {
+		const entries: CapturedEntry[] = [];
+		const freeze = createFreeze("flowfreeze:status", ["build", "review"]);
+		const host = createHostFromEntries(entries);
+		startWorkflowFamily(host, { familyId: "family-status", objective: "watch workflow health" });
+		recordWorkflowFreeze(host, freeze, { familyId: "family-status" });
+		startWorkflowAttempt(host, {
+			familyId: "family-status",
+			attemptId: "attempt-status",
+			freezeId: freeze.id,
+			startNodeId: "build",
+			runtimeBindingSnapshot: binding("binding-status"),
+		});
+		const { output, runtime } = createRuntime(entries);
+
+		expect(await executeAcpBuiltinSlashCommand("/workflow status --family-id family-status", runtime)).toEqual({
+			consumed: true,
+		});
+
+		expect(output).toHaveLength(1);
+		expect(output[0]).toContain("Workflow manager: family-status");
+		expect(output[0]).toContain("- Run: attempt-status running");
+		expect(output[0]).toContain("- Stop attempt · /workflow stop attempt-status --deadline-ms 30000");
+		expect(output[0]).not.toContain("Usage: /workflow");
+	});
+
 	it("rejects restarting a checkpoint that already has a running resume attempt", async () => {
 		const entries: CapturedEntry[] = [];
 		const freeze = createFreeze("flowfreeze:duplicate-restart", ["build", "review"]);

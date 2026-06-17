@@ -36,6 +36,7 @@
 - Fixed Agent Hub labeling for parked agents that have no reviver, showing them as history-only transcript entries instead of implying they can be revived.
 - Fixed `agent://` reads for running workflow agents to explain that live transcripts live under `history://`, instead of looking like missing finalized artifacts.
 - Fixed workflow lifecycle commands so `/workflow stop` and `/workflow interrupt` accept a unique dashboard-displayed short attempt id while rejecting ambiguous short ids with full-id guidance.
+- Fixed `/workflow status` to open the human-facing workflow manager view instead of falling through to usage text.
 
 ### Removed
 
