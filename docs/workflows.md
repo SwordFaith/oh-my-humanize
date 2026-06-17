@@ -32,8 +32,10 @@ resources. Resource paths inside the flow resolve from that same-name directory.
 
 - **Built-in practical flows** are generic, reusable workflows that ship with
   `omp` and can be addressed by name. A flow may be promoted into this tier only
-  after stable long-running validation evidence on real projects. In OMH terms,
-  long-running means more than eight hours for a Project x Flow x Task run.
+  after stable long-running validation evidence across real projects and tasks.
+  In OMH terms, long-running means more than eight hours for a Project x Flow x
+  Task run. One audited eight-hour run is useful candidate evidence, but it is
+  not enough to prove a flow is generic and practical enough to ship.
 - **Flow candidates** are promising practical workflows that still need
   long-running evidence or design hardening. Keep them outside the package and
   load them through `OMHFLOW_DIR` or an explicit `.omhflow` path. Candidate
@@ -49,9 +51,9 @@ seed project, fixture, or demo workspace must stay a demo or be split into a
 generic structure plus a separate demo binding.
 
 At the moment, the packaged built-in practical set is empty until candidates
-earn stable long-running evidence. During development, candidates such as
-Humanize RLCR or KDA-style Humanize composition can still be exercised through
-`OMHFLOW_DIR`:
+earn stable long-running evidence in more than one Project x Flow x Task
+context. During development, candidates such as Humanize RLCR or KDA-style
+Humanize composition can still be exercised through `OMHFLOW_DIR`:
 
 ```sh
 export OMHFLOW_DIR="$PWD/temp/candidate-flows"

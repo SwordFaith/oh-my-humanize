@@ -32,10 +32,12 @@ The most capable agent surface that ships. Continuously tuned by real-world use 
 distributable `.omhflow + resources` artifact, run it with a live TUI graph,
 stop/checkpoint a production attempt, approve flow changes, and restart safely.
 Built-in flows are reserved for practical, generic workflows with stable
-long-running validation evidence on real projects. Unverified but promising
-flows stay outside the package as candidates and can be loaded through
-`OMHFLOW_DIR`; seed-bound or teaching artifacts stay demos. External flows can
-be installed with `omp workflow install` or discovered through `OMHFLOW_DIR`.
+long-running validation evidence across real projects and tasks. A single
+eight-hour run is candidate evidence, not built-in proof. Unverified but
+promising flows stay outside the package as candidates and can be loaded
+through `OMHFLOW_DIR`; seed-bound or teaching artifacts stay demos. External
+flows can be installed with `omp workflow install` or discovered through
+`OMHFLOW_DIR`.
 
 ```sh
 omp workflow list

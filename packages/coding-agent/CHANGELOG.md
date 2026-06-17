@@ -16,6 +16,7 @@
 - Changed dashboard status language to distinguish live/running work from checkpoint frontiers, using `focus`/`frontier`/`Operator Deck` labels when no Agent Hub target is on-flight.
 - Changed named workflow lookup to treat bundled and `OMHFLOW_DIR` artifacts as peers: same-name matches are now rejected as ambiguous instead of silently preferring the bundled flow.
 - Changed workflow library policy so packaged built-in flows are reserved for practical, generic workflows with stable long-running evidence; unverified practical flows stay as `OMHFLOW_DIR` candidates and seed-bound artifacts stay demos.
+- Changed workflow documentation to clarify that a single audited eight-hour run is candidate evidence, while built-in workflow promotion requires stable evidence across more than one real Project x Flow x Task context.
 - Changed `omp workflow` help examples to start distributable artifacts by path or candidate flows through `OMHFLOW_DIR`, avoiding bare-name examples for unverified candidates.
 
 ### Fixed

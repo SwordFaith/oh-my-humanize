@@ -21,9 +21,11 @@ they are not packaged practical workflows and should be used by explicit path.
 Reserved for built-in practical workflow artifacts; the directory is
 intentionally absent while no workflow has earned that tier. A workflow may be
 added here only after it is generic, useful on real projects, and backed by
-stable eight-hour-plus Project x Flow x Task validation evidence. Unverified
-practical flows belong in an external candidate directory such as
-`OMHFLOW_DIR`; seed-bound or teaching artifacts belong in `workflow-demos/`.
+stable eight-hour-plus Project x Flow x Task validation evidence across more
+than one real context. A single audited long-running run is candidate evidence,
+not a built-in promotion. Unverified practical flows belong in an external
+candidate directory such as `OMHFLOW_DIR`; seed-bound or teaching artifacts
+belong in `workflow-demos/`.
 
 ## Documentation
 
