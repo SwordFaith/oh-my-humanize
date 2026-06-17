@@ -19,6 +19,7 @@ export interface WorkflowScriptNodeInput extends WorkflowNodeRuntimeInput {
 	script?: string;
 	scriptLanguage?: WorkflowScriptLanguage;
 	scriptPath?: string;
+	timeoutMs?: number;
 	resourceDir?: string;
 	model?: WorkflowModelContext;
 	context?: WorkflowScriptContext;
@@ -145,6 +146,7 @@ async function executeScriptNode(
 		script: node.script?.code ?? node.prompt,
 		scriptLanguage: node.script?.language,
 		scriptPath: node.script?.file,
+		timeoutMs: node.script?.timeoutMs,
 		model: node.model,
 	};
 	if (options.resourceDir !== undefined) {

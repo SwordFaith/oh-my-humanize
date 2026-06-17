@@ -148,6 +148,34 @@ describe("workflow shell script runtime adapter", () => {
 		});
 	});
 
+	it("forwards workflow script runtime budgets to bash execution", async () => {
+		const cwd = await createTempDir();
+		const executeSpy = vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
+			exitCode: 0,
+			output: '{"summary":"ok"}',
+			cancelled: false,
+			truncated: false,
+			totalLines: 1,
+			totalBytes: 16,
+			outputLines: 1,
+			outputBytes: 16,
+		});
+		const runner = createShellScriptRunner(createToolSession(cwd));
+
+		await runner({
+			activationId: "activation-timeout",
+			nodeId: "slow-validation",
+			code: 'printf \'{"summary":"ok"}\\n\'',
+			language: "sh",
+			title: "slow-validation",
+			timeoutMs: 45_000,
+		});
+
+		expect(executeSpy.mock.calls[0]?.[1]).toMatchObject({
+			timeout: 45_000,
+		});
+	});
+
 	it("returns cancellation promptly when shell workflow scripts are aborted", async () => {
 		const cwd = await createTempDir();
 		await Settings.init({ inMemory: true, overrides: { shellPath: "/bin/sh" } });

@@ -13,7 +13,7 @@ export function createShellScriptRunner(toolSession: ToolSession): WorkflowShell
 	return async request => {
 		const result = await executeBash(workflowShellCommand(request.code), {
 			cwd: toolSession.cwd,
-			timeout: WORKFLOW_SHELL_TIMEOUT_MS,
+			timeout: request.timeoutMs ?? WORKFLOW_SHELL_TIMEOUT_MS,
 			signal: request.signal,
 			sessionKey: workflowShellSessionKey(toolSession, request.activationId),
 			useUserShell: true,

@@ -7,14 +7,17 @@ import type { WorkflowScriptEvalResult, WorkflowScriptEvalRunner } from "./sessi
 export function createEvalToolScriptRunner(toolSession: ToolSession): WorkflowScriptEvalRunner {
 	return async request => {
 		const evalTool = new EvalTool(await workflowScriptToolSession(toolSession));
+		const cell: EvalToolParams["cells"][number] = {
+			language: request.language,
+			code: request.code,
+			title: request.title,
+		};
+		const timeout = workflowScriptEvalTimeoutSeconds(request.timeoutMs);
+		if (timeout !== undefined) {
+			cell.timeout = timeout;
+		}
 		const params: EvalToolParams = {
-			cells: [
-				{
-					language: request.language,
-					code: request.code,
-					title: request.title,
-				},
-			],
+			cells: [cell],
 		};
 		const result = await evalTool.execute(`workflow-${request.activationId}`, params);
 		return workflowScriptResultFromEvalTool(request.language, result);
@@ -54,6 +57,11 @@ function exitCodeFromEvalDetails(details: EvalToolDetails | undefined): number {
 	const firstCell = details?.cells?.[0];
 	if (firstCell?.exitCode !== undefined) return firstCell.exitCode;
 	return details?.isError ? 1 : 0;
+}
+
+function workflowScriptEvalTimeoutSeconds(timeoutMs: number | undefined): number | undefined {
+	if (timeoutMs === undefined) return undefined;
+	return Math.max(1, Math.min(3600, Math.ceil(timeoutMs / 1000)));
 }
 
 function textContent(content: Array<{ type: string; text?: string }>): string {

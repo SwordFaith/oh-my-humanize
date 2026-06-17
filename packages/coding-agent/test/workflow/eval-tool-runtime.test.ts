@@ -87,4 +87,21 @@ describe("workflow eval tool runtime adapter", () => {
 		expect(result.output).toBe(JSON.stringify(structured));
 		expect(result.output).not.toContain("…");
 	});
+
+	it("honors workflow script runtime budgets instead of the eval default", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-eval-");
+		const runner = createEvalToolScriptRunner(createToolSession(tempDir.path()));
+
+		const result = await runner({
+			activationId: "activation-timeout",
+			nodeId: "slow-validation",
+			code: 'await Bun.sleep(1500); return { summary: "late" };',
+			language: "js",
+			title: "slow-validation",
+			timeoutMs: 1_000,
+		});
+
+		expect(result.exitCode).not.toBe(0);
+		expect(result.error?.toLowerCase()).toMatch(/time(?:d)? out|timeout/u);
+	}, 5_000);
 });

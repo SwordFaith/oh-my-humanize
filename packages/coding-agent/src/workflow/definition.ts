@@ -5,6 +5,7 @@ import { parseWorkflowStateSchema, type WorkflowStateSchema, WorkflowStateSchema
 export type WorkflowNodeType = "agent" | "script" | "human" | "review";
 export type WorkflowModelUnavailablePolicy = "fallback-to-parent" | "fail";
 export type WorkflowScriptLanguage = "js" | "py" | "sh";
+export const WORKFLOW_SCRIPT_TIMEOUT_MAX_MS = 60 * 60 * 1000;
 
 export interface WorkflowModelContext {
 	role?: string;
@@ -116,6 +117,7 @@ export interface WorkflowScriptSource {
 	language?: WorkflowScriptLanguage;
 	code?: string;
 	file?: string;
+	timeoutMs?: number;
 }
 
 export interface WorkflowNode {
@@ -645,6 +647,7 @@ function parseScriptSource(value: unknown, path: string, sourcePath?: string): W
 	const language = parseScriptLanguage(raw.language, `${path}.language`, sourcePath);
 	const code = parseOptionalString(raw.inline, `${path}.inline`, sourcePath);
 	const file = parseOptionalString(raw.file, `${path}.file`, sourcePath);
+	const timeoutMs = parseOptionalScriptTimeoutMs(raw.timeoutMs, `${path}.timeoutMs`, sourcePath);
 	const sourceCount = [code, file].filter(entry => entry !== undefined).length;
 	if (sourceCount !== 1) {
 		throw new WorkflowDefinitionError(`${path} must define exactly one of inline or file`, sourcePath);
@@ -653,6 +656,7 @@ function parseScriptSource(value: unknown, path: string, sourcePath?: string): W
 	if (language !== undefined) script.language = language;
 	if (code !== undefined) script.code = code;
 	if (file !== undefined) script.file = file;
+	if (timeoutMs !== undefined) script.timeoutMs = timeoutMs;
 	return script;
 }
 
@@ -660,6 +664,22 @@ function parseScriptLanguage(value: unknown, path: string, sourcePath?: string):
 	if (value === undefined) return undefined;
 	if (value === "js" || value === "py" || value === "sh") return value;
 	throw new WorkflowDefinitionError(`${path} must be js, py, or sh`, sourcePath);
+}
+
+function parseOptionalScriptTimeoutMs(value: unknown, path: string, sourcePath?: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (
+		typeof value === "number" &&
+		Number.isSafeInteger(value) &&
+		value > 0 &&
+		value <= WORKFLOW_SCRIPT_TIMEOUT_MAX_MS
+	) {
+		return value;
+	}
+	throw new WorkflowDefinitionError(
+		`${path} must be a positive integer no greater than ${WORKFLOW_SCRIPT_TIMEOUT_MAX_MS}`,
+		sourcePath,
+	);
 }
 
 function parseUnavailable(

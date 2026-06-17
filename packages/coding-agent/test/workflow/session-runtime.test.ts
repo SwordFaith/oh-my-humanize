@@ -125,6 +125,42 @@ describe("session workflow runtime host", () => {
 		});
 	});
 
+	it("passes script runtime budgets to eval runners", async () => {
+		const definition = parseWorkflowDefinition(
+			`
+name: eval-timeout
+version: 1
+nodes:
+  validate:
+    type: script
+    script:
+      language: js
+      timeoutMs: 90000
+      inline: |
+        return { summary: "validated" };
+edges: []
+`,
+			{ sourcePath: "timeout.yml" },
+		);
+		const node = definition.nodes[0];
+		if (!node) throw new Error("expected validate node");
+		let capturedRequest: WorkflowScriptEvalRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runEvalScript: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: "validated",
+				};
+			},
+		});
+
+		await executeWorkflowNode(node, activation(node.id), host);
+
+		expect(capturedRequest?.timeoutMs).toBe(90000);
+	});
+
 	it("maps shell script nodes to a shell runner without using the eval runner", async () => {
 		const definition = parseWorkflowDefinition(scriptWorkflow, { sourcePath: "workflow.yml" });
 		const node = definition.nodes.find(candidate => candidate.id === "command");
@@ -164,6 +200,41 @@ describe("session workflow runtime host", () => {
 			summary: "shell-ok",
 			data: { kind: "command" },
 		});
+	});
+
+	it("passes script runtime budgets to shell runners", async () => {
+		const definition = parseWorkflowDefinition(
+			`
+name: shell-timeout
+version: 1
+nodes:
+  validate:
+    type: script
+    script:
+      language: sh
+      timeoutMs: 120000
+      inline: printf '{"summary":"validated"}\\n'
+edges: []
+`,
+			{ sourcePath: "timeout.yml" },
+		);
+		const node = definition.nodes[0];
+		if (!node) throw new Error("expected validate node");
+		let capturedRequest: WorkflowShellScriptRequest | undefined;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: process.cwd(),
+			runShellScript: async request => {
+				capturedRequest = request;
+				return {
+					exitCode: 0,
+					output: JSON.stringify({ summary: "validated" }),
+				};
+			},
+		});
+
+		await executeWorkflowNode(node, activation(node.id), host);
+
+		expect(capturedRequest?.timeoutMs).toBe(120000);
 	});
 
 	it("accepts structured activation output from script stdout JSON", async () => {

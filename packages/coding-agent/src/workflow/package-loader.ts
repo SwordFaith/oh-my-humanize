@@ -454,6 +454,7 @@ function workflowScriptSourceToRawScript(script: WorkflowScriptSource): Record<s
 	if (script.language !== undefined) raw.language = script.language;
 	if (script.code !== undefined) raw.inline = script.code;
 	if (script.file !== undefined) raw.file = script.file;
+	if (script.timeoutMs !== undefined) raw.timeoutMs = script.timeoutMs;
 	return raw;
 }
 

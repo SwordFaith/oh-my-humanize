@@ -59,6 +59,7 @@ export interface WorkflowScriptEvalRequest {
 	code: string;
 	language: WorkflowScriptEvalLanguage;
 	title: string;
+	timeoutMs?: number;
 	resourceDir?: string;
 	context?: WorkflowScriptContext;
 }
@@ -69,6 +70,7 @@ export interface WorkflowShellScriptRequest {
 	code: string;
 	language: WorkflowShellScriptLanguage;
 	title: string;
+	timeoutMs?: number;
 	resourceDir?: string;
 	signal?: AbortSignal;
 	context?: WorkflowScriptContext;
@@ -203,6 +205,7 @@ async function runEvalWorkflowScript(
 		activation: { id: string };
 		scriptLanguage?: WorkflowScriptLanguage;
 		scriptPath?: string;
+		timeoutMs?: number;
 		resourceDir?: string;
 		context?: WorkflowScriptContext;
 	},
@@ -223,6 +226,9 @@ async function runEvalWorkflowScript(
 		language,
 		title: input.scriptPath ?? nodeId,
 	};
+	if (input.timeoutMs !== undefined) {
+		request.timeoutMs = input.timeoutMs;
+	}
 	if (input.resourceDir !== undefined) {
 		request.resourceDir = input.resourceDir;
 	}
@@ -260,6 +266,7 @@ async function runShellWorkflowScript(
 	input: {
 		activation: { id: string };
 		scriptPath?: string;
+		timeoutMs?: number;
 		resourceDir?: string;
 		signal?: AbortSignal;
 		context?: WorkflowScriptContext;
@@ -276,6 +283,9 @@ async function runShellWorkflowScript(
 		language: "sh",
 		title: input.scriptPath ?? nodeId,
 	};
+	if (input.timeoutMs !== undefined) {
+		request.timeoutMs = input.timeoutMs;
+	}
 	if (input.resourceDir !== undefined) {
 		request.resourceDir = input.resourceDir;
 	}

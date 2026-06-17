@@ -117,6 +117,50 @@ edges:
 		expect(definition.edges[0]?.condition?.source).toBe("state.decision.retry == true");
 	});
 
+	it("preserves script node runtime budgets from workflow definitions", () => {
+		const source = `
+name: script-timeout
+version: 1
+nodes:
+  validate:
+    type: script
+    script:
+      language: js
+      timeoutMs: 120000
+      inline: |
+        return { summary: "validated" };
+edges: []
+`;
+
+		const definition = parseWorkflowDefinition(source, { sourcePath: "timeout.yml" });
+
+		expect(definition.nodes[0]?.script).toEqual({
+			language: "js",
+			code: 'return { summary: "validated" };\n',
+			timeoutMs: 120000,
+		});
+	});
+
+	it("rejects script node runtime budgets outside the supported adapter limit", () => {
+		const source = `
+name: invalid-script-timeout
+version: 1
+nodes:
+  validate:
+    type: script
+    script:
+      language: js
+      timeoutMs: 3600001
+      inline: |
+        return { summary: "validated" };
+edges: []
+`;
+
+		expect(() => parseWorkflowDefinition(source, { sourcePath: "timeout.yml" })).toThrow(
+			"timeout.yml: nodes.validate.script.timeoutMs must be a positive integer no greater than 3600000",
+		);
+	});
+
 	it("rejects state condition references outside declared state schema paths", () => {
 		const source = `
 name: invalid-state-condition

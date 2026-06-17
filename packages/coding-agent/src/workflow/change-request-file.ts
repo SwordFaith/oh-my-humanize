@@ -11,6 +11,7 @@ import type {
 	WorkflowTemplatePromptBindingSource,
 	WorkflowTemplatePromptSource,
 } from "./definition";
+import { WORKFLOW_SCRIPT_TIMEOUT_MAX_MS } from "./definition";
 import type { WorkflowChangeRequestOrigin } from "./lifecycle";
 import type { WorkflowGraphPatchOperation } from "./patches";
 
@@ -379,6 +380,8 @@ function parseWorkflowPatchScriptSource(value: unknown, pathLabel: string): Work
 	}
 	if (inlineOrCode !== undefined) script.code = expectWorkflowPatchString(inlineOrCode, `${pathLabel}.code`);
 	if (raw.file !== undefined) script.file = expectWorkflowPatchString(raw.file, `${pathLabel}.file`);
+	const timeoutMs = parseWorkflowPatchScriptTimeoutMs(raw.timeoutMs, `${pathLabel}.timeoutMs`);
+	if (timeoutMs !== undefined) script.timeoutMs = timeoutMs;
 	return script;
 }
 
@@ -386,6 +389,19 @@ function parseWorkflowPatchScriptLanguage(value: unknown, pathLabel: string): Wo
 	if (value === undefined) return undefined;
 	if (value === "js" || value === "py" || value === "sh") return value;
 	throw new Error(`${pathLabel} must be js, py, or sh`);
+}
+
+function parseWorkflowPatchScriptTimeoutMs(value: unknown, pathLabel: string): number | undefined {
+	if (value === undefined) return undefined;
+	if (
+		typeof value === "number" &&
+		Number.isSafeInteger(value) &&
+		value > 0 &&
+		value <= WORKFLOW_SCRIPT_TIMEOUT_MAX_MS
+	) {
+		return value;
+	}
+	throw new Error(`${pathLabel} must be a positive integer no greater than ${WORKFLOW_SCRIPT_TIMEOUT_MAX_MS}`);
 }
 
 function parseRequiredWorkflowPatchModelContext(value: unknown, pathLabel: string): WorkflowModelContext {
