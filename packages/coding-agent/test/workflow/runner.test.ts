@@ -665,6 +665,79 @@ edges:
 		]);
 	});
 
+	it("materializes structured node data into a single declared workflow write path", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-auto-write-"));
+		try {
+			await fs.mkdir(path.join(dir, "prompts"), { recursive: true });
+			await Bun.write(path.join(dir, "prompts", "build.md"), "Inventory:\n{{inventory}}\n");
+			const definition = parseWorkflowDefinition(
+				`
+name: data-write-workflow
+version: 1
+nodes:
+  inventory:
+    type: agent
+    agent: task
+    writes:
+      - /inventory
+  build:
+    type: agent
+    agent: task
+    reads:
+      - /inventory
+    prompt:
+      template:
+        file: prompts/build.md
+        bindings:
+          inventory:
+            state: /inventory
+edges:
+  - from: inventory
+    to: build
+`,
+				{ sourcePath: path.join(dir, "workflow.yml") },
+			);
+			const host = createHost();
+			let buildPrompt = "";
+			const runtimeHost: WorkflowNodeRuntimeHost = {
+				runAgentNode: async input => {
+					if (input.node.id === "inventory") {
+						return {
+							summary: "inventoried",
+							data: {
+								files: ["README.md", "src/index.ts"],
+								risk: "medium",
+							},
+						};
+					}
+					buildPrompt = input.prompt ?? "";
+					return { summary: "built" };
+				},
+			};
+
+			const result = await runWorkflow({
+				host,
+				definition,
+				runId: "run-data-write",
+				startNodeId: "inventory",
+				runtimeHost,
+				packageRoot: dir,
+			});
+
+			expect(result.scheduler.state).toEqual({
+				inventory: {
+					files: ["README.md", "src/index.ts"],
+					risk: "medium",
+				},
+			});
+			expect(buildPrompt).toBe(
+				'Inventory:\n{\n  "files": [\n    "README.md",\n    "src/index.ts"\n  ],\n  "risk": "medium"\n}',
+			);
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("loads package-local script files with their declared language", async () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-script-file-"));
 		try {

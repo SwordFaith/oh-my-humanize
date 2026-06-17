@@ -366,21 +366,19 @@ async function executeAndPersistActivation(
 			throw new WorkflowRunnerError(modelAudit.error);
 		}
 		const executionSignal = context.nodeAbortSignal ?? context.signal;
-		const output = validateWorkflowActivationOutput(
-			await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost, {
-				modelOverride: modelOverrideFromAudit(modelAudit),
-				signal: executionSignal,
-				context: {
-					state: context.state,
-					completedActivations: context.completedActivations,
-				},
-				resourceDir,
-			}),
-			{
-				allowedWritePaths: node.writes,
-				stateSchema: options.definition.stateSchema,
+		const rawOutput = await executeWorkflowNode(nodeForExecution, activation, options.runtimeHost, {
+			modelOverride: modelOverrideFromAudit(modelAudit),
+			signal: executionSignal,
+			context: {
+				state: context.state,
+				completedActivations: context.completedActivations,
 			},
-		);
+			resourceDir,
+		});
+		const output = validateWorkflowActivationOutput(materializeSingleWriteData(node, rawOutput), {
+			allowedWritePaths: node.writes,
+			stateSchema: options.definition.stateSchema,
+		});
 		if (output.statePatch) {
 			appendWorkflowStatePatch(options.host, run.id, {
 				patch: output.statePatch,
@@ -421,6 +419,21 @@ async function executeAndPersistActivation(
 		appendLifecycleActivationFailed(options, activation, message);
 		throw error;
 	}
+}
+
+function materializeSingleWriteData(node: WorkflowNode, output: WorkflowActivationOutput): WorkflowActivationOutput {
+	if (output.statePatch !== undefined) return output;
+	const writePath = node.writes?.length === 1 ? node.writes[0] : undefined;
+	if (writePath === undefined || !hasStructuredWorkflowData(output.data)) return output;
+	return {
+		...output,
+		statePatch: [{ op: "set", path: writePath, value: output.data }],
+	};
+}
+
+function hasStructuredWorkflowData(data: Record<string, unknown> | undefined): data is Record<string, unknown> {
+	if (data === undefined) return false;
+	return Object.keys(data).some(key => key !== "exitCode" && key !== "summaryTruncated" && key !== "summaryBytes");
 }
 
 function appendLifecycleActivationStarted(
