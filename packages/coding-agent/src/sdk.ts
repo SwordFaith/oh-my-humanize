@@ -21,6 +21,7 @@ import {
 	getOpenAICodexTransportDetails,
 	prewarmOpenAICodexResponses,
 } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
+import { FALLBACK_DIALECT, preferredDialect } from "@oh-my-pi/pi-catalog/identity";
 import type { Component } from "@oh-my-pi/pi-tui";
 import {
 	$env,
@@ -40,7 +41,6 @@ import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/con
 import { loadCapability } from "./capability";
 import { type Rule, ruleCapability, setActiveRules } from "./capability/rule";
 import { bucketRules } from "./capability/rule-buckets";
-import { createApiKeyResolver } from "./config/api-key-resolver";
 import { shouldEnableAppendOnlyContext } from "./config/append-only-context-mode";
 import { ModelRegistry } from "./config/model-registry";
 import {
@@ -573,10 +573,15 @@ export type DialectFormat = "auto" | "native" | Dialect;
 
 export function resolveDialect(
 	format: DialectFormat,
-	model: Pick<Model, "supportsTools"> | undefined,
+	model: (Pick<Model, "supportsTools"> & Partial<Pick<Model, "id">>) | undefined,
 ): Dialect | undefined {
 	if (format === "native") return undefined;
-	if (format === "auto") return model?.supportsTools === false ? "glm" : undefined;
+	if (format === "auto") {
+		if (model?.supportsTools !== false) return undefined;
+		if (!model.id) return "glm";
+		const preferred = preferredDialect(model.id);
+		return preferred === FALLBACK_DIALECT ? "glm" : preferred;
+	}
 	return format;
 }
 
@@ -2486,31 +2491,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			kimiApiFormat: settings.get("providers.kimiApiFormat") ?? "anthropic",
 			preferWebsockets: preferOpenAICodexWebsockets,
 			getToolContext: tc => toolContextStore.getContext(tc),
-			getApiKey: async (provider, ctx) => {
+			getApiKey: requestModel => {
 				// Read agent.sessionId at call time so credential selection stays aligned
-				// with metadataResolver after /new, fork, resume, or branch switches.
-				// Retry steps (ctx carries an auth error) drive the central a/b/c
-				// policy — force-refresh the same account, then rotate to a sibling —
-				// and may legitimately yield no key when every account is exhausted.
-				if (options.runtimeApiKey && runtimeApiKeyProvider === provider) {
+				// after /new, fork, resume, or branch switches. Returning the registry
+				// resolver keeps retry-time key rotation inside the central auth policy.
+				if (options.runtimeApiKey && runtimeApiKeyProvider === requestModel.provider) {
 					return options.runtimeApiKey;
 				}
-				if (ctx?.error !== undefined) {
-					return createApiKeyResolver(modelRegistry, provider, { sessionId: agent.sessionId })(ctx);
-				}
-				const key = await modelRegistry.getApiKeyForProvider(provider, agent.sessionId);
-				if (!key) {
-					throw new Error(`No API key found for provider "${provider}"`);
-				}
-				return key;
+				return modelRegistry.resolver(requestModel, agent.sessionId);
 			},
 			streamFn: (streamModel, context, streamOptions) => {
 				const openrouterRoutingPreset = settings.get("providers.openrouterVariant");
 				const openrouterVariant =
 					openrouterRoutingPreset && openrouterRoutingPreset !== "default" ? openrouterRoutingPreset : undefined;
+				const antigravityEndpointMode = settings.get("providers.antigravityEndpoint");
 				return streamSimple(streamModel, context, {
 					...streamOptions,
 					openrouterVariant: streamOptions?.openrouterVariant ?? openrouterVariant,
+					antigravityEndpointMode: streamOptions?.antigravityEndpointMode ?? antigravityEndpointMode,
 				});
 			},
 			cursorExecHandlers,

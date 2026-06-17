@@ -415,6 +415,16 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 	shellPath: { type: "string", default: undefined },
+	"git.enabled": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "interaction",
+			group: "Git",
+			label: "Enable Git Integration",
+			description: "Show git branch, status, and PR information in the TUI and watch repository metadata.",
+		},
+	},
 
 	extensions: { type: "array", default: EMPTY_STRING_ARRAY },
 
@@ -709,6 +719,18 @@ export const SETTINGS_SCHEMA = {
 			group: "Images",
 			label: "Block Images",
 			description: "Prevent images from being sent to LLM providers",
+		},
+	},
+
+	"images.describeForTextModels": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "model",
+			group: "Vision",
+			label: "Describe Images for Text Models",
+			description:
+				"When an image is attached to a model without vision support, save it under local:// and inject a description from a vision-capable model instead of dropping it",
 		},
 	},
 
@@ -1505,7 +1527,7 @@ export const SETTINGS_SCHEMA = {
 	// Context promotion
 	"contextPromotion.enabled": {
 		type: "boolean",
-		default: true,
+		default: false,
 		ui: {
 			tab: "context",
 			group: "General",
@@ -1769,6 +1791,7 @@ export const SETTINGS_SCHEMA = {
 			"qwen3",
 			"gemini",
 			"gemma",
+			"minimax",
 		] as const,
 		default: "auto",
 		ui: {
@@ -1795,6 +1818,7 @@ export const SETTINGS_SCHEMA = {
 				{ value: "qwen3", label: "Qwen3", description: "Use the Qwen3 owned dialect." },
 				{ value: "gemini", label: "Gemini", description: "Use the Gemini owned dialect." },
 				{ value: "gemma", label: "Gemma", description: "Use the Gemma owned dialect." },
+				{ value: "minimax", label: "MiniMax", description: "Use the MiniMax owned dialect." },
 			],
 		},
 	},
@@ -3855,6 +3879,34 @@ export const SETTINGS_SCHEMA = {
 			group: "Services",
 			label: "Excluded Web Search Providers",
 			description: "Providers that web_search should never use, even as fallbacks",
+		},
+	},
+	"providers.antigravityEndpoint": {
+		type: "enum",
+		values: ["auto", "production", "sandbox"] as const,
+		default: "auto",
+		ui: {
+			tab: "providers",
+			group: "Services",
+			label: "Antigravity Endpoint Mode",
+			description: "Endpoint routing strategy for google-antigravity providers (chat, search, image, discovery)",
+			options: [
+				{
+					value: "auto",
+					label: "Auto",
+					description: "Try production endpoint, fail over to sandbox on 5xx/429",
+				},
+				{
+					value: "production",
+					label: "Production Only",
+					description: "Force production endpoint only",
+				},
+				{
+					value: "sandbox",
+					label: "Sandbox Only",
+					description: "Force sandbox endpoint only",
+				},
+			],
 		},
 	},
 	"providers.image": {
