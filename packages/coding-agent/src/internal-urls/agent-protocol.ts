@@ -87,10 +87,16 @@ export class AgentProtocolHandler implements ProtocolHandler {
 			const availableStr = availableIds.size > 0 ? [...availableIds].join(", ") : "none";
 			const ref = findRegisteredAgentRef(outputId);
 			if (ref !== undefined) {
+				const headline =
+					ref.status === "running" ? `Output not ready: ${outputId}` : `Finalized output not found: ${outputId}`;
+				const artifactScope =
+					ref.status === "running"
+						? "agent:// resolves finalized output artifacts, not live transcripts."
+						: "agent:// only resolves finalized output artifacts.";
 				throw new Error(
 					[
-						`Output not ready: ${outputId}`,
-						`Agent ${ref.id} is ${ref.status}; agent:// resolves finalized output artifacts, not live transcripts.`,
+						headline,
+						`Agent ${ref.id} is ${ref.status}; ${artifactScope}`,
 						`Read the transcript with history://${ref.id}.`,
 						`Available finalized outputs: ${availableStr}`,
 					].join("\n"),

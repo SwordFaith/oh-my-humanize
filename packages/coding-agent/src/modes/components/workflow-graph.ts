@@ -1429,7 +1429,9 @@ function compactWorkflowGraphStatusLine(line: string, density: WorkflowGraphDens
 }
 
 function compactWorkflowGraphControl(action: string): string {
-	if (/^(?:Stop attempt|Restart|Interrupt\b).* · \/workflow /u.test(action)) return action;
+	if (/^(?:Stop attempt|Restart|Interrupt\b).* · \/workflow /u.test(action)) {
+		return action.replace(/\s+--deadline-ms\s+\S+/u, "");
+	}
 	const commandSeparator = action.search(/ · (?:\/workflow|Agent Hub|double-left)/u);
 	if (commandSeparator !== -1) return action.slice(0, commandSeparator);
 	const legacySeparator = action.indexOf(": ");
