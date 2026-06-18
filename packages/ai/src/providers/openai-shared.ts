@@ -1198,9 +1198,24 @@ export function repairOrphanResponsesToolCalls(input: ResponseInput): ResponseIn
 	return repaired;
 }
 
+/**
+ * Some Responses backends (notably GitHub Copilot) reject the OpenAI image
+ * `detail: "original"` value with a 400. When the model does not advertise
+ * support for it, degrade `"original"` to `"auto"` so the request still goes
+ * through with the closest valid fidelity instead of failing outright. See #2822.
+ */
+function clampResponsesImageDetail(
+	detail: ImageContent["detail"],
+	supportsImageDetailOriginal: boolean,
+): ResponseInputImage["detail"] {
+	const resolved = detail ?? "auto";
+	return resolved === "original" && !supportsImageDetailOriginal ? "auto" : resolved;
+}
+
 export function convertResponsesInputContent(
 	content: string | Array<TextContent | ImageContent>,
 	supportsImages: boolean,
+	supportsImageDetailOriginal: boolean,
 ): ResponseInputContent[] | undefined {
 	if (typeof content === "string") {
 		if (content.trim().length === 0) return undefined;
@@ -1220,7 +1235,7 @@ export function convertResponsesInputContent(
 	for (const item of imageBlocks) {
 		normalizedContent.push({
 			type: "input_image",
-			detail: item.detail ?? "auto",
+			detail: clampResponsesImageDetail(item.detail, supportsImageDetailOriginal),
 			image_url: `data:${item.mimeType};base64,${item.data}`,
 		} satisfies ResponseInputImage);
 	}
@@ -1237,6 +1252,7 @@ export interface BuildResponsesInputOptions<TApi extends Api> {
 	model: Model<TApi>;
 	context: Context;
 	strictResponsesPairing: boolean;
+	supportsImageDetailOriginal: boolean;
 	systemRole?: "system" | "developer";
 	nativeHistory?: {
 		replay: boolean;
@@ -1287,7 +1303,11 @@ export function buildResponsesInput<TApi extends Api>(options: BuildResponsesInp
 				msgIndex++;
 				continue;
 			}
-			const content = convertResponsesInputContent(msg.content, options.model.input.includes("image"));
+			const content = convertResponsesInputContent(
+				msg.content,
+				options.model.input.includes("image"),
+				options.supportsImageDetailOriginal,
+			);
 			if (!content) continue;
 			messages.push({
 				role: "user",
@@ -1338,6 +1358,7 @@ export function buildResponsesInput<TApi extends Api>(options: BuildResponsesInp
 				msg,
 				options.model,
 				options.strictResponsesPairing,
+				options.supportsImageDetailOriginal,
 				knownCallIds,
 				customCallIds,
 			);
@@ -1439,6 +1460,7 @@ export function appendResponsesToolResultMessages<TApi extends Api>(
 	toolResult: ToolResultMessage,
 	model: Model<TApi>,
 	strictResponsesPairing: boolean,
+	supportsImageDetailOriginal: boolean,
 	knownCallIds: ReadonlySet<string>,
 	customCallIds?: ReadonlySet<string>,
 ): void {
@@ -1495,7 +1517,7 @@ export function appendResponsesToolResultMessages<TApi extends Api>(
 		if (block.type === "image") {
 			contentParts.push({
 				type: "input_image",
-				detail: block.detail ?? "auto",
+				detail: clampResponsesImageDetail(block.detail, supportsImageDetailOriginal),
 				image_url: `data:${block.mimeType};base64,${block.data}`,
 			} satisfies ResponseInputImage);
 		}
