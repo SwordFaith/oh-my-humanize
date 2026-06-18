@@ -3,6 +3,7 @@ import type { InteractiveModeContext } from "../modes/types";
 import type { AgentSession } from "../session/agent-session";
 import type { SessionManager } from "../session/session-manager";
 import type { WorkflowGraphActiveAgentProgress, WorkflowGraphView } from "../workflow/graph-view";
+import type { WorkflowMonitorDisplayMode } from "../workflow/monitor-display-mode";
 import type { WorkflowNodeRuntimeHost } from "../workflow/node-runtime";
 
 /** Declarative subcommand definition for commands like /mcp. */
@@ -61,6 +62,8 @@ export interface SlashCommandRuntime {
 	output: (text: string) => Promise<void> | void;
 	/** Emit a workflow graph view. TUI renders a component; text/ACP callers can omit this and receive text. */
 	outputWorkflowGraph?: (view: WorkflowGraphView) => Promise<void> | void;
+	getWorkflowGraphMonitorDisplayMode?: () => WorkflowMonitorDisplayMode;
+	setWorkflowGraphMonitorDisplayMode?: (mode: WorkflowMonitorDisplayMode) => Promise<void> | void;
 	/** Latest live subagent progress keyed by workflow focus id, when a TUI observer registry is available. */
 	getWorkflowAgentProgressById?: () => ReadonlyMap<string, WorkflowGraphActiveAgentProgress>;
 	/** Re-advertise the available command list (no-op outside ACP). */

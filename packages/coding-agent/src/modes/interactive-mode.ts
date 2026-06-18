@@ -111,6 +111,7 @@ import {
 	setExcludedSearchProviders,
 	setPreferredSearchProvider,
 } from "../web/search";
+import type { WorkflowMonitorDisplayMode } from "../workflow/monitor-display-mode";
 import type { AssistantMessageComponent } from "./components/assistant-message";
 import type { BashExecutionComponent } from "./components/bash-execution";
 import { ChatBlock, type ChatBlockHost } from "./components/chat-block";
@@ -396,6 +397,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	hookWidgetContainerBelow: Container;
 	statusLine: StatusLineComponent;
 	#workflowMonitorComponent?: Component;
+	#workflowMonitorDisplayMode: WorkflowMonitorDisplayMode = "full";
 	#workflowMonitorVisible = true;
 	#onboardingContainer?: Container;
 
@@ -3187,6 +3189,19 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.workflowMonitorContainer.clear();
 		if (visible && this.#workflowMonitorComponent) {
 			this.workflowMonitorContainer.addChild(this.#workflowMonitorComponent);
+		}
+		this.ui.requestRender();
+	}
+
+	getWorkflowGraphMonitorDisplayMode(): WorkflowMonitorDisplayMode {
+		return this.#workflowMonitorDisplayMode;
+	}
+
+	setWorkflowGraphMonitorDisplayMode(mode: WorkflowMonitorDisplayMode): void {
+		if (this.#workflowMonitorDisplayMode === mode) return;
+		this.#workflowMonitorDisplayMode = mode;
+		if (this.#workflowMonitorComponent && "invalidate" in this.#workflowMonitorComponent) {
+			(this.#workflowMonitorComponent as { invalidate: () => void }).invalidate();
 		}
 		this.ui.requestRender();
 	}

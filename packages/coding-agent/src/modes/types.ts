@@ -23,6 +23,7 @@ import type { SessionManager } from "../session/session-manager";
 import type { ShakeMode } from "../session/shake-types";
 import type { LspStartupServerInfo } from "../tools";
 import type { EventBus } from "../utils/event-bus";
+import type { WorkflowMonitorDisplayMode } from "../workflow/monitor-display-mode";
 import type { AssistantMessageComponent } from "./components/assistant-message";
 import type { BashExecutionComponent } from "./components/bash-execution";
 import type { CustomEditor } from "./components/custom-editor";
@@ -211,6 +212,8 @@ export interface InteractiveModeContext {
 	showWorkflowGraphMonitor(component: Component): void;
 	/** Temporarily show or hide the persistent workflow monitor without replacing it. */
 	setWorkflowGraphMonitorVisible(visible: boolean): void;
+	getWorkflowGraphMonitorDisplayMode(): WorkflowMonitorDisplayMode;
+	setWorkflowGraphMonitorDisplayMode(mode: WorkflowMonitorDisplayMode): void;
 	/**
 	 * Dispose every live block in the transcript (stopping timers/subscriptions)
 	 * and clear it. Used before a full rebuild so animated/streaming blocks do not

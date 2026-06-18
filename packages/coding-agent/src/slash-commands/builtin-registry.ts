@@ -334,13 +334,39 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 	},
 	{
 		name: "workflow",
+		aliases: ["flow"],
 		description: "Start and inspect workflow runs",
 		acpDescription: "Start and inspect workflow runs",
-		acpInputHint: "inspect|start <path>",
+		acpInputHint: "help|start <path>|status|dashboard",
 		subcommands: [
+			{
+				name: "help",
+				description: "Show workflow interaction guide",
+				usage: "[dashboard|status|agents|lifecycle|change]",
+			},
 			{ name: "inspect", description: "Show current workflow run summary" },
-			{ name: "start", description: "Start a workflow package", usage: "<path>" },
+			{ name: "list", description: "List workflow families", usage: "[--family-id <id>]" },
+			{ name: "graph", description: "Render workflow graph", usage: "[--family-id <id>]" },
+			{ name: "manager", description: "Show lifecycle manager state", usage: "[--family-id <id>]" },
+			{ name: "status", description: "Show workflow operator status", usage: "[--family-id <id>|help]" },
+			{
+				name: "dashboard",
+				description: "Set workflow dashboard display mode",
+				usage: "collapse|compact|show|status|help",
+			},
+			{ name: "freeze", description: "Freeze a workflow artifact", usage: "<flow-or-path>" },
+			{ name: "start", description: "Start a workflow package", usage: "<flow-or-path>" },
+			{ name: "request-change", description: "Propose a workflow change", usage: "<file>" },
+			{ name: "approve-change", description: "Approve a workflow change", usage: "<change-request-id>" },
+			{ name: "reject-change", description: "Reject a workflow change", usage: "<change-request-id>" },
 			{ name: "apply-change", description: "Record an approved workflow change as applied" },
+			{ name: "stop", description: "Stop a workflow attempt", usage: "<attempt-id>" },
+			{
+				name: "interrupt",
+				description: "Interrupt one active workflow node",
+				usage: "<attempt-id> <activation-or-node-id>",
+			},
+			{ name: "restart", description: "Restart from a workflow checkpoint", usage: "<checkpoint-id>" },
 		],
 		allowArgs: true,
 		handle: handleWorkflowAcp,
@@ -2348,6 +2374,7 @@ export async function executeBuiltinSlashCommand(
 				const monitorSnapshots = createWorkflowMonitorSnapshotWriter(ctx.workflowMonitorSnapshotAgentDir);
 				await monitorSnapshots.write(view);
 				const component = new WorkflowGraphComponent(view, {
+					displayModeProvider: () => ctx.getWorkflowGraphMonitorDisplayMode(),
 					heightProvider: () => Math.max(6, ctx.ui.terminal.rows - 6),
 					viewProvider: () => {
 						const family = reconstructWorkflowFamilies(ctx.sessionManager.getBranch()).find(
@@ -2359,6 +2386,10 @@ export async function executeBuiltinSlashCommand(
 					requestRender: target => ctx.ui.requestComponentRender(target),
 				});
 				ctx.showWorkflowGraphMonitor(component);
+			},
+			getWorkflowGraphMonitorDisplayMode: () => ctx.getWorkflowGraphMonitorDisplayMode(),
+			setWorkflowGraphMonitorDisplayMode: mode => {
+				ctx.setWorkflowGraphMonitorDisplayMode(mode);
 			},
 			createWorkflowRuntimeHost: () =>
 				createSessionWorkflowRuntimeHost({

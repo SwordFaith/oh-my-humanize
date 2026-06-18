@@ -63,6 +63,7 @@ import {
 	workflowFreezeForChangeTarget,
 } from "../../workflow/lifecycle";
 import { resolveWorkflowNodeModel, type WorkflowModelResolutionAudit } from "../../workflow/model-resolution";
+import { parseWorkflowMonitorDisplayMode, workflowMonitorDisplayModeLabel } from "../../workflow/monitor-display-mode";
 import type { WorkflowNodeRuntimeHost } from "../../workflow/node-runtime";
 import { loadWorkflowArtifact, loadWorkflowPackage, type WorkflowArtifact } from "../../workflow/package-loader";
 import { applyWorkflowGraphPatch } from "../../workflow/patches";
@@ -185,6 +186,9 @@ export async function handleWorkflowAcp(
 	if (!verb || verb === "inspect") {
 		return handleInspectCommand(runtime);
 	}
+	if (verb === "help") {
+		return handleWorkflowHelpCommand(rest, runtime);
+	}
 	if (verb === "list") {
 		return handleListCommand(rest, runtime);
 	}
@@ -196,6 +200,9 @@ export async function handleWorkflowAcp(
 	}
 	if (verb === "status") {
 		return handleStatusCommand(rest, runtime);
+	}
+	if (verb === "dashboard") {
+		return handleDashboardCommand(rest, runtime);
 	}
 	if (verb === "start") {
 		return handleStartCommand(rest, runtime);
@@ -287,9 +294,76 @@ async function handleManagerCommand(rest: string, runtime: SlashCommandRuntime):
 }
 
 async function handleStatusCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+	const help = parseSubcommand(rest);
+	if (help.verb === "help" && help.rest.length === 0) {
+		await runtime.output(formatWorkflowStatusHelp());
+		return commandConsumed();
+	}
 	const parsed = parseWorkflowStatusArgs(rest);
 	if ("error" in parsed) return usage(parsed.error, runtime);
 	return outputWorkflowManager(parsed, runtime);
+}
+
+async function handleDashboardCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+	const parsed = parseSubcommand(rest);
+	if (parsed.verb === "help" && parsed.rest.length === 0) {
+		await runtime.output(formatWorkflowDashboardHelp());
+		return commandConsumed();
+	}
+	if (!parsed.verb || parsed.verb === "status") {
+		const mode = runtime.getWorkflowGraphMonitorDisplayMode?.();
+		await runtime.output(
+			mode === undefined
+				? "Workflow dashboard display mode is available in the interactive TUI."
+				: `Workflow dashboard display mode: ${workflowMonitorDisplayModeLabel(mode)}.`,
+		);
+		return commandConsumed();
+	}
+	const mode = parseWorkflowMonitorDisplayMode(parsed.verb);
+	if (mode === undefined || parsed.rest.length > 0) {
+		return usage(formatWorkflowDashboardHelp(), runtime);
+	}
+	if (runtime.setWorkflowGraphMonitorDisplayMode === undefined) {
+		return usage("Workflow dashboard display mode is only available in the interactive TUI.", runtime);
+	}
+	await runtime.setWorkflowGraphMonitorDisplayMode(mode);
+	await runtime.output(`Workflow dashboard display mode: ${workflowMonitorDisplayModeLabel(mode)}.`);
+	return commandConsumed();
+}
+
+async function handleWorkflowHelpCommand(rest: string, runtime: SlashCommandRuntime): Promise<SlashCommandResult> {
+	const parsed = parseSubcommand(rest);
+	if (!parsed.verb) {
+		await runtime.output(formatWorkflowHelp());
+		return commandConsumed();
+	}
+	if (parsed.rest.length > 0) return usage("Usage: /workflow help [topic]", runtime);
+	if (parsed.verb === "dashboard") {
+		await runtime.output(formatWorkflowDashboardHelp());
+		return commandConsumed();
+	}
+	if (parsed.verb === "status" || parsed.verb === "manager" || parsed.verb === "graph") {
+		await runtime.output(formatWorkflowStatusHelp());
+		return commandConsumed();
+	}
+	if (parsed.verb === "agents" || parsed.verb === "agent" || parsed.verb === "nodes" || parsed.verb === "node") {
+		await runtime.output(formatWorkflowAgentsHelp());
+		return commandConsumed();
+	}
+	if (
+		parsed.verb === "lifecycle" ||
+		parsed.verb === "stop" ||
+		parsed.verb === "interrupt" ||
+		parsed.verb === "restart"
+	) {
+		await runtime.output(formatWorkflowLifecycleHelp());
+		return commandConsumed();
+	}
+	if (parsed.verb === "change" || parsed.verb === "request-change" || parsed.verb === "apply-change") {
+		await runtime.output(formatWorkflowChangeHelp());
+		return commandConsumed();
+	}
+	return usage(formatWorkflowHelp(), runtime);
 }
 
 async function outputWorkflowManager(
@@ -2384,13 +2458,112 @@ async function readWorkflowChangeRequest(
 	return request;
 }
 
+function formatWorkflowHelp(): string {
+	return [
+		"Workflow help",
+		"",
+		"Common paths:",
+		"- Start: /workflow start <flow-or-path> --background",
+		"- Monitor: /workflow status, /workflow graph, /workflow dashboard status",
+		"- Screen space: /workflow dashboard collapse, /workflow dashboard compact, /workflow dashboard show",
+		"- Lifecycle: /workflow stop <attempt-id>, /workflow interrupt <attempt-id> <activation-or-node-id>, /workflow restart <checkpoint-id>",
+		"- Change flow: /workflow request-change <file>, /workflow approve-change <id>, /workflow apply-change <id> --freeze-id <id>",
+		"",
+		"More help:",
+		"- /workflow dashboard help",
+		"- /workflow status help",
+		"- /workflow help agents",
+		"- /workflow help lifecycle",
+		"- /workflow help change",
+	].join("\n");
+}
+
+function formatWorkflowDashboardHelp(): string {
+	return [
+		"Workflow dashboard help",
+		"",
+		"Display modes:",
+		"- /workflow dashboard collapse: keep only resident status, help, restore, and the primary action",
+		"- /workflow dashboard compact: keep a short monitor panel",
+		"- /workflow dashboard show: restore the full dashboard",
+		"- /workflow dashboard status: print the current display mode",
+		"",
+		"Visible guide path:",
+		"- Collapsed and compact dashboards keep /workflow help visible.",
+		"- Use /workflow help agents to inspect or steer focused nodes.",
+		"- Use /workflow status help for inspection commands.",
+	].join("\n");
+}
+
+function formatWorkflowStatusHelp(): string {
+	return [
+		"Workflow status help",
+		"",
+		"Inspection:",
+		"- /workflow status [--family-id <id>]: operator-focused state and next actions",
+		"- /workflow manager [--family-id <id>]: lifecycle records, freezes, checkpoints, and changes",
+		"- /workflow graph [--family-id <id>]: render the current workflow graph",
+		"- /workflow list [--family-id <id>]: list workflow families",
+		"",
+		"Next step:",
+		"- Use /workflow dashboard help to tune the resident TUI monitor.",
+	].join("\n");
+}
+
+function formatWorkflowAgentsHelp(): string {
+	return [
+		"Workflow agents and nodes help",
+		"",
+		"Live agent nodes:",
+		"- Press double-left or use observe to open Agent Hub.",
+		"- In Agent Hub, select a live workflow agent, press Enter to steer it, and Esc to return.",
+		"- Interrupt one live node with /workflow interrupt <attempt-id> <activation-or-node-id>.",
+		"",
+		"Program, verifier, and checkpointed nodes:",
+		"- Use /workflow status to see the focused node and next operator action.",
+		"- Use /workflow manager --family-id <id> for lifecycle records, checkpoints, and recent node outputs.",
+		"- Use /workflow graph --family-id <id> to redraw the flow map when the resident dashboard is collapsed.",
+	].join("\n");
+}
+
+function formatWorkflowLifecycleHelp(): string {
+	return [
+		"Workflow lifecycle help",
+		"",
+		"Controls:",
+		"- /workflow stop <attempt-id> [--deadline-ms <n>]: stop new node triggers, checkpoint, then abort after the deadline",
+		"- /workflow interrupt <attempt-id> <activation-or-node-id> [--deadline-ms <n>]: interrupt one active node",
+		"- /workflow restart <checkpoint-id> [--freeze-id <id>] [--background]: resume from a checkpoint",
+		"",
+		"Safe mutation path:",
+		"- Stop, checkpoint, change the flow, then restart from the checkpoint.",
+	].join("\n");
+}
+
+function formatWorkflowChangeHelp(): string {
+	return [
+		"Workflow change help",
+		"",
+		"Mutation flow:",
+		"- /workflow request-change <file> [--family-id <id>] [--attempt-id <id>]",
+		"- /workflow approve-change <change-request-id> [--actor <actor>]",
+		"- /workflow reject-change <change-request-id> [--actor <actor>] [--reason <text>]",
+		"- /workflow apply-change <change-request-id> (--freeze-id <id>|--draft-id <id>|--draft-path <path>)",
+		"",
+		"Contract:",
+		"- Active-run graph patching is not the interface; use the standard stop, save, change, restart path.",
+	].join("\n");
+}
+
 function workflowUsage(): string {
 	return [
+		"Usage: /workflow help [dashboard|status|agents|lifecycle|change]",
 		"Usage: /workflow inspect",
 		"Usage: /workflow list [--family-id <id>]",
 		"Usage: /workflow graph [--family-id <id>]",
 		"Usage: /workflow manager [--family-id <id>]",
 		"Usage: /workflow status [--family-id <id>]",
+		"Usage: /workflow dashboard show|full|compact|collapse|status|help",
 		"Usage: /workflow freeze <flow-or-path> [--family-id <id>]",
 		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--max-runtime-ms <n>] [--background]",
 		"Usage: /workflow request-change <file> [--family-id <id>] [--attempt-id <id>]",

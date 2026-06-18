@@ -20,6 +20,7 @@ import {
 	type WorkflowGraphNodeStatus,
 	type WorkflowGraphView,
 } from "../../workflow/graph-view";
+import type { WorkflowMonitorDisplayMode } from "../../workflow/monitor-display-mode";
 import { type ThemeColor, theme } from "../theme/theme";
 
 export interface WorkflowGraphComponentOptions {
@@ -28,10 +29,14 @@ export interface WorkflowGraphComponentOptions {
 	requestRender?: (component: Component) => void;
 	refreshMs?: number;
 	heightProvider?: () => number | undefined;
+	displayMode?: WorkflowMonitorDisplayMode;
+	displayModeProvider?: () => WorkflowMonitorDisplayMode;
 }
 
 export class WorkflowGraphComponent implements Component, NativeScrollbackLiveRegion {
-	#cache?: { width: number; heightBudget?: number; lines: string[] };
+	#cache?: { width: number; heightBudget?: number; displayMode: WorkflowMonitorDisplayMode; lines: string[] };
+	#displayMode: WorkflowMonitorDisplayMode;
+	#displayModeProvider?: () => WorkflowMonitorDisplayMode;
 	#heightProvider?: () => number | undefined;
 	#lastObservedViewSignature?: string;
 	#onViewChange?: (view: WorkflowGraphView) => void;
@@ -44,6 +49,8 @@ export class WorkflowGraphComponent implements Component, NativeScrollbackLiveRe
 		this.#viewProvider = options.viewProvider;
 		this.#onViewChange = options.onViewChange;
 		this.#heightProvider = options.heightProvider;
+		this.#displayMode = options.displayMode ?? "full";
+		this.#displayModeProvider = options.displayModeProvider;
 		const refreshMs = options.refreshMs ?? 500;
 		if (options.requestRender !== undefined && refreshMs > 0) {
 			this.#refreshTimer = setInterval(() => {
@@ -68,16 +75,18 @@ export class WorkflowGraphComponent implements Component, NativeScrollbackLiveRe
 	render(width: number): readonly string[] {
 		const safeWidth = Math.max(40, width);
 		const heightBudget = workflowGraphHeightBudget(this.#heightProvider?.());
+		const displayMode = this.#displayModeProvider?.() ?? this.#displayMode;
 		const view = this.#currentView();
 		this.#observeView(view);
 		if (
 			this.#viewProvider === undefined &&
 			this.#cache?.width === safeWidth &&
-			this.#cache.heightBudget === heightBudget
+			this.#cache.heightBudget === heightBudget &&
+			this.#cache.displayMode === displayMode
 		)
 			return this.#cache.lines;
-		const lines = renderWorkflowGraphBlock(view, safeWidth, heightBudget);
-		this.#cache = { width: safeWidth, heightBudget, lines };
+		const lines = renderWorkflowGraphBlock(view, safeWidth, heightBudget, displayMode);
+		this.#cache = { width: safeWidth, heightBudget, displayMode, lines };
 		return lines;
 	}
 
@@ -137,6 +146,7 @@ const WORKFLOW_GRAPH_WORKBENCH_ULTRAWIDE_MAX_PANE_WIDTH = 112;
 const WORKFLOW_GRAPH_PANE_GAP_WIDTH = 3;
 const WORKFLOW_GRAPH_FRAME_CHROME_WIDTH = 4;
 const WORKFLOW_GRAPH_FLOW_MAP_HINT_MIN_WIDTH = 93;
+const WORKFLOW_GRAPH_FORCED_COMPACT_HEIGHT = 14;
 const WORKFLOW_GRAPH_MODEL_STATUS_SEGMENT_PATTERN =
 	/ · (?:[A-Za-z0-9_.-]+\/)?(?:gpt|claude|gemini|deepseek|llama|qwen|mistral|o\d)[A-Za-z0-9_.:+-]*/giu;
 
@@ -144,7 +154,20 @@ function renderWorkflowGraphBlock(
 	view: WorkflowGraphView,
 	safeWidth: number,
 	heightBudget: number | undefined,
+	displayMode: WorkflowMonitorDisplayMode,
 ): string[] {
+	if (displayMode === "collapsed") return renderWorkflowGraphCollapsedRows(view, safeWidth);
+	if (displayMode === "compact") {
+		const compactBudget =
+			heightBudget === undefined
+				? WORKFLOW_GRAPH_FORCED_COMPACT_HEIGHT
+				: Math.min(heightBudget, WORKFLOW_GRAPH_FORCED_COMPACT_HEIGHT);
+		const compact = renderWorkflowGraphBlockAtDensity(view, safeWidth, "compact", compactBudget);
+		const hinted = insertWorkflowGraphDashboardModeHint(compact, view, safeWidth);
+		return hinted.length <= compactBudget
+			? hinted
+			: fitWorkflowGraphDashboardRowsToHeight(hinted, safeWidth, compactBudget);
+	}
 	const full = renderWorkflowGraphBlockAtDensity(view, safeWidth, "full", undefined);
 	if (heightBudget === undefined || full.length <= heightBudget) return full;
 	const compact = renderWorkflowGraphBlockAtDensity(view, safeWidth, "compact", heightBudget);
@@ -529,7 +552,9 @@ function workflowGraphOperatorRailLines(
 	const subject = selected ?? view.focus?.nodeId ?? view.currentAttempt?.id ?? "workflow";
 	const primaryTokens = [workflowGraphOperatorRailPrimaryToken(subject, selected !== undefined)];
 	if (selected !== undefined) {
-		primaryTokens.push("◆ hub", "↵ steer");
+		primaryTokens.push("hub ←←/observe", "↵ steer");
+	} else if (view.focus !== undefined) {
+		primaryTokens.push("details /workflow help agents");
 	}
 	const actionKinds = workflowGraphActionKinds(view);
 	const safetyTokens: string[] = [];
@@ -826,6 +851,96 @@ function renderWorkflowGraphDashboardFrame(
 		renderWorkflowGraphDashboardBar("╰", "╯", undefined, undefined, width, border),
 	];
 	return rows;
+}
+
+function insertWorkflowGraphDashboardModeHint(rows: string[], view: WorkflowGraphView, width: number): string[] {
+	if (rows.length < 2) return rows;
+	const border = (text: string) => theme.fg(workflowGraphDashboardBorderColor(view), text);
+	const hint = renderWorkflowGraphDashboardContentLine(
+		"/workflow help · /workflow help agents · /workflow dashboard show · /workflow dashboard collapse",
+		Math.max(0, width - WORKFLOW_GRAPH_FRAME_CHROME_WIDTH),
+		border,
+	);
+	return [rows[0]!, hint, ...rows.slice(1)];
+}
+
+function renderWorkflowGraphCollapsedRows(view: WorkflowGraphView, width: number): string[] {
+	const status = workflowGraphCollapsedStatus(view);
+	const color = workflowGraphStatusColor(status);
+	const glyph = workflowGraphStatusGlyph(status);
+	const attempt =
+		view.currentAttempt === undefined ? view.familyId : `${view.currentAttempt.id} ${view.currentAttempt.status}`;
+	const summaryParts = [
+		`Workflow ${attempt}`,
+		workflowGraphProgressSummary(view),
+		view.focus === undefined ? undefined : `focus ${view.focus.nodeId}`,
+	].filter((part): part is string => part !== undefined && part.length > 0);
+	const guideParts = ["/workflow help", "/workflow help agents", "/workflow dashboard show"];
+	const primaryAction = workflowGraphCollapsedPrimaryAction(view);
+	if (width >= 112) {
+		const parts = [...summaryParts.slice(0, 2), ...guideParts, primaryAction, summaryParts[2]].filter(
+			(part): part is string => part !== undefined && part.length > 0,
+		);
+		return [truncateToWidth(`${theme.fg(color, glyph)} ${parts.join(" · ")}`, width)];
+	}
+	const rows = [
+		truncateToWidth(`${theme.fg(color, glyph)} ${summaryParts.join(" · ")}`, width),
+		...workflowGraphCollapsedGuideRows(guideParts, width),
+		primaryAction === undefined ? undefined : truncateToWidth(primaryAction, width),
+	].filter((line): line is string => line !== undefined && line.length > 0);
+	return rows;
+}
+
+function workflowGraphCollapsedGuideRows(parts: readonly string[], width: number): string[] {
+	if (width >= 92) return [truncateToWidth(parts.join(" · "), width)];
+	return parts.map(part => truncateToWidth(part, width));
+}
+
+function workflowGraphCollapsedStatus(view: WorkflowGraphView): WorkflowGraphNodeStatus {
+	if (view.nodes.some(node => node.status === "failed")) return "failed";
+	if (view.focus !== undefined) return view.focus.status;
+	if (view.currentAttempt?.status === "completed") return "completed";
+	if (view.currentAttempt?.status === "stopped") return "checkpointed";
+	return view.nodes.find(node => node.status === "running")?.status ?? "pending";
+}
+
+function workflowGraphProgressSummary(view: WorkflowGraphView): string {
+	if (view.nodes.length === 0) return "no nodes";
+	const counts = workflowGraphStatusCounts(view);
+	const done = counts.completed + counts.checkpointed;
+	const active = counts.running;
+	const tail = [
+		`${done}/${view.nodes.length} done`,
+		active > 0 ? `${active} active` : undefined,
+		counts.frontier > 0 ? `${counts.frontier} frontier` : undefined,
+		counts.failed > 0 ? `${counts.failed} failed` : undefined,
+		counts.aborted > 0 ? `${counts.aborted} aborted` : undefined,
+	].filter((part): part is string => part !== undefined);
+	return tail.join(" · ");
+}
+
+function workflowGraphCollapsedPrimaryAction(view: WorkflowGraphView): string | undefined {
+	const action =
+		workflowGraphCollapsedActionCommand(view, "restart") ??
+		workflowGraphCollapsedActionCommand(view, "stop") ??
+		workflowGraphCollapsedActionCommand(view, "interrupt") ??
+		workflowGraphCollapsedActionCommand(view, "change");
+	if (action === undefined) return undefined;
+	return `${action.label} ${action.command}`;
+}
+
+function workflowGraphCollapsedActionCommand(
+	view: WorkflowGraphView,
+	kind: WorkflowGraphActionKind,
+): { label: string; command: string } | undefined {
+	for (const action of view.actions) {
+		const meta = WORKFLOW_GRAPH_ACTION_META.find(candidate => candidate.kind === kind);
+		if (meta === undefined || !meta.pattern.test(action)) continue;
+		const command = action.match(/\/workflow\s+\S+(?:\s+\S+)*/u)?.[0];
+		if (command === undefined) return { label: kind, command: compactWorkflowGraphControl(action) };
+		return { label: kind, command };
+	}
+	return undefined;
 }
 
 function renderWorkflowGraphDashboardBar(

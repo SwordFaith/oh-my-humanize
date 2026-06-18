@@ -207,8 +207,12 @@ interrupt, approve changes, or restart attempts.
 
 ```text
 /workflow start ./my-flow.omhflow --family-id my-feature --background
+/workflow help
 /workflow graph --family-id my-feature
 /workflow manager --family-id my-feature
+/workflow dashboard help
+/workflow dashboard collapse
+/workflow dashboard show
 /workflow stop my-run:attempt-1 --deadline-ms 30000
 /workflow restart my-run:attempt-1:checkpoint-1 --freeze-id flowfreeze:...
 ```
@@ -241,6 +245,27 @@ attach to. The right panel is titled `Live Workbench` only when actual work is
 running; stopped and checkpoint-frontier views use `Operator Deck`. When a
 checkpointed attempt can resume, `restart` is promoted into the same rail so the
 next safe lifecycle action is visible without opening the command list.
+
+The dashboard is intentionally collapsible because `omp` remains an
+interactive terminal coding tool, not a full-screen workflow viewer. Use:
+
+```text
+/workflow help                # top-level workflow guide path
+/workflow status help         # status, graph, manager, and list commands
+/workflow help agents         # inspect, steer, or interrupt workflow nodes
+/workflow dashboard help      # dashboard display controls
+/workflow dashboard collapse  # collapse to status, help, restore, and primary action
+/workflow dashboard compact   # keep a short monitor panel
+/workflow dashboard show      # restore the full dashboard
+/workflow dashboard status
+```
+
+Collapsed mode keeps the attempt state, progress, `/workflow help`, the restore
+command, and the most relevant lifecycle action visible so the operator can
+recover context without sacrificing the main conversation area. The compact and
+collapsed dashboards both preserve a visible guide path; deeper material stays
+behind `/workflow help`, `/workflow help agents`, `/workflow dashboard help`,
+and `/workflow status help` instead of crowding the resident monitor.
 
 ![Workflow dashboard with parallel agent transcript tabs](images/workflow-dashboard-agent-tabs.png)
 
