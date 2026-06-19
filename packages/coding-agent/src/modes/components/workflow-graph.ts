@@ -1590,11 +1590,49 @@ function workflowGraphSelectedRouteLines(view: WorkflowGraphView): string[] {
 }
 
 function colorWorkflowDiagram(lines: string[]): string[] {
-	return lines.map(colorWorkflowStatusLine);
+	return lines.map(colorWorkflowDiagramLine);
 }
 
 const WORKFLOW_STATUS_TOKEN_PATTERN =
 	/[✓◆◇●!○]|×(?=\s)|\b(?:failed|running|frontier|checkpointed|completed|aborted|pending)\b/gu;
+const WORKFLOW_GRAPH_CONNECTOR_TOKEN_PATTERN = /[▲▼▶│║┆─═━┄┌┐└┘╭╮╰╯├┤┬┴┼╟╢╫╤╧]+/gu;
+
+function colorWorkflowDiagramLine(line: string): string {
+	let rendered = "";
+	let offset = 0;
+	for (const match of line.matchAll(WORKFLOW_STATUS_TOKEN_PATTERN)) {
+		const token = match[0];
+		const index = match.index;
+		if (index > offset) rendered = `${rendered}${colorWorkflowDiagramSegment(line.slice(offset, index))}`;
+		rendered = `${rendered}${theme.fg(workflowGraphStatusColor(workflowGraphStatusFromToken(token)), token)}`;
+		offset = index + token.length;
+	}
+	if (offset < line.length) rendered = `${rendered}${colorWorkflowDiagramSegment(line.slice(offset))}`;
+	return rendered;
+}
+
+function colorWorkflowDiagramSegment(segment: string): string {
+	let rendered = "";
+	let offset = 0;
+	for (const match of segment.matchAll(WORKFLOW_GRAPH_CONNECTOR_TOKEN_PATTERN)) {
+		const token = match[0];
+		const index = match.index;
+		if (index > offset) rendered = `${rendered}${theme.fg("muted", segment.slice(offset, index))}`;
+		rendered = `${rendered}${colorWorkflowDiagramConnectorRun(token)}`;
+		offset = index + token.length;
+	}
+	if (offset < segment.length) rendered = `${rendered}${theme.fg("muted", segment.slice(offset))}`;
+	return rendered;
+}
+
+function colorWorkflowDiagramConnectorRun(token: string): string {
+	if (/^[┄┆]+$/u.test(token)) return theme.fg("dim", token);
+	if (/[┼╫├┤┬┴╟╢╤╧]/u.test(token)) return theme.fg("warning", token);
+	if (/[▲▼▶]/u.test(token)) return theme.fg("accent", token);
+	if (/^[│║]+$/u.test(token)) return theme.fg("borderAccent", token);
+	if (/^[─═━]+$/u.test(token)) return theme.fg("accent", token);
+	return theme.fg("borderMuted", token);
+}
 
 function colorWorkflowStatusLine(line: string): string {
 	let rendered = "";

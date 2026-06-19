@@ -74,6 +74,21 @@ describe("WorkflowGraphComponent display modes", () => {
 		expect(compact).toContain("/workflow dashboard collapse");
 		expect(compact).toContain("/workflow interrupt");
 	});
+
+	it("colors arrows and occluded graph segments with distinct terminal styles", () => {
+		const text = new WorkflowGraphComponent(workflowGraphOcclusionViewFixture(), {
+			displayModeProvider: () => "full",
+		})
+			.render(160)
+			.join("\n");
+
+		const arrowColors = connectorColorCodes(text, "▼");
+		const occludedColors = connectorColorCodes(text, "┄");
+
+		expect(arrowColors.size).toBeGreaterThan(0);
+		expect(occludedColors.size).toBeGreaterThan(0);
+		expect([...arrowColors].some(color => !occludedColors.has(color))).toBe(true);
+	});
 });
 
 function workflowGraphViewFixture(): WorkflowGraphView {
@@ -151,4 +166,70 @@ function workflowGraphViewFixture(): WorkflowGraphView {
 			"Propose change · /workflow request-change <file> --family-id r4-palletsitsdang-perf-20d",
 		],
 	};
+}
+
+function workflowGraphOcclusionViewFixture(): WorkflowGraphView {
+	return {
+		familyId: "visual-routing-check",
+		latestFreezeId: "flowfreeze:test",
+		currentAttempt: {
+			id: "attempt-1",
+			status: "running",
+			runtimeBindingId: "binding-1",
+		},
+		changes: { approved: 1, proposed: 0, rejected: 0 },
+		topology: {
+			parallelFanOuts: 1,
+			branchPoints: 1,
+			joins: 1,
+			loops: 1,
+			subflows: 0,
+		},
+		focus: {
+			nodeId: "left",
+			label: "Left branch",
+			role: "Builder",
+			status: "running",
+			activity: "Checking graph routing visibility",
+			stats: "2m14s",
+		},
+		nodes: [
+			{ id: "start", kind: "Program", status: "completed", activationCount: 1, focused: false },
+			{ id: "left", kind: "Agent", status: "running", activationCount: 2, focused: true },
+			{ id: "right", kind: "Agent", status: "pending", activationCount: 0, focused: false },
+			{ id: "review", kind: "Reviewer", status: "pending", activationCount: 0, focused: false },
+		],
+		edges: [
+			{ from: "start", to: "left" },
+			{ from: "start", to: "right" },
+			{ from: "left", to: "review" },
+			{ from: "right", to: "review" },
+			{ from: "review", to: "left", condition: "state.retry == true" },
+		],
+		selectedRoutes: [{ from: "review", to: "left", condition: "state.retry == true" }],
+		activeAgents: [
+			{
+				activationId: "activation-left-2",
+				focusAgentId: "left-2",
+				nodeId: "left",
+				label: "Left branch",
+				role: "Builder",
+				status: "running",
+				activity: "Checking graph routing visibility",
+				stats: "2m14s",
+			},
+		],
+		lineage: [],
+		actions: [
+			"Refresh",
+			"Interrupt Builder · Left branch: /workflow interrupt attempt-1 left --deadline-ms 30000",
+			"Stop attempt · /workflow stop attempt-1 --deadline-ms 30000",
+		],
+	};
+}
+
+function connectorColorCodes(text: string, glyph: string): Set<string> {
+	const escaped = glyph.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+	const pattern = new RegExp(`(\\u001b\\[[0-9;]*m)${escaped}`, "gu");
+	return new Set([...text.matchAll(pattern)].map(match => match[1] ?? ""));
 }

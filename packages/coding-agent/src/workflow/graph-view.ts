@@ -347,17 +347,22 @@ export function renderWorkflowGraphDiagram(
 	const layout = layoutWorkflowGraph(view, options.width);
 	const lines: string[] = [];
 	const nodeLineById = new Map<string, number>();
+	const nodeBoxesById = new Map<string, WorkflowGraphNodeBox>();
 	for (let rankIndex = 0; rankIndex < layout.ranks.length; rankIndex += 1) {
 		const rankLines = renderWorkflowGraphRank(rankIndex, layout);
 		const rankStartLine = lines.length;
 		lines.push(...rankLines);
 		const nodeLine = rankStartLine + Math.floor(rankLines.length / 2);
-		for (const node of layout.ranks[rankIndex] ?? []) nodeLineById.set(node.id, nodeLine);
+		for (const node of layout.ranks[rankIndex] ?? []) {
+			nodeLineById.set(node.id, nodeLine);
+			const box = workflowGraphNodeBox(node.id, rankIndex, rankStartLine, rankLines.length, layout);
+			if (box !== undefined) nodeBoxesById.set(node.id, box);
+		}
 		const connectorLines = renderWorkflowGraphConnector(rankIndex, layout);
 		lines.push(...connectorLines);
 		if (rankIndex < layout.ranks.length - 1 && connectorLines.length === 0) lines.push("");
 	}
-	return renderWorkflowGraphLoopbackRails(lines, layout.backEdges, nodeLineById, layout);
+	return renderWorkflowGraphLoopbackRails(lines, layout.backEdges, nodeLineById, nodeBoxesById, layout);
 }
 
 interface WorkflowGraphLayout {
@@ -368,6 +373,14 @@ interface WorkflowGraphLayout {
 	nodeWidth: number;
 	totalWidth: number;
 	labelWidth: number;
+}
+
+interface WorkflowGraphNodeBox {
+	nodeId: string;
+	topLine: number;
+	bottomLine: number;
+	leftColumn: number;
+	rightColumn: number;
 }
 
 function layoutWorkflowGraph(view: WorkflowGraphView, width: number | undefined): WorkflowGraphLayout {
@@ -533,6 +546,7 @@ function renderWorkflowGraphConnector(rankIndex: number, layout: WorkflowGraphLa
 			routed.source,
 			layout.labelWidth,
 			formatWorkflowGraphSkippedRouteLabel(routed.edge),
+			"▼",
 		),
 	);
 	if (directLabels.length === 0) return [...rows, ...skippedLabels];
@@ -551,6 +565,10 @@ interface RoutedWorkflowGraphEdge {
 	target: number;
 }
 
+interface RoutedWorkflowGraphEdgeWithLane extends RoutedWorkflowGraphEdge {
+	lane: number;
+}
+
 interface SkippedWorkflowGraphEdge {
 	edge: WorkflowGraphEdgeView;
 	source: number;
@@ -558,24 +576,56 @@ interface SkippedWorkflowGraphEdge {
 
 function renderWorkflowGraphConnectorRows(edges: RoutedWorkflowGraphEdge[], width: number): string[] {
 	if (edges.length === 0) return [];
-	const grid = createConnectorGrid(3, width);
-	const targets = new Set<number>();
-	for (const edge of edges) {
-		drawConnectorStem(grid, 0, edge.source);
-		drawConnectorBus(grid, 1, edge.source, edge.target);
-		targets.add(edge.target);
-	}
-	for (const target of targets) {
-		drawConnectorLanding(grid, 2, target);
+	const routed = assignWorkflowGraphConnectorLanes(edges);
+	const laneCount = Math.max(1, ...routed.map(edge => edge.lane + 1));
+	const landingRow = laneCount + 1;
+	const grid = createConnectorGrid(landingRow + 1, width);
+	for (const edge of routed) {
+		const busRow = edge.lane + 1;
+		for (let row = 0; row < busRow; row += 1) drawConnectorStem(grid, row, edge.source);
+		drawConnectorBus(grid, busRow, edge.source, edge.target);
+		for (let row = busRow + 1; row < landingRow; row += 1) drawConnectorStem(grid, row, edge.target);
+		drawConnectorLanding(grid, landingRow, edge.target);
 	}
 	return grid.map(row => connectorRowToString(row)).filter(line => line.trim().length > 0);
 }
 
-function renderWorkflowGraphConnectorLabel(column: number, width: number, label: string): string {
+function assignWorkflowGraphConnectorLanes(
+	edges: readonly RoutedWorkflowGraphEdge[],
+): RoutedWorkflowGraphEdgeWithLane[] {
+	const laneIntervals: WorkflowGraphInterval[][] = [];
+	return edges.map(edge => {
+		const interval = workflowGraphEdgeInterval(edge);
+		let lane = laneIntervals.findIndex(intervals =>
+			intervals.every(existing => workflowGraphIntervalsHaveMinimumGap(existing, interval)),
+		);
+		if (lane === -1) {
+			lane = laneIntervals.length;
+			laneIntervals.push([]);
+		}
+		laneIntervals[lane]!.push(interval);
+		return { ...edge, lane };
+	});
+}
+
+interface WorkflowGraphInterval {
+	left: number;
+	right: number;
+}
+
+function workflowGraphEdgeInterval(edge: RoutedWorkflowGraphEdge): WorkflowGraphInterval {
+	return { left: Math.min(edge.source, edge.target), right: Math.max(edge.source, edge.target) };
+}
+
+function workflowGraphIntervalsHaveMinimumGap(a: WorkflowGraphInterval, b: WorkflowGraphInterval): boolean {
+	return a.right + 1 < b.left || b.right + 1 < a.left;
+}
+
+function renderWorkflowGraphConnectorLabel(column: number, width: number, label: string, marker = "│"): string {
 	const safeColumn = Math.max(0, Math.min(column, Math.max(0, width - 1)));
 	const suffixWidth = Math.max(0, width - safeColumn - 1);
 	const suffix = suffixWidth === 0 ? "" : truncateToWidth(`  ${label}`, suffixWidth, Ellipsis.Ascii);
-	return `${" ".repeat(safeColumn)}│${suffix}`.trimEnd();
+	return `${" ".repeat(safeColumn)}${marker}${suffix}`.trimEnd();
 }
 
 function hasIncomingWorkflowGraphConnector(nodeId: string, rankIndex: number, layout: WorkflowGraphLayout): boolean {
@@ -607,6 +657,7 @@ function renderWorkflowGraphLoopbackRails(
 	lines: string[],
 	backEdges: readonly WorkflowGraphEdgeView[],
 	nodeLineById: ReadonlyMap<string, number>,
+	nodeBoxesById: ReadonlyMap<string, WorkflowGraphNodeBox>,
 	layout: WorkflowGraphLayout,
 ): string[] {
 	if (backEdges.length === 0) return lines;
@@ -628,6 +679,7 @@ function renderWorkflowGraphLoopbackRails(
 			targetLine,
 			targetRight,
 			railColumn: column,
+			nodeBoxes: nodeBoxesById,
 		});
 		const labels = labelsByLine.get(sourceLine) ?? [];
 		labels.push(formatWorkflowGraphLoopbackLabel(edge));
@@ -670,11 +722,12 @@ interface WorkflowGraphLoopbackPath {
 	targetLine: number;
 	targetRight: number;
 	railColumn: number;
+	nodeBoxes: ReadonlyMap<string, WorkflowGraphNodeBox>;
 }
 
 function drawWorkflowGraphLoopbackPath(lines: string[], path: WorkflowGraphLoopbackPath): void {
 	if (path.sourceLine === path.targetLine) {
-		drawWorkflowGraphLoopBranch(lines, path.sourceLine, path.sourceRight, path.railColumn);
+		drawWorkflowGraphLoopBranch(lines, path.sourceLine, path.sourceRight, path.railColumn, path.nodeBoxes);
 		drawWorkflowGraphConnectorAtColumn(lines, path.sourceLine, path.railColumn, {
 			up: true,
 			down: true,
@@ -685,7 +738,7 @@ function drawWorkflowGraphLoopbackPath(lines: string[], path: WorkflowGraphLoopb
 	const sourceGoesUp = path.targetLine < path.sourceLine;
 	const topLine = Math.min(path.sourceLine, path.targetLine);
 	const bottomLine = Math.max(path.sourceLine, path.targetLine);
-	drawWorkflowGraphLoopBranch(lines, path.targetLine, path.targetRight, path.railColumn);
+	drawWorkflowGraphLoopBranch(lines, path.targetLine, path.targetRight, path.railColumn, path.nodeBoxes);
 	drawWorkflowGraphConnectorAtColumn(
 		lines,
 		path.targetLine,
@@ -705,7 +758,7 @@ function drawWorkflowGraphLoopbackPath(lines: string[], path: WorkflowGraphLoopb
 			sourceGoesUp ? { up: true, down: true, arrowUp: true } : { up: true, down: true, arrowDown: true },
 		);
 	}
-	drawWorkflowGraphLoopBranch(lines, path.sourceLine, path.sourceRight, path.railColumn);
+	drawWorkflowGraphLoopBranch(lines, path.sourceLine, path.sourceRight, path.railColumn, path.nodeBoxes);
 	drawWorkflowGraphConnectorAtColumn(
 		lines,
 		path.sourceLine,
@@ -720,6 +773,7 @@ function drawWorkflowGraphLoopBranch(
 	lineIndex: number,
 	nodeRightColumn: number,
 	railColumn: number,
+	nodeBoxes: ReadonlyMap<string, WorkflowGraphNodeBox>,
 ): void {
 	if (railColumn <= nodeRightColumn) return;
 	drawWorkflowGraphConnectorAtColumn(lines, lineIndex, nodeRightColumn, {
@@ -728,7 +782,9 @@ function drawWorkflowGraphLoopBranch(
 		right: true,
 	});
 	for (let column = nodeRightColumn + 1; column < railColumn; column += 1) {
-		drawWorkflowGraphConnectorAtColumn(lines, lineIndex, column, { left: true, right: true });
+		drawWorkflowGraphConnectorAtColumn(lines, lineIndex, column, { left: true, right: true }, false, {
+			occluded: workflowGraphCellIsCoveredByNode(lineIndex, column, nodeBoxes),
+		});
 	}
 }
 
@@ -738,8 +794,11 @@ function drawWorkflowGraphConnectorAtColumn(
 	column: number,
 	directions: Partial<ConnectorCell>,
 	roundedCorner = false,
+	options: { occluded?: boolean } = {},
 ): void {
-	const existing = workflowGraphConnectorCellFromChar(workflowGraphCharAtColumn(lines[lineIndex] ?? "", column));
+	const existingChar = workflowGraphCharAtColumn(lines[lineIndex] ?? "", column);
+	if (options.occluded === true && !workflowGraphCanReplaceOccludedCell(existingChar)) return;
+	const existing = workflowGraphConnectorCellFromChar(existingChar);
 	const merged: WorkflowGraphConnectorCell = {
 		up: existing.up || directions.up === true,
 		down: existing.down || directions.down === true,
@@ -752,7 +811,7 @@ function drawWorkflowGraphConnectorAtColumn(
 	lines[lineIndex] = putWorkflowGraphTextAtColumn(
 		lines[lineIndex] ?? "",
 		column,
-		workflowGraphConnectorCellToChar(merged, roundedCorner),
+		workflowGraphConnectorCellToChar(merged, roundedCorner, options.occluded === true),
 	);
 }
 
@@ -789,6 +848,10 @@ function workflowGraphConnectorCellFromChar(char: string | undefined): WorkflowG
 			cell.up = true;
 			cell.down = true;
 			break;
+		case "┆":
+			cell.up = true;
+			cell.down = true;
+			break;
 		case "║":
 			cell.up = true;
 			cell.down = true;
@@ -796,6 +859,7 @@ function workflowGraphConnectorCellFromChar(char: string | undefined): WorkflowG
 			break;
 		case "─":
 		case "═":
+		case "┄":
 			cell.left = true;
 			cell.right = true;
 			break;
@@ -880,9 +944,17 @@ function workflowGraphConnectorCellFromChar(char: string | undefined): WorkflowG
 	return cell;
 }
 
-function workflowGraphConnectorCellToChar(cell: WorkflowGraphConnectorCell, roundedCorner: boolean): string {
+function workflowGraphConnectorCellToChar(
+	cell: WorkflowGraphConnectorCell,
+	roundedCorner: boolean,
+	occluded = false,
+): string {
 	if (cell.arrowUp) return "▲";
 	if (cell.arrowDown) return "▼";
+	if (occluded) {
+		if (cell.left || cell.right) return "┄";
+		if (cell.up || cell.down) return "┆";
+	}
 	if (cell.doubleVertical === true && cell.up && cell.down) {
 		if (cell.left && cell.right) return "╫";
 		if (cell.right) return "╟";
@@ -898,17 +970,91 @@ function workflowGraphConnectorCellToChar(cell: WorkflowGraphConnectorCell, roun
 	return connectorCellToChar(cell);
 }
 
-function nodeRightEdge(nodeId: string, layout: WorkflowGraphLayout): number | undefined {
-	const rankIndex = layout.rankByNodeId.get(nodeId);
-	if (rankIndex === undefined) return undefined;
+function workflowGraphNodeBox(
+	nodeId: string,
+	rankIndex: number,
+	rankStartLine: number,
+	rankHeight: number,
+	layout: WorkflowGraphLayout,
+): WorkflowGraphNodeBox | undefined {
+	const leftColumn = nodeLeftEdge(nodeId, rankIndex, layout);
+	if (leftColumn === undefined) return undefined;
+	return {
+		nodeId,
+		topLine: rankStartLine,
+		bottomLine: rankStartLine + rankHeight - 1,
+		leftColumn,
+		rightColumn: leftColumn + layout.nodeWidth - 1,
+	};
+}
+
+function nodeLeftEdge(nodeId: string, rankIndex: number, layout: WorkflowGraphLayout): number | undefined {
 	const rank = layout.ranks[rankIndex];
 	if (rank === undefined) return undefined;
 	const nodeIndex = rank.findIndex(node => node.id === nodeId);
 	if (nodeIndex === -1) return undefined;
 	const rankContentWidth = rankWidth(rank.length, layout.nodeWidth);
 	const leftOffset = Math.max(0, Math.floor((layout.totalWidth - rankContentWidth) / 2));
-	return leftOffset + nodeIndex * (layout.nodeWidth + NODE_GAP_WIDTH) + layout.nodeWidth - 1;
+	return leftOffset + nodeIndex * (layout.nodeWidth + NODE_GAP_WIDTH);
 }
+
+function nodeRightEdge(nodeId: string, layout: WorkflowGraphLayout): number | undefined {
+	const rankIndex = layout.rankByNodeId.get(nodeId);
+	if (rankIndex === undefined) return undefined;
+	const leftEdge = nodeLeftEdge(nodeId, rankIndex, layout);
+	return leftEdge === undefined ? undefined : leftEdge + layout.nodeWidth - 1;
+}
+
+function workflowGraphCellIsCoveredByNode(
+	lineIndex: number,
+	column: number,
+	nodeBoxesById: ReadonlyMap<string, WorkflowGraphNodeBox>,
+): boolean {
+	for (const box of nodeBoxesById.values()) {
+		if (lineIndex < box.topLine || lineIndex > box.bottomLine) continue;
+		if (column > box.leftColumn && column < box.rightColumn) return true;
+	}
+	return false;
+}
+
+function workflowGraphCanReplaceOccludedCell(char: string | undefined): boolean {
+	return char === undefined || char === " " || workflowGraphIsConnectorGlyph(char);
+}
+
+function workflowGraphIsConnectorGlyph(char: string): boolean {
+	return WORKFLOW_GRAPH_CONNECTOR_GLYPHS.has(char);
+}
+
+const WORKFLOW_GRAPH_CONNECTOR_GLYPHS = new Set([
+	"▲",
+	"▼",
+	"▶",
+	"│",
+	"║",
+	"┆",
+	"─",
+	"═",
+	"━",
+	"┄",
+	"┌",
+	"┐",
+	"└",
+	"┘",
+	"╭",
+	"╮",
+	"╰",
+	"╯",
+	"├",
+	"┤",
+	"┬",
+	"┴",
+	"┼",
+	"╟",
+	"╢",
+	"╫",
+	"╤",
+	"╧",
+]);
 
 function putWorkflowGraphTextAtColumn(line: string, column: number, text: string): string {
 	const safeColumn = Math.max(0, column);
