@@ -71,6 +71,7 @@ try {
 }
 
 const broadChangeAllowed = broadChangePattern.test(taskText);
+const mechanicalOverheadBudget = declaredMechanicalOverheadBudget(taskText);
 const status = await runGit(["status", "--short", "--untracked-files=all"]);
 const regularDiff = await runGit(["diff", "--numstat"]);
 const semanticDiff = await runGit(["diff", "-w", "--numstat"]);
@@ -102,6 +103,7 @@ const untrackedFiles = statusLines.filter(line => line.startsWith("?? ")).map(ch
 const untrackedProjectFiles = untrackedFiles.filter(path => !isWorkflowArtifactPath(path));
 const semanticRatio = regular.total === 0 ? 1 : semantic.total / regular.total;
 const mechanicalOverhead = Math.max(0, regular.total - semantic.total);
+const mechanicalOverheadRatio = regular.total === 0 ? 0 : mechanicalOverhead / regular.total;
 const reasons = [];
 
 if (!broadChangeAllowed && regular.fileCount >= 20) {
@@ -111,6 +113,18 @@ if (!broadChangeAllowed && regular.fileCount >= 20) {
 if (!broadChangeAllowed && regular.total >= 600 && mechanicalOverhead >= 400 && semanticRatio <= 0.4) {
 	reasons.push(
 		`diff looks mechanically broad: ${regular.total} changed lines, ${semantic.total} semantic lines with -w, ${mechanicalOverhead} whitespace/style overhead`,
+	);
+}
+
+if (
+	!broadChangeAllowed &&
+	mechanicalOverheadBudget !== undefined &&
+	mechanicalOverheadRatio > mechanicalOverheadBudget
+) {
+	reasons.push(
+		`mechanical whitespace/style overhead exceeds task diff gate: ${Math.round(
+			mechanicalOverheadRatio * 100,
+		)}% overhead > ${Math.round(mechanicalOverheadBudget * 100)}% budget`,
 	);
 }
 
@@ -148,6 +162,8 @@ const diagnostic = {
 		files: semantic.files.slice(0, 40),
 	},
 	mechanicalOverhead,
+	mechanicalOverheadRatio,
+	mechanicalOverheadBudget,
 	semanticRatio,
 	untrackedFiles: untrackedFiles.slice(0, 40),
 	untrackedProjectFiles: untrackedProjectFiles.slice(0, 40),
@@ -162,3 +178,18 @@ return {
 	data: diagnostic,
 	statePatch: [{ op: "set", path: "/humanize/diffGuard", value: diagnostic }],
 };
+
+function declaredMechanicalOverheadBudget(text) {
+	if (!text.trim()) return undefined;
+	const percentMatch =
+		/\b(?:whitespace|formatter|formatting|mechanical|style)(?:[\s\S]{0,120}?)(?:below|under|less than|<=?|at most|max(?:imum)?)(?:\s+of)?\s+(\d{1,2})(?:\s*%|\s+percent)\b/iu.exec(
+			text,
+		) ??
+		/\b(?:below|under|less than|<=?|at most|max(?:imum)?)(?:\s+of)?\s+(\d{1,2})(?:\s*%|\s+percent)(?:[\s\S]{0,120}?)(?:whitespace|formatter|formatting|mechanical|style)\b/iu.exec(
+			text,
+		);
+	if (!percentMatch) return undefined;
+	const percent = Number(percentMatch[1]);
+	if (!Number.isFinite(percent) || percent < 0 || percent > 99) return undefined;
+	return percent / 100;
+}

@@ -25,9 +25,17 @@ Delta discipline is part of the task contract:
 - Keep the diff tied to acceptance criteria. Broad whitespace/import/order churn,
   line-ending churn, generated-file churn, or unrelated cleanup is not progress.
 - Before yielding, inspect `git status --short --untracked-files=all` and
-  `git diff --stat`. Revert or justify every changed project file. If the diff
-  is broader than the acceptance surface, ask for human steering instead of
-  continuing.
+  both `git diff --stat` and `git diff -w --stat`. If raw diff size is much
+  larger than the `-w` diff, or if task.md declares a whitespace/formatter
+  percentage budget that you exceed, first revert the mechanical churn and
+  redo the semantic change narrowly. Do not finish the round with formatter
+  churn for the guard to discover later.
+- Revert formatter-wide indentation, import ordering, line wrapping, or
+  whitespace churn immediately unless that exact mechanical migration is the
+  accepted task. If the semantic change cannot be separated from the formatter
+  churn, stop and ask for steering instead of continuing.
+- Revert or justify every changed project file. If the diff is broader than the
+  acceptance surface, ask for human steering instead of continuing.
 
 
 Before claiming completion, provide:

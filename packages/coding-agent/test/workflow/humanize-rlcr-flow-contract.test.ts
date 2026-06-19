@@ -134,6 +134,30 @@ describe("humanize-rlcr flow contract", () => {
 		expect(result.data.reasons.join("\n")).toContain("untracked project files must be staged or explicitly excluded");
 	});
 
+	it("enforces a task-declared whitespace churn budget", async () => {
+		const repo = await createGitRepo();
+		await Bun.write(
+			path.join(repo, "task.md"),
+			[
+				"Objective:",
+				"Add a focused semantic change without formatter churn.",
+				"",
+				"Diff Gate:",
+				"Whitespace-only or formatter-driven changes must stay below 20 percent of the diff.",
+				"",
+			].join("\n"),
+		);
+		await Bun.write(path.join(repo, "src.rs"), numberedLines("let value = ", 40));
+		await runCommand(["git", "add", "task.md", "src.rs"], repo);
+		await runCommand(["git", "commit", "-m", "init"], repo);
+		await Bun.write(path.join(repo, "src.rs"), `${numberedLines("\tlet value = ", 40)}\nlet semantic_value = 41;\n`);
+
+		const result = await runDiffDisciplineGuard(repo);
+
+		expect(result.data.verdict).toBe("REPAIR");
+		expect(result.data.reasons.join("\n")).toContain("mechanical whitespace/style overhead exceeds task diff gate");
+	});
+
 	it("finalizes with a durable archive and combined staged unstaged untracked patch inventory", async () => {
 		const repo = await createGitRepo();
 		await fs.mkdir(path.join(repo, "workflow-output"), { recursive: true });
@@ -258,4 +282,8 @@ async function runCommand(command: string[], cwd: string): Promise<void> {
 	if (exitCode !== 0) {
 		throw new Error(`command failed (${exitCode}): ${command.join(" ")}\n${stdout}\n${stderr}`);
 	}
+}
+
+function numberedLines(prefix: string, count: number): string {
+	return Array.from({ length: count }, (_, index) => `${prefix}${index};`).join("\n");
 }

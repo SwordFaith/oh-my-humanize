@@ -10,7 +10,11 @@ reduction. Before yielding, report:
   import organizers, or mechanical migrations unless the KDA plan explicitly
   asks for that project-wide change. Format only intentionally changed files in
   the existing repository style. If a formatter touches unrelated files, stop,
-  revert unrelated churn, and report the risk.
+  revert unrelated churn, and report the risk. Before finishing, compare
+  `git diff --stat` with `git diff -w --stat`; if raw diff size is much larger
+  than the whitespace-ignored diff, or the plan/task declares a formatter or
+  whitespace percentage budget that you exceed, revert the mechanical churn and
+  redo the semantic change narrowly instead of leaving it for review.
 - changed files and rationale;
 - validation or benchmark command run, with result;
 - acceptance evidence gained;
