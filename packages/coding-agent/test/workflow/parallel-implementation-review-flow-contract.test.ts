@@ -80,6 +80,45 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(await fileExists(path.join(cwd, "workflow-output", "final-review-P06-T06-test.json"))).toBe(true);
 		expect(await fileExists(path.join(cwd, "workflow-output", "strong-review-P06-T06-test.json"))).toBe(false);
 	});
+
+	it("allows integration review when no lane reports a hard stop", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+
+		const result = await runScript(cwd, "lane-hard-stop-guard.js", {});
+
+		expect(result.verdict).toBe("continue");
+		expect(result.data).toMatchObject({
+			artifact: "workflow-output/lane-hard-stop-guard-P06-T06-test.json",
+			producer_node: "laneHardStopGuard",
+		});
+	});
+
+	it("stops before integration review when a lane reports a hard stop", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "workflow-output", "lane-hard-stop-P06-T06-test.json"),
+			`${JSON.stringify({
+				tuple_id: "P06-T06-test",
+				producer_node: "implementCore",
+				status: "hard_stop",
+				reason: "prior feature::f1414_no_require_git semantic failure reproduced",
+			})}\n`,
+		);
+
+		await expect(runScript(cwd, "lane-hard-stop-guard.js", {})).rejects.toThrow("parallel lane hard stop reported");
+		const guardArtifact = await Bun.file(
+			path.join(cwd, "workflow-output", "lane-hard-stop-guard-P06-T06-test.json"),
+		).json();
+		expect(guardArtifact).toMatchObject({
+			tuple_id: "P06-T06-test",
+			producer_node: "laneHardStopGuard",
+			status: "hard_stop",
+		});
+	});
 });
 
 async function runScript(cwd: string, scriptName: string, context: Partial<WorkflowContext>): Promise<ScriptResult> {

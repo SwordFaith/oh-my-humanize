@@ -24,6 +24,8 @@ resources:
     kind: script
   - path: scripts/run-declared-validation.js
     kind: script
+  - path: scripts/lane-hard-stop-guard.js
+    kind: script
   - path: scripts/evidence-contract-guard.js
     kind: script
   - path: scripts/finalize-strong-review.js
@@ -125,6 +127,14 @@ sequence:
                 taskContract:
                   state: /taskContract
     join:
+      id: laneHardStopGuard
+      type: script
+      script:
+        language: js
+        file: scripts/lane-hard-stop-guard.js
+      writes:
+        - /laneHardStopGuard
+  - node:
       id: integrationReview
       type: agent
       agent: reviewer
@@ -134,6 +144,7 @@ sequence:
         - /plan
         - /taskContract
         - /summary
+        - /laneHardStopGuard
       prompt:
         template:
           file: prompts/integration-review.md

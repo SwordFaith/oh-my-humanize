@@ -24,10 +24,15 @@ Before yielding:
 - record the documentation or evidence artifacts changed;
 - write `workflow-output/docs-lane-<tuple-id>.json`, where `<tuple-id>` is the
   tuple from `monitor-assignment.json`, `manifest-entry.json`, or `task.md`;
+- if this lane observes a task stop condition, write
+  `workflow-output/lane-hard-stop-<tuple-id>.json` with `status:
+  "hard_stop"`, `producer_node: "implementDocs"`, the blocker reason, and
+  evidence paths. Then stop instead of presenting the work as promotable;
 - if you also write Markdown evidence, use a tuple-scoped name such as
   `workflow-output/docs-evidence-<tuple-id>.md` instead of a generic name;
 - do not write reserved workflow-node artifacts:
   `workflow-output/validation-<tuple-id>.json`,
+  `workflow-output/lane-hard-stop-guard-<tuple-id>.json`,
   `workflow-output/evidence-contract-guard-<tuple-id>.json`,
   `workflow-output/final-review-<tuple-id>.json`, or any final decision /
   promotion artifact. Those filenames are owned only by later workflow nodes;

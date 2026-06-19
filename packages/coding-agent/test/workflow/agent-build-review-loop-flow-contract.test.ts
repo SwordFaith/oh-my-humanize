@@ -52,6 +52,7 @@ interface SemanticArchiveGuardResult {
 
 interface ArchiveLoopResult {
 	summary: string;
+	verdict?: string;
 	statePatch: Array<{
 		op: "set";
 		path: string;
@@ -173,6 +174,21 @@ describe("agent-build-review-loop flow contract", () => {
 		);
 
 		await expect(runArchiveLoop(cwd)).rejects.toThrow("round evidence claims downstream workflow node completion");
+	});
+
+	it("writes a rejected archive and fails the attempt for setup-blocker routes", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\ntrue\n");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "setup-blocker-evidence.json"),
+			JSON.stringify({ status: "setup-blocker", reason: "clean-copy validation missing dependencies" }),
+		);
+
+		await expect(runArchiveLoop(cwd)).rejects.toThrow("agent-build-review-loop rejected");
+		const archive = await Bun.file(path.join(cwd, "workflow-output", "final-agent-loop-reject.md")).text();
+		expect(archive).toContain("Terminal decision: reject");
+		expect(archive).toContain("setup-blocker-evidence.json");
 	});
 });
 

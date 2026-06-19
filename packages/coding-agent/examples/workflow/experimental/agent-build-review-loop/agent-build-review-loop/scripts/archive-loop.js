@@ -1,8 +1,8 @@
-const archivePath = "workflow-output/final-agent-loop-archive.md";
 const taskText = await readRequiredTaskText();
 const progressText = await readOptionalText("progress.md");
 const reviewRoute = workflowContext.state?.reviewRoute && typeof workflowContext.state.reviewRoute === "object" ? workflowContext.state.reviewRoute : {};
 const isRejectArchive = reviewRoute.decision === "reject";
+const archivePath = isRejectArchive ? "workflow-output/final-agent-loop-reject.md" : "workflow-output/final-agent-loop-archive.md";
 const verifyCommand = requiredTaskValidationCommand(taskText);
 assertSafeVerificationCommand(verifyCommand);
 const evidenceFiles = await loopEvidenceFiles();
@@ -70,6 +70,10 @@ const archive = [
 ].join("\n");
 
 await Bun.write(archivePath, archive);
+
+if (isRejectArchive) {
+	throw new Error(`agent-build-review-loop rejected: ${reviewRoute.reason ?? "review route rejected"}; see ${archivePath}`);
+}
 
 return {
 	summary: "archived completed agent build/review loop",
