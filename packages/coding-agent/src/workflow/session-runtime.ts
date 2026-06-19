@@ -14,10 +14,17 @@ const WORKFLOW_SUMMARY_TRUNCATION_SUFFIX =
 
 export interface WorkflowSessionRuntimeOptions {
 	cwd: string;
+	agentTaskRetryPolicy?: WorkflowAgentTaskRetryPolicy;
 	runEvalScript?: WorkflowScriptEvalRunner;
 	runShellScript?: WorkflowShellScriptRunner;
 	runAgentTask?: WorkflowAgentTaskRunner;
 	runHumanInput?: WorkflowHumanInputRunner;
+}
+
+export interface WorkflowAgentTaskRetryPolicy {
+	maxAttempts?: number;
+	baseDelayMs?: number;
+	maxDelayMs?: number;
 }
 
 export interface WorkflowAgentTaskRequest {
@@ -129,7 +136,7 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			if (input.signal !== undefined) {
 				request.signal = input.signal;
 			}
-			const result = await options.runAgentTask(request);
+			const result = await runAgentTaskWithTransientRetry(options, request);
 			return activationOutputFromTaskResult(input.node.id, result);
 		},
 		runScriptNode: async input => {
@@ -192,10 +199,159 @@ export function createSessionWorkflowRuntimeHost(options: WorkflowSessionRuntime
 			if (input.signal !== undefined) {
 				request.signal = input.signal;
 			}
-			const result = await options.runAgentTask(request);
+			const result = await runAgentTaskWithTransientRetry(options, request);
 			return reviewOutputFromTaskResult(input.node.id, result, input.gates, input.fallbackVerdict);
 		},
 	};
+}
+
+interface NormalizedWorkflowAgentTaskRetryPolicy {
+	maxAttempts: number;
+	baseDelayMs: number;
+	maxDelayMs: number;
+}
+
+const DEFAULT_WORKFLOW_AGENT_TASK_RETRY_POLICY: NormalizedWorkflowAgentTaskRetryPolicy = {
+	maxAttempts: 6,
+	baseDelayMs: 30_000,
+	maxDelayMs: 300_000,
+};
+
+async function runAgentTaskWithTransientRetry(
+	options: WorkflowSessionRuntimeOptions,
+	request: WorkflowAgentTaskRequest,
+): Promise<WorkflowAgentTaskResult> {
+	if (options.runAgentTask === undefined) {
+		throw new WorkflowNodeRuntimeError(`workflow agent node "${request.nodeId}" requires a subagent runtime adapter`);
+	}
+	const policy = normalizeWorkflowAgentTaskRetryPolicy(options.agentTaskRetryPolicy);
+	let lastTransientResult: WorkflowAgentTaskResult | undefined;
+	for (let attempt = 1; attempt <= policy.maxAttempts; attempt += 1) {
+		throwIfWorkflowSignalAborted(request.signal);
+		try {
+			const result = await options.runAgentTask(request);
+			if (!workflowAgentTaskResultIsTransientFailure(result)) return result;
+			lastTransientResult = result;
+			if (attempt >= policy.maxAttempts) return result;
+		} catch (error) {
+			if (!workflowAgentTaskErrorIsTransient(error) || attempt >= policy.maxAttempts) throw error;
+		}
+		await sleepBeforeWorkflowAgentTaskRetry(policy, attempt, request.signal);
+	}
+	if (lastTransientResult !== undefined) return lastTransientResult;
+	return {
+		exitCode: 1,
+		output: "",
+		error: `workflow agent task "${request.nodeId}" exhausted transient retry attempts`,
+	};
+}
+
+function normalizeWorkflowAgentTaskRetryPolicy(
+	policy: WorkflowAgentTaskRetryPolicy | undefined,
+): NormalizedWorkflowAgentTaskRetryPolicy {
+	const maxAttempts = normalizePositiveInteger(
+		policy?.maxAttempts,
+		DEFAULT_WORKFLOW_AGENT_TASK_RETRY_POLICY.maxAttempts,
+	);
+	const baseDelayMs = normalizeNonNegativeInteger(
+		policy?.baseDelayMs,
+		DEFAULT_WORKFLOW_AGENT_TASK_RETRY_POLICY.baseDelayMs,
+	);
+	const maxDelayMs = normalizeNonNegativeInteger(
+		policy?.maxDelayMs,
+		DEFAULT_WORKFLOW_AGENT_TASK_RETRY_POLICY.maxDelayMs,
+	);
+	return {
+		maxAttempts,
+		baseDelayMs,
+		maxDelayMs: Math.max(baseDelayMs, maxDelayMs),
+	};
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+	if (value === undefined || !Number.isFinite(value)) return fallback;
+	return Math.max(1, Math.floor(value));
+}
+
+function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
+	if (value === undefined || !Number.isFinite(value)) return fallback;
+	return Math.max(0, Math.floor(value));
+}
+
+function workflowAgentTaskResultIsTransientFailure(result: WorkflowAgentTaskResult): boolean {
+	if (result.exitCode === 0) return false;
+	return workflowAgentTaskReasonIsTransient(workflowAgentTaskFailureReason(result));
+}
+
+function workflowAgentTaskFailureReason(result: WorkflowAgentTaskResult): string {
+	return [result.error, result.stderr, result.output].filter((part): part is string => part !== undefined).join("\n");
+}
+
+function workflowAgentTaskErrorIsTransient(error: unknown): boolean {
+	if (workflowErrorWasAborted(error)) return false;
+	return workflowAgentTaskReasonIsTransient(formatWorkflowErrorReason(error));
+}
+
+function workflowAgentTaskReasonIsTransient(reason: string): boolean {
+	return WORKFLOW_AGENT_TRANSIENT_PROVIDER_ERROR_PATTERN.test(reason);
+}
+
+const WORKFLOW_AGENT_TRANSIENT_PROVIDER_ERROR_PATTERN =
+	/(?:\b429\b|too many requests|rate[_ -]?limit|temporar(?:y|ily) unavailable|overloaded|service unavailable|bad gateway|gateway timeout|upstream[^.\n]*(?:unavailable|timeout|rate limit)|\b5\d\d\b|ECONNRESET|ETIMEDOUT|EAI_AGAIN)/iu;
+
+function formatWorkflowErrorReason(error: unknown): string {
+	if (error instanceof Error) return `${error.name}: ${error.message}`;
+	return String(error);
+}
+
+async function sleepBeforeWorkflowAgentTaskRetry(
+	policy: NormalizedWorkflowAgentTaskRetryPolicy,
+	completedAttempt: number,
+	signal: AbortSignal | undefined,
+): Promise<void> {
+	const delayMs = workflowAgentTaskRetryDelayMs(policy, completedAttempt);
+	if (delayMs <= 0) return;
+	await sleepWorkflowRetryDelay(delayMs, signal);
+}
+
+function workflowAgentTaskRetryDelayMs(
+	policy: NormalizedWorkflowAgentTaskRetryPolicy,
+	completedAttempt: number,
+): number {
+	const exponent = Math.max(0, completedAttempt - 1);
+	const delay = policy.baseDelayMs * 2 ** exponent;
+	return Math.min(policy.maxDelayMs, delay);
+}
+
+async function sleepWorkflowRetryDelay(delayMs: number, signal: AbortSignal | undefined): Promise<void> {
+	throwIfWorkflowSignalAborted(signal);
+	if (signal === undefined) {
+		await Bun.sleep(delayMs);
+		return;
+	}
+	const abort = Promise.withResolvers<void>();
+	const onAbort = () => abort.reject(workflowAbortError(signal));
+	signal.addEventListener("abort", onAbort, { once: true });
+	try {
+		await Promise.race([Bun.sleep(delayMs), abort.promise]);
+	} finally {
+		signal.removeEventListener("abort", onAbort);
+		throwIfWorkflowSignalAborted(signal);
+	}
+}
+
+function throwIfWorkflowSignalAborted(signal: AbortSignal | undefined): void {
+	if (signal?.aborted === true) throw workflowAbortError(signal);
+}
+
+function workflowAbortError(signal: AbortSignal): Error {
+	const reason = signal.reason;
+	if (reason instanceof Error) return reason;
+	return new Error(reason === undefined ? "workflow node aborted" : String(reason));
+}
+
+function workflowErrorWasAborted(error: unknown): boolean {
+	return error instanceof Error && (error.name === "AbortError" || /aborted|abort signal/iu.test(error.message));
 }
 
 async function runEvalWorkflowScript(

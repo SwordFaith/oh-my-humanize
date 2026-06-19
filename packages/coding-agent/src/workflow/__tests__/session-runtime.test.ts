@@ -8,6 +8,108 @@ import { runWorkflow } from "../runner";
 import { createSessionWorkflowRuntimeHost, type WorkflowShellScriptRequest } from "../session-runtime";
 
 describe("createSessionWorkflowRuntimeHost review nodes", () => {
+	it("retries transient provider failures for agent nodes before completing", async () => {
+		const calls: string[] = [];
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: "/workspace",
+			agentTaskRetryPolicy: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
+			runAgentTask: async request => {
+				calls.push(request.nodeId);
+				if (calls.length < 3) {
+					return {
+						exitCode: 1,
+						output: "",
+						error: "429 Upstream rate limit exceeded, please retry later",
+					};
+				}
+				return {
+					exitCode: 0,
+					output: JSON.stringify({ summary: "agent completed after transient retry" }),
+				};
+			},
+		});
+		if (host.runAgentNode === undefined) throw new Error("agent runtime missing");
+
+		const node: WorkflowNode = { id: "build", type: "agent", prompt: "Build the thing." };
+		const output = await host.runAgentNode({
+			node,
+			activation: workflowActivation(node.id),
+			agent: "builder",
+			prompt: node.prompt,
+		});
+
+		expect(calls).toEqual(["build", "build", "build"]);
+		expect(output.summary).toBe("agent completed after transient retry");
+	});
+
+	it("does not retry non-transient agent failures", async () => {
+		let calls = 0;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: "/workspace",
+			agentTaskRetryPolicy: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
+			runAgentTask: async () => {
+				calls += 1;
+				return {
+					exitCode: 1,
+					output: "",
+					error: "implementation review rejected the candidate",
+				};
+			},
+		});
+		if (host.runAgentNode === undefined) throw new Error("agent runtime missing");
+
+		const node: WorkflowNode = { id: "build", type: "agent", prompt: "Build the thing." };
+		await expect(
+			host.runAgentNode({
+				node,
+				activation: workflowActivation(node.id),
+				agent: "builder",
+				prompt: node.prompt,
+			}),
+		).rejects.toThrow('workflow agent node "build" failed: implementation review rejected the candidate');
+
+		expect(calls).toBe(1);
+	});
+
+	it("retries transient provider failures for review nodes before parsing verdicts", async () => {
+		let calls = 0;
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: "/workspace",
+			agentTaskRetryPolicy: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
+			runAgentTask: async () => {
+				calls += 1;
+				if (calls === 1) {
+					return {
+						exitCode: 1,
+						output: "",
+						stderr: "503 Service Unavailable from upstream provider",
+					};
+				}
+				return {
+					exitCode: 0,
+					output: "COMPLETE\nLooks good after retry.",
+				};
+			},
+		});
+		if (host.runReviewNode === undefined) throw new Error("review runtime missing");
+
+		const node: WorkflowNode = {
+			id: "review",
+			type: "review",
+			prompt: "Review the thing.",
+			gates: ["CONTINUE", "COMPLETE"],
+		};
+		const output = await host.runReviewNode({
+			node,
+			activation: workflowActivation(node.id),
+			prompt: node.prompt,
+			gates: node.gates,
+		});
+
+		expect(calls).toBe(2);
+		expect(output.verdict).toBe("COMPLETE");
+	});
+
 	it("uses the first non-empty line as the verdict before falling back", async () => {
 		const host = createSessionWorkflowRuntimeHost({
 			cwd: "/workspace",
@@ -225,6 +327,16 @@ describe("createSessionWorkflowRuntimeHost review nodes", () => {
 		expect(result.scheduler.state).toEqual({ ledger: { round: 3 } });
 	});
 });
+
+function workflowActivation(nodeId: string) {
+	return {
+		id: `${nodeId}:activation-1`,
+		nodeId,
+		graphRevisionId: "run-1:graph-0",
+		status: "running" as const,
+		parentActivationIds: [],
+	};
+}
 
 async function runRetryReview(reviewOutput: string) {
 	const host = createSessionWorkflowRuntimeHost({
