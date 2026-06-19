@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed workflow frozen resource staging so controller scripts are materialized outside a task-local workspace `TMPDIR`, preventing agent nodes from discovering and running controller-owned scripts as project artifacts.
 - Fixed workflow stop/checkpoint handling so a node runtime that ignores an abort signal cannot keep `/workflow stop` waiting forever after the stop deadline.
 - Fixed headless `omp workflow start --cwd` for JavaScript workflow script nodes so they run relative to the requested workflow cwd and preserve structured output from top-level script returns.
 - Fixed detached `/workflow stop` requests so a persisted running attempt that is not attached to the current process records only `stop_requested` and no longer synthesizes abort/checkpoint evidence.

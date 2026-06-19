@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Api, Model } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import { parseWorkflowDefinition } from "../../src/workflow/definition";
 import type { FlowFreeze } from "../../src/workflow/freeze";
 import {
@@ -15,7 +16,7 @@ import {
 } from "../../src/workflow/lifecycle";
 import type { WorkflowNodeRuntimeHost, WorkflowScriptNodeInput } from "../../src/workflow/node-runtime";
 import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../../src/workflow/run-store";
-import { runWorkflow } from "../../src/workflow/runner";
+import { runWorkflow, selectWorkflowResourceTempRoot } from "../../src/workflow/runner";
 
 const openAiModel: Model<Api> = buildModel({
 	id: "gpt-4o",
@@ -932,5 +933,89 @@ edges: []
 		} finally {
 			await fs.rm(dir, { recursive: true, force: true });
 		}
+	});
+
+	it("keeps frozen resource staging outside task-local temporary directories", async () => {
+		const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-resource-workspace-"));
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-resource-agent-"));
+		const taskLocalTmp = path.join(workspace, "workflow-output", "tmp");
+		const previousTmpDir = process.env.TMPDIR;
+		const previousAgentDir = getAgentDir();
+		try {
+			await fs.mkdir(taskLocalTmp, { recursive: true });
+			process.env.TMPDIR = taskLocalTmp;
+			Bun.env.TMPDIR = taskLocalTmp;
+			setAgentDir(agentDir);
+			const definition = parseWorkflowDefinition(
+				`
+name: resource-staging-demo
+version: 1
+nodes:
+  inspect:
+    type: script
+    writes:
+      - /resources
+edges: []
+`,
+				{ sourcePath: path.join(workspace, "workflow.yml") },
+			);
+			const host = createHost();
+			let capturedInput: WorkflowScriptNodeInput | undefined;
+			const runtimeHost: WorkflowNodeRuntimeHost = {
+				runScriptNode: async input => {
+					capturedInput = input;
+					return {
+						summary: "inspected workflow resources",
+						data: { resourceDir: input.resourceDir },
+					};
+				},
+			};
+
+			await runWorkflow({
+				host,
+				definition,
+				runId: "run-resource-staging",
+				startNodeId: "inspect",
+				runtimeHost,
+				workspaceRoot: workspace,
+				frozenResources: [
+					{
+						path: "fixtures/message.txt",
+						hash: "sha256:fixture",
+						text: "resource-ok\n",
+						byteLength: 12,
+					},
+				],
+			});
+
+			expect(capturedInput?.resourceDir).toBeDefined();
+			const relativeToWorkspace = path.relative(workspace, capturedInput!.resourceDir!);
+			expect(relativeToWorkspace.startsWith("..")).toBe(true);
+			expect(capturedInput?.resourceDir).toContain(path.join(agentDir, "cache", "workflows", "resources"));
+			expect(
+				await Bun.file(path.join(workspace, "workflow-output", "tmp", "fixtures", "message.txt")).exists(),
+			).toBe(false);
+		} finally {
+			if (previousTmpDir === undefined) {
+				delete process.env.TMPDIR;
+				delete Bun.env.TMPDIR;
+			} else {
+				process.env.TMPDIR = previousTmpDir;
+				Bun.env.TMPDIR = previousTmpDir;
+			}
+			setAgentDir(previousAgentDir);
+			await fs.rm(workspace, { recursive: true, force: true });
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back from a workspace-local temp root for workflow resources", () => {
+		const selected = selectWorkflowResourceTempRoot(
+			"/repo/workspace/workflow-output/tmp",
+			"/repo/workspace",
+			"/home/user/.omp/agent/cache/workflows/resources",
+		);
+
+		expect(selected).toBe("/home/user/.omp/agent/cache/workflows/resources");
 	});
 });

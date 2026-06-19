@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Api, Model } from "@oh-my-pi/pi-ai";
+import { getWorkflowMonitorCacheDir } from "@oh-my-pi/pi-utils";
 import type { CanonicalModelRegistry, ModelMatchPreferences } from "../config/model-resolver";
 import type { Settings } from "../config/settings";
 import type { WorkflowDefinition, WorkflowNode } from "./definition";
@@ -76,9 +77,11 @@ export interface WorkflowRunnerOptions {
 	nodeAbortSignal?: AbortSignal;
 	nodeAbortSignalForActivation?: (activation: WorkflowActivation) => AbortSignal | undefined;
 	maxRuntimeMs?: number;
+	workspaceRoot?: string;
 	packageRoot?: string;
 	maxPromptBytes?: number;
 	frozenResources?: FlowFreezeResourceSnapshot[];
+	resourceTempRoot?: string;
 	lifecycle?: WorkflowRunnerLifecycleOptions;
 }
 
@@ -113,7 +116,10 @@ export async function runWorkflow(options: WorkflowRunnerOptions): Promise<Workf
 		graphRevisionId: options.graphRevisionId,
 	});
 	const runtimeSignal = workflowRuntimeSignal(options);
-	const resourceDir = await materializeWorkflowResources(workflowFrozenResources(options));
+	const resourceDir = await materializeWorkflowResources(
+		workflowFrozenResources(options),
+		workflowResourceTempRoot(options.resourceTempRoot, options.workspaceRoot),
+	);
 	try {
 		const scheduler = await runWorkflowScheduler(options.definition, {
 			startNodeId: options.startNodeId,
@@ -653,9 +659,11 @@ function workflowFrozenResources(options: WorkflowRunnerOptions): FlowFreezeReso
 
 async function materializeWorkflowResources(
 	snapshots: FlowFreezeResourceSnapshot[] | undefined,
+	tempRoot: string,
 ): Promise<string | undefined> {
 	if (!snapshots?.length) return undefined;
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-resources-"));
+	await fs.mkdir(tempRoot, { recursive: true });
+	const root = await fs.mkdtemp(path.join(tempRoot, "omp-workflow-resources-"));
 	try {
 		for (const snapshot of snapshots) {
 			await Bun.write(resolveMaterializedResourcePath(root, snapshot.path), snapshot.text);
@@ -682,6 +690,30 @@ function resolveMaterializedResourcePath(root: string, resourcePath: string): st
 		throw new WorkflowRunnerError(`workflow frozen resource path escapes the resource root: ${resourcePath}`);
 	}
 	return resolved;
+}
+
+function workflowResourceTempRoot(explicitRoot: string | undefined, workspaceRoot: string | undefined): string {
+	if (explicitRoot !== undefined) return explicitRoot;
+	return selectWorkflowResourceTempRoot(
+		os.tmpdir(),
+		workspaceRoot ?? process.cwd(),
+		path.join(getWorkflowMonitorCacheDir(), "resources"),
+	);
+}
+
+export function selectWorkflowResourceTempRoot(
+	candidateRoot: string,
+	workflowCwd: string,
+	fallbackRoot: string,
+): string {
+	const candidate = path.resolve(candidateRoot);
+	const cwd = path.resolve(workflowCwd);
+	return pathIsInsideOrSame(candidate, cwd) ? fallbackRoot : candidate;
+}
+
+function pathIsInsideOrSame(candidate: string, root: string): boolean {
+	const relative = path.relative(root, candidate);
+	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function findFrozenResourceSnapshot(
