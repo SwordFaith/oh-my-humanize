@@ -199,7 +199,7 @@ async function handleStart(command: WorkflowCommandArgs, runtime: WorkflowComman
 	const host = new InMemoryWorkflowStoreHost();
 	const runtimeHost = createSessionWorkflowRuntimeHost({
 		cwd,
-		runEvalScript: async request => runHeadlessEvalScript(request.code, request.language),
+		runEvalScript: async request => runHeadlessEvalScript(cwd, request.code, request.language),
 		runShellScript: async request => runHeadlessShellScript(cwd, request),
 		runAgentTask: async request => runHeadlessAgentTask(cwd, request),
 	});
@@ -415,21 +415,34 @@ function createHeadlessRuntimeBindingSnapshot(
 }
 
 async function runHeadlessEvalScript(
+	cwd: string,
 	code: string,
 	language: "js" | "py",
 ): Promise<{ exitCode: number; output: string; error?: string; language: "js" | "py" }> {
 	if (language === "py") {
 		return { exitCode: 1, output: "", error: "headless workflow CLI does not support py eval scripts", language };
 	}
+	const previousCwd = process.cwd();
+	const originalConsoleLog = console.log;
+	const capturedOutput: string[] = [];
 	try {
+		process.chdir(cwd);
+		console.log = (...data: unknown[]) => {
+			capturedOutput.push(data.map(formatConsoleArgument).join(" "));
+		};
 		const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
 			code: string,
 		) => () => Promise<unknown>;
 		const execute = new AsyncFunction(code);
 		const result = await execute();
-		return { exitCode: 0, output: formatScriptValue(result), language };
+		const formattedResult = formatScriptValue(result);
+		if (formattedResult) capturedOutput.push(formattedResult);
+		return { exitCode: 0, output: capturedOutput.join("\n"), language };
 	} catch (error) {
 		return { exitCode: 1, output: "", error: errorMessage(error), language };
+	} finally {
+		console.log = originalConsoleLog;
+		process.chdir(previousCwd);
 	}
 }
 
@@ -503,6 +516,11 @@ function formatScriptValue(value: unknown): string {
 	if (value === undefined) return "";
 	if (typeof value === "string") return value;
 	return JSON.stringify(value);
+}
+
+function formatConsoleArgument(value: unknown): string {
+	if (typeof value === "string") return value;
+	return formatScriptValue(value);
 }
 
 function requiredArg(command: WorkflowCommandArgs, usage: string): string {

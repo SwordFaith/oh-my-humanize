@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Fixed headless `omp workflow start --cwd` for JavaScript workflow script nodes so they run relative to the requested workflow cwd and preserve structured output from top-level script returns.
 - Fixed detached `/workflow stop` requests so a persisted running attempt that is not attached to the current process records only `stop_requested` and no longer synthesizes abort/checkpoint evidence.
 - Fixed workflow lifecycle terminal transitions so attempts cannot be completed or failed while activations are still running.
 - Fixed workflow monitor snapshots to include read-only health evidence for persisted status, detached running work, active agents, and checkpoint state.

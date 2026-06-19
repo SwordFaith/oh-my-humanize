@@ -144,6 +144,37 @@ describe("workflow CLI", () => {
 		expect(result.runs[0]?.stateKeys).toEqual(["message"]);
 	});
 
+	it("runs headless js workflow scripts from the requested cwd", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-cli-js-cwd-");
+		const root = tempDir.path();
+		const runCwd = `${root}/workspace`;
+		await Bun.write(`${root}/cwd-smoke.omhflow`, workflowJsCwdSmokeFlow());
+		await Bun.write(`${root}/cwd-smoke/scripts/read-cwd.js`, workflowJsCwdSmokeScript());
+		await Bun.write(`${runCwd}/marker.txt`, "cwd-ok");
+		const output: string[] = [];
+		vi.spyOn(process.stdout, "write").mockImplementation(chunk => {
+			output.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+			return true;
+		});
+
+		await runWorkflowCommand({
+			action: "start",
+			args: [`${root}/cwd-smoke.omhflow`],
+			flags: {
+				cwd: runCwd,
+				json: true,
+				runId: "js-cwd-smoke-run",
+			},
+		});
+
+		const result = JSON.parse(output.join("").trim()) as {
+			run: { status: string; completed: number; failed: number };
+			runs: { stateKeys: string[] }[];
+		};
+		expect(result.run).toMatchObject({ status: "completed", completed: 1, failed: 0 });
+		expect(result.runs[0]?.stateKeys).toEqual(["marker"]);
+	});
+
 	it("checkpoints headless workflow starts on SIGINT instead of leaving a run alive", async () => {
 		using tempDir = TempDir.createSync("@omp-workflow-cli-sigint-");
 		const root = tempDir.path();
@@ -303,6 +334,55 @@ function workflowResourceSmokeScript(): string {
 		"set -eu",
 		'message=$(cat "$OMP_WORKFLOW_RESOURCE_DIR/data/message.txt")',
 		'printf \'{"summary":"resource observed","statePatch":[{"op":"set","path":"/message","value":"%s"}]}\\n\' "$message"',
+	].join("\n");
+}
+
+function workflowJsCwdSmokeFlow(): string {
+	return [
+		"---",
+		"name: cwd-smoke",
+		"version: 1",
+		"schema: omhflow/v1",
+		"resourceDir: cwd-smoke",
+		"models:",
+		"  roles: {}",
+		"  defaults: {}",
+		"checkpoint:",
+		"  stopDeadlineMs: 30000",
+		"changePolicy:",
+		"  agentsCanPropose: true",
+		"  humansCanApprove: true",
+		"---",
+		"# JS cwd smoke",
+		"",
+		"```yaml workflow",
+		"stateSchema:",
+		"  version: 1",
+		"  shape:",
+		"    marker: string",
+		"resources:",
+		"  - path: scripts/read-cwd.js",
+		"    kind: script",
+		"sequence:",
+		"  - node:",
+		"      id: readCwd",
+		"      type: script",
+		"      script:",
+		"        language: js",
+		"        file: scripts/read-cwd.js",
+		"      writes:",
+		"        - /marker",
+		"```",
+	].join("\n");
+}
+
+function workflowJsCwdSmokeScript(): string {
+	return [
+		'const marker = (await Bun.file("marker.txt").text()).trim();',
+		"return {",
+		'  summary: "cwd marker observed",',
+		'  statePatch: [{ op: "set", path: "/marker", value: marker }],',
+		"};",
 	].join("\n");
 }
 
