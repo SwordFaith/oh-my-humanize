@@ -124,21 +124,30 @@ async function findRepeatedExternalValidationBlockerEvidenceFiles(taskText) {
 	const allowedScopes = taskAllowedScopes(taskText);
 	const groups = new Map();
 	for (const file of await workflowOutputFiles()) {
-		if (!/^workflow-output\/round-\d+\//u.test(file)) continue;
+		const round = workflowOutputRound(file);
+		if (round === null) continue;
 		if (!/(?:validation-(?:summary|stderr)|changed-file-inventory|project-changed-files)\.txt$/u.test(file)) continue;
 		const text = await readOptionalText(file);
 		const signature = validationFailureSignature(text);
 		if (signature === null) continue;
 		if (!isExternalValidationBlocker({ text, signature, changedFiles, allowedScopes })) continue;
-		const files = groups.get(signature.key) ?? [];
-		files.push(file);
-		groups.set(signature.key, files);
+		const group = groups.get(signature.key) ?? { files: [], rounds: new Set() };
+		group.files.push(file);
+		group.rounds.add(round);
+		groups.set(signature.key, group);
 	}
 	const evidenceFiles = [];
-	for (const files of groups.values()) {
-		if (files.length >= 3) evidenceFiles.push(...files);
+	for (const group of groups.values()) {
+		if (group.rounds.size >= 2) evidenceFiles.push(...group.files);
 	}
 	return uniqueSorted(evidenceFiles);
+}
+
+function workflowOutputRound(file) {
+	const roundText = /^workflow-output\/round-(\d+)\//u.exec(file)?.[1];
+	if (roundText === undefined) return null;
+	const round = Number.parseInt(roundText, 10);
+	return Number.isFinite(round) ? round : null;
 }
 
 async function changedProjectFiles() {
@@ -170,6 +179,8 @@ async function workflowOutputFiles() {
 }
 
 function validationFailureSignature(text) {
+	const dependencySignature = validationDependencyBlockerSignature(text);
+	if (dependencySignature !== null) return dependencySignature;
 	const failurePath = firstFailurePath(text);
 	if (!failurePath) return null;
 	const kind = /\b(?:TimeoutError|timed out|timeout)\b/iu.test(text) ? "timeout" : "failure";
@@ -178,6 +189,40 @@ function validationFailureSignature(text) {
 		path: failurePath,
 		kind,
 	};
+}
+
+function validationDependencyBlockerSignature(text) {
+	if (!isValidationDependencyBlockerText(text)) return null;
+	const missingDependencies = Array.from(
+		new Set(
+			[...text.matchAll(/\b(?:Cannot find (?:package|module)|Could not resolve)\s+['"`]([^'"`]+)['"`]/giu)]
+				.map(match => match[1])
+				.filter(Boolean)
+				.map(normalizeDependencyName),
+		),
+	).sort((left, right) => left.localeCompare(right, "en"));
+	const key =
+		missingDependencies.length === 0
+			? "validation-environment-dependencies"
+			: `validation-environment-dependencies:${missingDependencies.join(",")}`;
+	return {
+		key,
+		path: "validation-environment-dependencies",
+		kind: "failure",
+	};
+}
+
+function isValidationDependencyBlockerText(text) {
+	return (
+		/\b(?:validation copy|clean[- ]copy|clean copy|prepared validation copy|validation sandbox)\b/iu.test(text) &&
+		/\b(?:missing dependenc|missing package|missing module|excludes node_modules|exclude node_modules|Cannot find (?:package|module)|Could not resolve)\b/iu.test(
+			text,
+		)
+	);
+}
+
+function normalizeDependencyName(name) {
+	return name.replace(/\/(?:package\.json|dist\/[^/\s]+)$/u, "");
 }
 
 function firstFailurePath(text) {
@@ -197,7 +242,8 @@ function firstFailurePath(text) {
 function isExternalValidationBlocker({ text, signature, changedFiles, allowedScopes }) {
 	const explicitExternal =
 		/\b(?:out[- ]of[- ]scope|external|unrelated|environment(?:al)?|flaky)\b/iu.test(text) ||
-		/\boutside (?:this |the )?task scope\b/iu.test(text);
+		/\boutside (?:this |the )?task scope\b/iu.test(text) ||
+		signature.path === "validation-environment-dependencies";
 	const outsideChangedFiles = changedFiles.every(file => !pathsOverlap(file, signature.path));
 	const outsideAllowedScope =
 		allowedScopes.length === 0 ? false : allowedScopes.every(scope => !scopeMatchesPath(scope, signature.path));

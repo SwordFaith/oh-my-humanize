@@ -299,6 +299,48 @@ describe("agent-build-review-loop flow contract", () => {
 		});
 	});
 
+	it("routes repeated clean-copy missing dependency blockers to reject", async () => {
+		const cwd = await createTempDir();
+		for (const round of [1, 2]) {
+			await fs.mkdir(path.join(cwd, "workflow-output", `round-${round}`), { recursive: true });
+			await Bun.write(
+				path.join(cwd, "workflow-output", `round-${round}`, "validation-summary.txt"),
+				[
+					`Round ${round} validation command: ./workflow-output/run-vite-validation.sh`,
+					"Exit code: 1",
+					"External blocker: clean-copy e2e validation fails in test-serve because the validation copy excludes node_modules and the playground tests require dependencies that are not present in the clean copy.",
+					"The repeated missing dependencies include @vitejs/plugin-legacy, @vue/shared, stylus, express, escape-html, sirv, and oxc-parser.",
+				].join("\n"),
+			);
+			await Bun.write(
+				path.join(cwd, "workflow-output", `round-${round}`, "validation-stderr.txt"),
+				[
+					"FAIL playground/legacy/__tests__/legacy.spec.ts",
+					"Error: Cannot find package '@vitejs/plugin-legacy' imported from playground-temp/legacy/vite.config.js",
+					"FAIL playground/fs-serve/__tests__/fs-serve.spec.ts",
+					"Error: Cannot find package 'escape-html' imported from playground-temp/fs-serve/root/vite.config.js",
+				].join("\n"),
+			);
+		}
+
+		const result = await runReviewRouteClassifier(cwd, {
+			verdict: "continue",
+			summary:
+				"Validation is still blocked by a repeated clean-copy dependency-environment failure after real scoped work.",
+		});
+
+		expect(result.data).toMatchObject({
+			decision: "reject",
+			reviewVerdict: "continue",
+			setupBlockerEvidenceFiles: [],
+			externalValidationBlockerEvidenceFiles: [
+				"workflow-output/round-1/validation-summary.txt",
+				"workflow-output/round-2/validation-summary.txt",
+			],
+		});
+		expect(result.data.reason).toContain("terminal validation blocker");
+	});
+
 	it("preserves an ordinary continue review when no setup blocker evidence exists", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
