@@ -99,11 +99,11 @@ function mentionsOnlyMissingArchiveEvidence(text) {
 		/\b(?:semantic[- ]?archive[- ]?guard|semanticArchiveGuard|archiveLoop|archive loop|archive output|archive completion evidence)\b/iu.test(
 			text,
 		) && /\b(?:missing|absent|not completed|incomplete|not yet)\b/iu.test(text);
-	const hasBuildRoundBecauseArchiveGap =
-		/\banother build round\b.{0,160}\b(?:archive|semantic[- ]?archive[- ]?guard|semanticArchiveGuard|archiveLoop)\b/ius.test(
+	const hasLoopBecauseArchiveGap =
+		/\banother (?:build(?:\/review)?|review) (?:round|route)\b.{0,200}\b(?:terminal evidence|archive|semantic[- ]?archive[- ]?guard|semanticArchiveGuard|archiveLoop)\b/ius.test(
 			text,
 		);
-	return hasArchiveGap && hasBuildRoundBecauseArchiveGap;
+	return hasArchiveGap && hasLoopBecauseArchiveGap;
 }
 
 function mentionsImplementationWorkStillNeeded(text) {
