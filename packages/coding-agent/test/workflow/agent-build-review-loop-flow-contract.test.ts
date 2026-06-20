@@ -74,7 +74,9 @@ const ArchiveLoopFunctionConstructor = Object.getPrototypeOf(async () => {}).con
 	workflowContextName: string,
 	code: string,
 ) => (
-	workflowContext: WorkflowContext & { state?: { reviewRoute?: { decision?: string } } },
+	workflowContext: WorkflowContext & {
+		state?: { reviewRoute?: { decision?: string; reason?: string; setupBlockerEvidenceFiles?: string[] } };
+	},
 ) => Promise<ArchiveLoopResult>;
 
 const tempDirs: string[] = [];
@@ -146,6 +148,33 @@ describe("agent-build-review-loop flow contract", () => {
 		});
 	});
 
+	it("does not treat task text copied into the initial snapshot as setup-blocker evidence", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "workflow-output", "initial-loop-snapshot.md"),
+			[
+				"# Initial Loop Snapshot",
+				"",
+				"## Task",
+				"",
+				"Stop Conditions:",
+				"Stop if clean-copy validation is impossible or if setup blocker evidence is produced.",
+			].join("\n"),
+		);
+
+		const result = await runReviewRouteClassifier(cwd, {
+			verdict: "continue",
+			summary: "Validation failed after real build work; run another focused implementation round.",
+		});
+
+		expect(result.data).toMatchObject({
+			decision: "continue",
+			reviewVerdict: "continue",
+			setupBlockerEvidenceFiles: [],
+		});
+	});
+
 	it("requires repair when round evidence claims downstream guard or archive nodes completed", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "workflow-output", "round-2"), { recursive: true });
@@ -189,6 +218,24 @@ describe("agent-build-review-loop flow contract", () => {
 		const archive = await Bun.file(path.join(cwd, "workflow-output", "final-agent-loop-reject.md")).text();
 		expect(archive).toContain("Terminal decision: reject");
 		expect(archive).toContain("setup-blocker-evidence.json");
+	});
+
+	it("writes a rejected archive and fails when setup-blocker evidence only lives in review summary", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\ntrue\n");
+
+		await expect(
+			runArchiveLoop(cwd, {
+				decision: "reject",
+				reason: "setup blocker evidence is terminal; archive/reject instead of looping into another build round",
+				setupBlockerEvidenceFiles: ["reviewRound:summary"],
+			}),
+		).rejects.toThrow("agent-build-review-loop rejected");
+		const archive = await Bun.file(path.join(cwd, "workflow-output", "final-agent-loop-reject.md")).text();
+		expect(archive).toContain("Terminal decision: reject");
+		expect(archive).toContain("reviewRound:summary");
+		expect(archive).toContain("setup blocker evidence is terminal");
 	});
 });
 
@@ -242,7 +289,10 @@ async function runSemanticArchiveGuard(cwd: string): Promise<SemanticArchiveGuar
 	}
 }
 
-async function runArchiveLoop(cwd: string): Promise<ArchiveLoopResult> {
+async function runArchiveLoop(
+	cwd: string,
+	reviewRoute: { decision?: string; reason?: string; setupBlockerEvidenceFiles?: string[] } = { decision: "reject" },
+): Promise<ArchiveLoopResult> {
 	const scriptPath = path.resolve(
 		import.meta.dir,
 		"../../examples/workflow/experimental/agent-build-review-loop/agent-build-review-loop/scripts/archive-loop.js",
@@ -256,9 +306,7 @@ async function runArchiveLoop(cwd: string): Promise<ArchiveLoopResult> {
 			activation: { id: "activation-archive-loop" },
 			completedActivations: [],
 			state: {
-				reviewRoute: {
-					decision: "reject",
-				},
+				reviewRoute,
 			},
 		});
 	} finally {

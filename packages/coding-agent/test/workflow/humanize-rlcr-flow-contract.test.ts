@@ -126,15 +126,15 @@ describe("humanize-rlcr flow contract", () => {
 		});
 	});
 
-	it("keeps plain approval held until the operator gives a concrete proceed decision", async () => {
+	it("accepts the default OMH human approval button as an explicit proceed gate", async () => {
 		const result = await runRecordOperatorGate("Approve.");
 
 		const gate = result.statePatch.find(patch => patch.path === "/humanize/operatorGate")?.value;
 
 		expect(gate).toMatchObject({
-			decision: "hold",
-			strength: "weak",
-			reasons: ["approval is not an explicit proceed decision"],
+			decision: "proceed",
+			strength: "explicit",
+			reasons: [],
 		});
 	});
 

@@ -52,7 +52,12 @@ async function findSetupBlockerEvidenceFiles(reviewSummary) {
 	try {
 		const glob = new Bun.Glob("workflow-output/**/*");
 		for await (const file of glob.scan({ cwd: process.cwd(), onlyFiles: true })) {
-			if (isSetupBlockerFileName(file) || (await fileContainsSetupBlocker(file))) files.add(file);
+			if (isSetupBlockerFileName(file)) {
+				files.add(file);
+				continue;
+			}
+			if (!isRoundEvidenceFile(file)) continue;
+			if (await fileContainsSetupBlocker(file)) files.add(file);
 		}
 	} catch {
 		return Array.from(files).sort();
@@ -62,6 +67,10 @@ async function findSetupBlockerEvidenceFiles(reviewSummary) {
 
 function isSetupBlockerFileName(file) {
 	return /(^|\/)setup[-_]?blocker/i.test(file);
+}
+
+function isRoundEvidenceFile(file) {
+	return /^workflow-output\/round-\d+\//u.test(file);
 }
 
 async function fileContainsSetupBlocker(file) {

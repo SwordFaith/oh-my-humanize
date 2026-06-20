@@ -16,5 +16,7 @@ The questions should verify:
    days.
 
 The human response must explicitly choose proceed, hold for clarification, or
-stop. Do not treat silence, ambiguity, or a weak answer as implicit approval. If
-the answer is weak, explain the plan and ask whether to proceed, hold, or stop.
+stop. In the OMH TUI, the default Approve action means proceed only after the
+operator has read these checks. Do not treat silence, ambiguity, or a weak
+answer as implicit approval. If the answer is weak, explain the plan and ask
+whether to proceed, hold, or stop.

@@ -67,11 +67,7 @@ function assessDecision(token, text) {
 		return { decision: "stop", strength: "explicit", reasons: [] };
 	}
 	if (token === "approve" || token === "approved") {
-		return {
-			decision: "hold",
-			strength: "weak",
-			reasons: ["approval is not an explicit proceed decision"],
-		};
+		return { decision: "proceed", strength: "explicit", reasons: [] };
 	}
 
 	const reasons = [];

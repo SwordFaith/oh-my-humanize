@@ -6,6 +6,7 @@ const archivePath = isRejectArchive ? "workflow-output/final-agent-loop-reject.m
 const verifyCommand = requiredTaskValidationCommand(taskText);
 assertSafeVerificationCommand(verifyCommand);
 const evidenceFiles = await loopEvidenceFiles();
+const archivedEvidenceFiles = mergedEvidenceFiles(evidenceFiles, isRejectArchive ? reviewRoute.setupBlockerEvidenceFiles : []);
 const roundCount = Math.max(progressRoundCount(progressText), evidenceRoundCount(evidenceFiles));
 if (roundCount === 0 && !isRejectArchive) {
 	throw new Error("agent-build-review-loop cannot archive without at least one ROUND entry in progress.md");
@@ -14,7 +15,7 @@ const changedFiles = await changedProjectFiles();
 if (changedFiles.length === 0 && !allowsNoChange(taskText) && !isRejectArchive) {
 	throw new Error("agent-build-review-loop cannot archive without project changes unless task.md explicitly allows No-Code/No-Change");
 }
-if (evidenceFiles.length === 0) {
+if (archivedEvidenceFiles.length === 0) {
 	throw new Error("agent-build-review-loop cannot archive without loop evidence artifacts");
 }
 const downstreamClaimFiles = await downstreamCompletionClaimFiles(evidenceFiles);
@@ -44,7 +45,7 @@ const archive = [
 	`- Review route: ${reviewRoute.reason ?? "not recorded"}`,
 	`- Recorded rounds: ${roundCount}`,
 	`- Changed files: ${changedFiles.length}`,
-	`- Evidence files: ${evidenceFiles.length}`,
+	`- Evidence files: ${archivedEvidenceFiles.length}`,
 	"",
 	"## Review Route",
 	"",
@@ -56,7 +57,7 @@ const archive = [
 	"",
 	"## Archived Evidence Files",
 	"",
-	evidenceFiles.map(file => `- ${file}`).join("\n"),
+	archivedEvidenceFiles.map(file => `- ${file}`).join("\n"),
 	"",
 	"## Declared Verification Command",
 	"",
@@ -85,7 +86,7 @@ return {
 				file: archivePath,
 				verification: "archived-from-loop-evidence",
 				verificationCommand: verifyCommand,
-				evidenceFiles,
+				evidenceFiles: archivedEvidenceFiles,
 				roundCount,
 				changedFiles,
 				terminalDecision: isRejectArchive ? "reject" : "complete",
@@ -181,6 +182,16 @@ async function loopEvidenceFiles() {
 		return [];
 	}
 	return files.sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function mergedEvidenceFiles(files, extraFiles) {
+	const merged = new Set(files);
+	if (Array.isArray(extraFiles)) {
+		for (const file of extraFiles) {
+			if (typeof file === "string" && file.trim()) merged.add(file.trim());
+		}
+	}
+	return Array.from(merged).sort((left, right) => left.localeCompare(right, "en"));
 }
 
 async function downstreamCompletionClaimFiles(files) {
