@@ -751,6 +751,19 @@ describe("agent-build-review-loop flow contract", () => {
 		expect(archive).toContain("reviewRound:summary");
 		expect(archive).toContain("setup blocker evidence is terminal");
 	});
+
+	it("reserves review-route artifacts for the classifier node", async () => {
+		const prompt = await Bun.file(
+			path.resolve(
+				import.meta.dir,
+				"../../examples/workflow/experimental/agent-build-review-loop/agent-build-review-loop/prompts/build-round.md",
+			),
+		).text();
+
+		expect(prompt).toContain("workflow-output/review-route-<n>.json");
+		expect(prompt).toContain("classifyReviewRoute");
+		expect(prompt).toContain("must not create");
+	});
 });
 
 async function runInitializeLoop(cwd: string): Promise<InitializeLoopResult> {

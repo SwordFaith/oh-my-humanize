@@ -76,6 +76,10 @@ General loop contract:
   particular, build rounds must not create `archive-output.json`, final archive
   files, or any JSON/text that says `semanticArchiveGuard` or `archiveLoop` is
   `complete`. Those claims belong only to their workflow nodes.
+- Build rounds must not create `workflow-output/review-route-<n>.json`,
+  `workflow-output/semantic-archive-guard.json`, or final archive/reject files.
+  The `classifyReviewRoute`, `semanticArchiveGuard`, and `archiveLoop` nodes own
+  those artifacts.
 - Append exactly one new line to `progress.md` in this format:
   `ROUND <n>: <short concrete action>; validation=<command or not-run>; result=<pass|fail|not-run>`
 - The next round number is one more than the number of existing `ROUND ` lines.
