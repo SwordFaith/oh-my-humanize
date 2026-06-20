@@ -40,22 +40,33 @@ describe("workflow graph view rendering", () => {
 		const branchLine = diagram.find(line => line.includes("tryTiling") && line.includes("tryFusion"));
 		const rendered = diagram.join("\n");
 		const splitBusIndex = diagram.findIndex(line => line.includes("┌") && line.includes("┴") && line.includes("┐"));
-		const mergeBusIndex = findLastIndex(
-			diagram,
-			line => line.includes("└") && line.includes("┬") && line.includes("┘"),
-		);
+		const mergeBusIndex = findLastIndex(diagram, line => line.includes("├") && line.includes("┘"));
 
 		expect(branchLine).toBeDefined();
 		expect(rendered).toContain("┬");
 		expect(rendered).toMatch(/[┌└]─{2,}[┐┘]/u);
 		expect(splitBusIndex).toBeGreaterThan(-1);
 		expect(["│", "▼"]).toContain(diagram[splitBusIndex + 1]?.[diagram[splitBusIndex]!.indexOf("┌")]);
-		expect(["┴", "╧"]).toContain(diagram[splitBusIndex + 2]?.[diagram[splitBusIndex]!.indexOf("┌")]);
+		expect(["│", "┴", "╧", "▼"]).toContain(diagram[splitBusIndex + 2]?.[diagram[splitBusIndex]!.indexOf("┌")]);
 		expect(["│", "▼"]).toContain(diagram[splitBusIndex + 1]?.[diagram[splitBusIndex]!.lastIndexOf("┐")]);
-		expect(["┴", "╧"]).toContain(diagram[splitBusIndex + 2]?.[diagram[splitBusIndex]!.lastIndexOf("┐")]);
+		expect(["│", "┴", "╧", "▼"]).toContain(diagram[splitBusIndex + 2]?.[diagram[splitBusIndex]!.lastIndexOf("┐")]);
 		expect(mergeBusIndex).toBeGreaterThan(-1);
-		expect(["│", "▼"]).toContain(diagram[mergeBusIndex + 1]?.[diagram[mergeBusIndex]!.indexOf("┬")]);
-		expect(["┴", "╧"]).toContain(diagram[mergeBusIndex + 2]?.[diagram[mergeBusIndex]!.indexOf("┬")]);
+		const mergeConnectorColumn = visibleColumnsOf(diagram[mergeBusIndex]!, "├")[0];
+		const mergeStemLine = diagram[mergeBusIndex + 1];
+		const mergeLandingLine = diagram[mergeBusIndex + 2];
+		expect(mergeConnectorColumn).toBeDefined();
+		expect(mergeStemLine).toBeDefined();
+		expect(mergeLandingLine).toBeDefined();
+		if (mergeConnectorColumn === undefined || mergeStemLine === undefined || mergeLandingLine === undefined) {
+			throw new Error("expected merge connector lines to be present");
+		}
+		const mergeStemChar = charAtVisibleColumn(mergeStemLine, mergeConnectorColumn);
+		const mergeLandingChar = charAtVisibleColumn(mergeLandingLine, mergeConnectorColumn);
+		if (mergeStemChar === undefined || mergeLandingChar === undefined) {
+			throw new Error("expected merge connector glyphs to be present");
+		}
+		expect(["│", "▼"]).toContain(mergeStemChar);
+		expect(["┴", "╧", "▼"]).toContain(mergeLandingChar);
 		expectConnectorsUseOneBoxDrawingBaseline(diagram);
 		expectSplitAndMergeBusesToBeCentered(diagram);
 		expect(rendered).toContain("▼");
@@ -210,6 +221,98 @@ describe("workflow graph view rendering", () => {
 		expect(sourceLine).toContain("├──");
 		expect(sourceLine).toContain("↺ build · if retry");
 		expect(sourceLine).not.toContain("review back to build");
+	});
+
+	it("routes parallel horizontal connector lanes without same-direction overlap", () => {
+		const view = createView({
+			name: "separated-connector-lanes",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "fanout", type: "script" },
+				{ id: "leftBuilder", type: "agent" },
+				{ id: "middleBuilder", type: "agent" },
+				{ id: "rightBuilder", type: "agent" },
+				{ id: "review", type: "review", waitFor: ["leftBuilder", "middleBuilder", "rightBuilder"] },
+			],
+			edges: [
+				{ from: "fanout", to: "leftBuilder" },
+				{ from: "fanout", to: "middleBuilder" },
+				{ from: "fanout", to: "rightBuilder" },
+				{ from: "leftBuilder", to: "review" },
+				{ from: "middleBuilder", to: "review" },
+				{ from: "rightBuilder", to: "review" },
+			],
+		});
+
+		const diagram = renderWorkflowGraphDiagram(view, { width: 128 });
+		const sourceBottomIndex = diagram.findIndex(line => line.includes("└") && line.includes("┬"));
+		const firstTargetTopIndex = diagram.findIndex(
+			(line, index) => index > sourceBottomIndex && line.includes("┌") && line.includes("┴"),
+		);
+		const connectorRows = diagram
+			.slice(sourceBottomIndex + 1, firstTargetTopIndex)
+			.map(line => visibleColumnsOf(line, "─").join(","))
+			.filter(signature => signature.length > 0);
+
+		expect(sourceBottomIndex).toBeGreaterThan(-1);
+		expect(firstTargetTopIndex).toBeGreaterThan(sourceBottomIndex);
+		expect(connectorRows.length).toBeGreaterThanOrEqual(2);
+		expect(new Set(connectorRows).size).toBe(connectorRows.length);
+		expectConnectorsUseOneBoxDrawingBaseline(diagram);
+		expect(diagram.join("\n")).toContain("▼");
+	});
+
+	it("weakens loopback lines where another node visually covers the route", () => {
+		const view = createView({
+			name: "occluded-loopback-route",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "start", type: "script" },
+				{ id: "build", type: "agent" },
+				{ id: "sideQuest", type: "script" },
+				{ id: "review", type: "review" },
+			],
+			edges: [
+				{ from: "start", to: "build" },
+				{ from: "start", to: "sideQuest" },
+				{ from: "build", to: "review" },
+				{ from: "review", to: "build", condition: { source: 'outputs.review.verdict == "retry"' } },
+			],
+		});
+
+		const diagram = renderWorkflowGraphDiagram(view, { width: 118 });
+		const rendered = diagram.join("\n");
+
+		expect(rendered).toContain("↺ build · if retry");
+		expect(rendered).toContain("▲");
+		expect(rendered).toContain("Program┄·┄runs");
+		expect(rendered).not.toContain("Program────runs");
+	});
+
+	it("colors workflow connector glyphs in the TUI diagram without coloring node text as connectors", async () => {
+		const theme = await getThemeByName("dark");
+		if (!theme) throw new Error("dark theme fixture is required");
+		setThemeInstance(theme);
+		const view = createView({
+			name: "colored-connector-canvas",
+			version: 1,
+			models: { roles: {}, defaults: {} },
+			nodes: [
+				{ id: "build", type: "agent" },
+				{ id: "review", type: "review" },
+			],
+			edges: [
+				{ from: "build", to: "review" },
+				{ from: "review", to: "build", condition: { source: 'outputs.review.verdict == "retry"' } },
+			],
+		});
+
+		const rendered = new WorkflowGraphComponent(view, { refreshMs: 0 }).render(132).join("\n");
+
+		expect(rendered).toMatch(/\x1b\[[0-9;]*m[▲▼▶│─┄┆]/u);
+		expect(rendered).not.toMatch(/\x1b\[[0-9;]*moutputs\.review\.verdict/u);
 	});
 
 	it("keeps loop decision chips short in narrow labels", () => {
