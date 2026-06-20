@@ -8,6 +8,14 @@ if (!(await fileExists(progressPath))) {
 const taskText = await readRequiredTaskText();
 const verifyCommand = requiredTaskValidationCommand(taskText);
 assertSafeVerificationCommand(verifyCommand);
+const validationPreflight = await validateVerificationPreflight(verifyCommand);
+if (validationPreflight.status === "setup-blocker") {
+	await Bun.write(
+		"workflow-output/setup-blocker-validation-preflight.json",
+		`${JSON.stringify(validationPreflight, null, 2)}\n`,
+	);
+	throw new Error(`agent-build-review-loop validation preflight setup blocker: ${validationPreflight.reason}`);
+}
 const runtime = runtimeFromTaskContract(taskText);
 const snapshot = [
 	"# Initial Loop Snapshot",
@@ -41,6 +49,7 @@ return {
 				file: progressPath,
 				snapshot: snapshotPath,
 				validationCommand: verifyCommand,
+				validationPreflight,
 				verification: "declared",
 			},
 		},
@@ -113,6 +122,68 @@ function assertSafeVerificationCommand(command) {
 		if (seconds > 900) {
 			throw new Error("agent-build-review-loop validation command timeout must be 15 minutes or less");
 		}
+	}
+}
+
+async function validateVerificationPreflight(command) {
+	const material = [command, await validationCommandScriptText(command)].filter(Boolean).join("\n");
+	const missingDependencyRoots = [];
+	if (requiresNodeDependencyRoot(material) && !(await directoryExists("node_modules"))) {
+		missingDependencyRoots.push("node_modules");
+	}
+	const status = missingDependencyRoots.length > 0 ? "setup-blocker" : "pass";
+	return {
+		status,
+		validationCommand: command,
+		missingDependencyRoots,
+		reason:
+			status === "setup-blocker"
+				? `validation harness requires package-manager dependency roots that are missing: ${missingDependencyRoots.join(", ")}`
+				: "validation command preflight did not find missing dependency roots",
+		checkedAtMs: Date.now(),
+	};
+}
+
+function requiresNodeDependencyRoot(material) {
+	return /\bnode_modules\b/iu.test(material) && /\b(?:pnpm|npm|yarn|bun)\b/iu.test(material);
+}
+
+async function validationCommandScriptText(command) {
+	const scriptPath = localValidationScriptPath(command);
+	if (!scriptPath) return "";
+	try {
+		const file = Bun.file(scriptPath);
+		if (file.size > 128_000) return "";
+		return await file.text();
+	} catch {
+		return "";
+	}
+}
+
+function localValidationScriptPath(command) {
+	const tokens = command.trim().split(/\s+/u).filter(Boolean);
+	while (tokens.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(tokens[0] ?? "")) tokens.shift();
+	if ((tokens[0] ?? "") === "timeout") {
+		tokens.shift();
+		if (/^\d+[smhd]?$/iu.test(tokens[0] ?? "")) tokens.shift();
+	}
+	const first = tokens[0] ?? "";
+	const second = tokens[1] ?? "";
+	const candidate = /^(?:bash|sh|zsh|bun|node)$/u.test(first) ? second : first;
+	const unquoted = candidate.replace(/^['"]|['"]$/gu, "");
+	if (!unquoted || unquoted.startsWith("-")) return "";
+	if (unquoted.startsWith("./")) return unquoted;
+	if (unquoted.startsWith("workflow-output/")) return unquoted;
+	return "";
+}
+
+async function directoryExists(dirPath) {
+	try {
+		const glob = new Bun.Glob(dirPath);
+		for await (const _match of glob.scan({ cwd: process.cwd(), onlyFiles: false })) return true;
+		return false;
+	} catch {
+		return false;
 	}
 }
 

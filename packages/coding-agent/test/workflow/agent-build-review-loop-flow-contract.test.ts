@@ -60,6 +60,25 @@ interface ArchiveLoopResult {
 	}>;
 }
 
+interface InitializeLoopResult {
+	summary: string;
+	statePatch: Array<{
+		op: "set";
+		path: string;
+		value: {
+			validationPreflight?: {
+				status?: string;
+				missingDependencyRoots?: string[];
+			};
+		};
+	}>;
+}
+
+const InitializeLoopFunctionConstructor = Object.getPrototypeOf(async () => {}).constructor as new (
+	workflowContextName: string,
+	code: string,
+) => (workflowContext: WorkflowContext) => Promise<InitializeLoopResult>;
+
 const ReviewRouteFunctionConstructor = Object.getPrototypeOf(async () => {}).constructor as new (
 	workflowContextName: string,
 	code: string,
@@ -86,6 +105,59 @@ afterEach(async () => {
 });
 
 describe("agent-build-review-loop flow contract", () => {
+	it("fails closed before builder work when validation harness needs missing dependency roots", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\n./workflow-output/run-validation.sh\n");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "run-validation.sh"),
+			[
+				"#!/usr/bin/env bash",
+				"set -euo pipefail",
+				"mapfile -t dependency_dirs < <(find . -path './node_modules' -type d -prune -print)",
+				"pnpm test",
+			].join("\n"),
+		);
+
+		await expect(runInitializeLoop(cwd)).rejects.toThrow("validation preflight setup blocker");
+		const evidence = await Bun.file(
+			path.join(cwd, "workflow-output", "setup-blocker-validation-preflight.json"),
+		).json();
+
+		expect(evidence).toMatchObject({
+			status: "setup-blocker",
+			missingDependencyRoots: ["node_modules"],
+			validationCommand: "./workflow-output/run-validation.sh",
+		});
+	});
+
+	it("initializes when package-manager validation dependency roots are present", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await fs.mkdir(path.join(cwd, "node_modules"), { recursive: true });
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\n./workflow-output/run-validation.sh\n");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "run-validation.sh"),
+			[
+				"#!/usr/bin/env bash",
+				"set -euo pipefail",
+				"mapfile -t dependency_dirs < <(find . -path './node_modules' -type d -prune -print)",
+				"pnpm test",
+			].join("\n"),
+		);
+
+		const result = await runInitializeLoop(cwd);
+		const progress = result.statePatch.find(patch => patch.path === "/progress")?.value;
+
+		expect(progress?.validationPreflight).toMatchObject({
+			status: "pass",
+			missingDependencyRoots: [],
+		});
+		expect(await Bun.file(path.join(cwd, "workflow-output", "initial-loop-snapshot.md")).text()).toContain(
+			"./workflow-output/run-validation.sh",
+		);
+	});
+
 	it("routes explicit setup-blocker evidence to reject instead of another build round", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
@@ -319,6 +391,25 @@ describe("agent-build-review-loop flow contract", () => {
 		expect(archive).toContain("setup blocker evidence is terminal");
 	});
 });
+
+async function runInitializeLoop(cwd: string): Promise<InitializeLoopResult> {
+	const scriptPath = path.resolve(
+		import.meta.dir,
+		"../../examples/workflow/experimental/agent-build-review-loop/agent-build-review-loop/scripts/initialize-loop.js",
+	);
+	const script = await Bun.file(scriptPath).text();
+	const execute = new InitializeLoopFunctionConstructor("workflowContext", script);
+	const originalCwd = process.cwd();
+	try {
+		process.chdir(cwd);
+		return await execute({
+			activation: { id: "activation-initialize-loop" },
+			completedActivations: [],
+		});
+	} finally {
+		process.chdir(originalCwd);
+	}
+}
 
 async function runReviewRouteClassifier(
 	cwd: string,
