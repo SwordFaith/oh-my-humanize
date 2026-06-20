@@ -85,13 +85,14 @@ function isArchiveReadinessOnlyReview(text) {
 function mentionsSatisfiedBuildContract(text) {
 	return (
 		/\b(?:minimum|declared minimum|required).{0,80}\b(?:satisf(?:ied|ying)|met)\b/ius.test(text) ||
-		/\b(?:2|two)\s+ROUND entries\b/iu.test(text) ||
+		/\bsatisf(?:ied|ying).{0,80}\b(?:minimum|declared minimum|required)\b/ius.test(text) ||
+		/\b(?:2|two)\s+(?:ROUND entries|lines? beginning with ROUND)\b/iu.test(text) ||
 		/\bat least (?:2|two).{0,80}\b(?:round|implementation|build)\b/ius.test(text)
 	);
 }
 
 function mentionsPassingValidation(text) {
-	return /\b(?:latest|scoped|current|last)?\s*(?:validation|checks?|test(?:s| suite)?).{0,80}\bpass(?:ed|es|ing)?\b/ius.test(text);
+	return /\b(?:validation|checks?|test(?:s| suite)?|declared command)\b.{0,160}\bpass(?:ed|es|ing)?\b/ius.test(text);
 }
 
 function mentionsOnlyMissingArchiveEvidence(text) {
