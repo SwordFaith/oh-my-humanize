@@ -465,6 +465,63 @@ describe("agent-build-review-loop flow contract", () => {
 		expect(result.data.reason).toContain("semantic archive guard");
 	});
 
+	it("keeps building when task-required round minimum is not satisfied", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "task.md"), "Produce at least four meaningful build/review cycles.\n");
+		await Bun.write(
+			path.join(cwd, "progress.md"),
+			[
+				"ROUND 1: add first asset regression; validation=./workflow-output/run-validation.sh; result=pass",
+				"ROUND 2: add second asset regression; validation=./workflow-output/run-validation.sh; result=pass",
+			].join("\n"),
+		);
+
+		const result = await runReviewRouteClassifier(cwd, {
+			verdict: "continue",
+			summary:
+				"progress.md contains 2 ROUND lines and the latest scoped clean-copy validation passed, but semanticArchiveGuard and archiveLoop evidence is missing.",
+		});
+
+		expect(result.data).toMatchObject({
+			decision: "continue",
+			reviewVerdict: "continue",
+			setupBlockerEvidenceFiles: [],
+			externalValidationBlockerEvidenceFiles: [],
+			terminalBlockerEvidenceFiles: [],
+		});
+	});
+
+	it("routes archive-only evidence gaps after task-required round minimum", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "task.md"), "Produce at least four meaningful build/review cycles.\n");
+		await Bun.write(
+			path.join(cwd, "progress.md"),
+			[
+				"ROUND 1: add first asset regression; validation=./workflow-output/run-validation.sh; result=pass",
+				"ROUND 2: add second asset regression; validation=./workflow-output/run-validation.sh; result=pass",
+				"ROUND 3: add third asset regression; validation=./workflow-output/run-validation.sh; result=pass",
+				"ROUND 4: add fourth asset regression; validation=./workflow-output/run-validation.sh; result=pass",
+			].join("\n"),
+		);
+
+		const result = await runReviewRouteClassifier(cwd, {
+			verdict: "continue",
+			summary:
+				"progress.md contains 4 ROUND lines and the latest scoped clean-copy validation passed, but semanticArchiveGuard and archiveLoop evidence is missing.",
+		});
+
+		expect(result.data).toMatchObject({
+			decision: "complete",
+			reviewVerdict: "continue",
+			setupBlockerEvidenceFiles: [],
+			externalValidationBlockerEvidenceFiles: [],
+			terminalBlockerEvidenceFiles: [],
+		});
+		expect(result.data.reason).toContain("semantic archive guard");
+	});
+
 	it("does not treat task text copied into the initial snapshot as setup-blocker evidence", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });

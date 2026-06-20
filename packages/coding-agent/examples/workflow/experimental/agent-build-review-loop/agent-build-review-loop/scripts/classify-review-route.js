@@ -3,6 +3,7 @@ const reviewVerdict = normalizeVerdict(review.data?.verdict ?? review.summary);
 const reviewSummary = typeof review.summary === "string" ? review.summary : "";
 const reviewRound = completedActivationCount("reviewRound");
 const taskText = await readOptionalText("task.md");
+const requiredRoundCount = taskRequiredRoundCount(taskText);
 const setupBlockerEvidenceFiles = await findSetupBlockerEvidenceFiles(reviewSummary);
 const externalValidationBlockerEvidenceFiles = await findRepeatedExternalValidationBlockerEvidenceFiles(taskText);
 const terminalBlockerEvidenceFiles = uniqueSorted([
@@ -34,6 +35,7 @@ const route = {
 	reason,
 	reviewVerdict,
 	reviewSummary,
+	requiredRoundCount,
 	setupBlockerEvidenceFiles,
 	externalValidationBlockerEvidenceFiles,
 	terminalBlockerEvidenceFiles,
@@ -76,7 +78,7 @@ function normalizeVerdict(value) {
 async function isArchiveReadinessOnlyReview(text) {
 	const progress = await readOptionalText("progress.md");
 	return (
-		(mentionsSatisfiedBuildContract(text) || progressRoundCount(progress) >= 2) &&
+		progressRoundCount(progress) >= requiredRoundCount &&
 		mentionsPassingValidation(text) &&
 		mentionsOnlyMissingArchiveEvidence(text) &&
 		!mentionsImplementationWorkStillNeeded(text)
@@ -94,6 +96,39 @@ function mentionsSatisfiedBuildContract(text) {
 		/\b(?:2|two)\s+(?:ROUND entries|lines? beginning with ROUND)\b/iu.test(text) ||
 		/\bat least (?:2|two).{0,80}\b(?:round|implementation|build)\b/ius.test(text)
 	);
+}
+
+function taskRequiredRoundCount(text) {
+	const matches = [
+		...text.matchAll(
+			/\bat least\s+((?:one|two|three|four|five|six|seven|eight|nine|ten)|\d+)\s+meaningful\s+build\/review\s+cycles?\b/giu,
+		),
+		...text.matchAll(
+			/\brequires?\s+(?:at least\s+)?((?:one|two|three|four|five|six|seven|eight|nine|ten)|\d+)\s+meaningful\s+build\/review\s+cycles?\b/giu,
+		),
+	];
+	const counts = matches
+		.map(match => parseRoundCount(match[1] ?? ""))
+		.filter(count => count !== null);
+	return counts.length === 0 ? 2 : Math.max(...counts);
+}
+
+function parseRoundCount(text) {
+	const numeric = Number.parseInt(text, 10);
+	if (Number.isFinite(numeric) && numeric > 0) return numeric;
+	const words = new Map([
+		["one", 1],
+		["two", 2],
+		["three", 3],
+		["four", 4],
+		["five", 5],
+		["six", 6],
+		["seven", 7],
+		["eight", 8],
+		["nine", 9],
+		["ten", 10],
+	]);
+	return words.get(text.toLowerCase()) ?? null;
 }
 
 function mentionsPassingValidation(text) {
