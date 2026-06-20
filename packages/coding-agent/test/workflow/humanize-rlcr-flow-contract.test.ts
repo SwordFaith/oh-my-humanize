@@ -86,6 +86,22 @@ interface RoundSummaryResult {
 	}>;
 }
 
+interface RoundSummaryExecution {
+	cwd: string;
+	result: RoundSummaryResult;
+}
+
+interface EnterReviewResult {
+	summary: string;
+	statePatch: Array<{
+		op: "set";
+		path: string;
+		value: {
+			summaryReviewFile?: string;
+		};
+	}>;
+}
+
 const AsyncFunctionConstructor = Object.getPrototypeOf(async () => {}).constructor as new (
 	workflowContextName: string,
 	code: string,
@@ -147,10 +163,17 @@ describe("humanize-rlcr flow contract", () => {
 		await Bun.write(path.join(repo, "new-test.txt"), "real test content\n");
 
 		const result = await runDiffDisciplineGuard(repo);
+		const evidence = await Bun.file(path.join(repo, "workflow-output", "round-1-diff-discipline-guard.json")).json();
 
 		expect(result.data.verdict).toBe("REPAIR");
 		expect(result.data.untrackedProjectFiles).toContain("new-test.txt");
 		expect(result.data.reasons.join("\n")).toContain("untracked project files must be staged or explicitly excluded");
+		expect(evidence).toMatchObject({
+			flow: "humanize-rlcr",
+			node: "diffDisciplineGuard",
+			round: 1,
+			verdict: "REPAIR",
+		});
 	});
 
 	it("enforces a task-declared whitespace churn budget", async () => {
@@ -179,15 +202,56 @@ describe("humanize-rlcr flow contract", () => {
 
 	it("rejects implementation round evidence that claims downstream review completion", async () => {
 		await expect(
-			runWriteRoundSummary({
+			runWriteRoundSummary(
+				{
+					summary: "implemented focused tests",
+					data: {
+						changedFiles: ["src/lib.rs"],
+						reviewSummary: { status: "passed", findings: [] },
+						finalAlignmentCheck: "all done",
+					},
+				},
+				await createTempDir(),
+			),
+		).rejects.toThrow("implementation round evidence cannot claim downstream review or final-alignment results");
+	});
+
+	it("writes durable round and summary-review evidence for each implementation round", async () => {
+		const roundDir = await createTempDir();
+		const { result } = await runWriteRoundSummary(
+			{
 				summary: "implemented focused tests",
 				data: {
+					status: "ready",
 					changedFiles: ["src/lib.rs"],
-					reviewSummary: { status: "passed", findings: [] },
-					finalAlignmentCheck: "all done",
+					verification: ["bun test src/lib.test.ts"],
+					negativeTests: ["rejects invalid input"],
 				},
-			}),
-		).rejects.toThrow("implementation round evidence cannot claim downstream review or final-alignment results");
+			},
+			roundDir,
+		);
+		const ledger = result.statePatch.find(patch => patch.path === "/humanize/ledger")?.value;
+		const roundEvidence = await Bun.file(path.join(roundDir, "workflow-output", "round-1-summary.json")).json();
+		const reviewResult = await runEnterReviewPhase(roundDir);
+		const reviewEvidence = await Bun.file(
+			path.join(roundDir, "workflow-output", "round-1-codex-summary-review.json"),
+		).json();
+
+		expect(ledger).toMatchObject({ currentRound: 1 });
+		expect(roundEvidence).toMatchObject({
+			flow: "humanize-rlcr",
+			node: "writeRoundSummary",
+			round: 1,
+			entry: { artifactFile: "workflow-output/round-1-summary.json" },
+		});
+		expect(reviewResult.statePatch.find(patch => patch.path === "/humanize/reviewPhase")?.value).toMatchObject({
+			summaryReviewFile: "workflow-output/round-1-codex-summary-review.json",
+		});
+		expect(reviewEvidence).toMatchObject({
+			flow: "humanize-rlcr",
+			node: "codexSummaryReview",
+			round: 1,
+		});
 	});
 
 	it("finalizes with a durable archive and combined staged unstaged untracked patch inventory", async () => {
@@ -202,6 +266,9 @@ describe("humanize-rlcr flow contract", () => {
 		await Bun.write(path.join(repo, "unstaged.txt"), "new\n");
 		await Bun.write(path.join(repo, "untracked.txt"), "new\n");
 		await Bun.write(path.join(repo, "workflow-output", "validation-final.txt"), "validation passed\n");
+		await Bun.write(path.join(repo, "workflow-output", "round-1-summary.json"), "{}\n");
+		await Bun.write(path.join(repo, "workflow-output", "round-1-diff-discipline-guard.json"), "{}\n");
+		await Bun.write(path.join(repo, "workflow-output", "round-1-codex-summary-review.json"), "{}\n");
 		await runCommand(["git", "add", "staged.txt"], repo);
 
 		const result = await runFinalize(repo);
@@ -212,9 +279,25 @@ describe("humanize-rlcr flow contract", () => {
 		expect(final?.patchInventory?.stagedProjectFiles).toContain("staged.txt");
 		expect(final?.patchInventory?.unstagedProjectFiles).toContain("unstaged.txt");
 		expect(final?.patchInventory?.untrackedProjectFiles).toContain("untracked.txt");
-		expect(await Bun.file(path.join(repo, "workflow-output", "final-humanize-rlcr-archive.md")).text()).toContain(
-			"validation-final.txt",
-		);
+		const archive = await Bun.file(path.join(repo, "workflow-output", "final-humanize-rlcr-archive.md")).text();
+		expect(archive).toContain("validation-final.txt");
+		expect(archive).toContain("round-1-summary.json");
+		expect(archive).toContain("final-codex-code-review.json");
+		expect(await Bun.file(path.join(repo, "workflow-output", "final-codex-code-review.json")).json()).toMatchObject({
+			flow: "humanize-rlcr",
+			node: "codexCodeReview",
+		});
+	});
+
+	it("refuses to finalize when durable round evidence is missing", async () => {
+		const repo = await createGitRepo();
+		await fs.mkdir(path.join(repo, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(repo, "task.md"), "Objective:\nCapture final patch evidence.\n");
+		await runCommand(["git", "add", "task.md"], repo);
+		await runCommand(["git", "commit", "-m", "init"], repo);
+		await Bun.write(path.join(repo, "workflow-output", "round-1-summary.json"), "{}\n");
+
+		await expect(runFinalize(repo)).rejects.toThrow("humanize RLCR finalize missing durable evidence");
 	});
 });
 
@@ -261,7 +344,10 @@ async function runDiffDisciplineGuard(cwd: string): Promise<DiffGuardResult> {
 	}
 }
 
-async function runWriteRoundSummary(implementationOutput: WorkflowActivationOutput): Promise<RoundSummaryResult> {
+async function runWriteRoundSummary(
+	implementationOutput: WorkflowActivationOutput,
+	cwd: string,
+): Promise<RoundSummaryExecution> {
 	const scriptPath = path.resolve(
 		import.meta.dir,
 		"../../examples/workflow/experimental/humanize-rlcr/humanize-rlcr/scripts/write-round-summary.js",
@@ -278,22 +364,70 @@ async function runWriteRoundSummary(implementationOutput: WorkflowActivationOutp
 			};
 		},
 	) => Promise<RoundSummaryResult>;
-	return execute({
-		activation: { id: "activation-write-summary", parentActivationIds: ["activation-implementation"] },
-		completedActivations: [
-			{
-				id: "activation-implementation",
-				nodeId: "implementRound",
-				output: implementationOutput,
+	const originalCwd = process.cwd();
+	try {
+		process.chdir(cwd);
+		const result = await execute({
+			activation: { id: "activation-write-summary", parentActivationIds: ["activation-implementation"] },
+			completedActivations: [
+				{
+					id: "activation-implementation",
+					nodeId: "implementRound",
+					output: implementationOutput,
+				},
+			],
+			state: {
+				humanize: {
+					operatorGate: { recordedAtMs: Date.now() },
+					ledger: { currentRound: 0, rounds: [], archivedRoundCount: 0 },
+				},
 			},
-		],
-		state: {
-			humanize: {
-				operatorGate: { recordedAtMs: Date.now() },
-				ledger: { currentRound: 0, rounds: [], archivedRoundCount: 0 },
-			},
+		});
+		return { cwd, result };
+	} finally {
+		process.chdir(originalCwd);
+	}
+}
+
+async function runEnterReviewPhase(cwd: string): Promise<EnterReviewResult> {
+	const scriptPath = path.resolve(
+		import.meta.dir,
+		"../../examples/workflow/experimental/humanize-rlcr/humanize-rlcr/scripts/enter-review-phase.js",
+	);
+	const script = await Bun.file(scriptPath).text();
+	const execute = new AsyncFunctionConstructor("workflowContext", script) as unknown as (
+		workflowContext: WorkflowContext & {
+			activation: { id: string; parentActivationIds: string[] };
+			state: {
+				humanize: {
+					operatorGate: { recordedAtMs: number };
+					ledger: { currentRound: number; openIssues: unknown[]; queuedIssues: unknown[] };
+				};
+			};
 		},
-	});
+	) => Promise<EnterReviewResult>;
+	const originalCwd = process.cwd();
+	try {
+		process.chdir(cwd);
+		return await execute({
+			activation: { id: "activation-enter-review", parentActivationIds: ["activation-summary-review"] },
+			completedActivations: [
+				{
+					id: "activation-summary-review",
+					nodeId: "codexSummaryReview",
+					output: { summary: "summary review passed", data: { verdict: "complete" } },
+				},
+			],
+			state: {
+				humanize: {
+					operatorGate: { recordedAtMs: Date.now() },
+					ledger: { currentRound: 1, openIssues: [], queuedIssues: [] },
+				},
+			},
+		});
+	} finally {
+		process.chdir(originalCwd);
+	}
 }
 
 async function runFinalize(cwd: string): Promise<FinalizeResult> {
@@ -317,7 +451,18 @@ async function runFinalize(cwd: string): Promise<FinalizeResult> {
 		process.chdir(cwd);
 		return await execute({
 			activation: { id: "activation-finalize" },
-			completedActivations: [],
+			completedActivations: [
+				{
+					id: "activation-code-review",
+					nodeId: "codexCodeReview",
+					output: { summary: "code review clean", data: { verdict: "complete" } },
+				},
+				{
+					id: "activation-final-alignment",
+					nodeId: "finalAlignmentCheck",
+					output: { summary: "final alignment clean", data: { verdict: "complete" } },
+				},
+			],
 			state: {
 				humanize: {
 					operatorGate: { recordedAtMs: Date.now() },
@@ -330,9 +475,14 @@ async function runFinalize(cwd: string): Promise<FinalizeResult> {
 	}
 }
 
-async function createGitRepo(): Promise<string> {
+async function createTempDir(): Promise<string> {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omh-humanize-contract-"));
 	tempDirs.push(dir);
+	return dir;
+}
+
+async function createGitRepo(): Promise<string> {
+	const dir = await createTempDir();
 	await runCommand(["git", "init"], dir);
 	await runCommand(["git", "config", "user.email", "test@example.com"], dir);
 	await runCommand(["git", "config", "user.name", "Test User"], dir);

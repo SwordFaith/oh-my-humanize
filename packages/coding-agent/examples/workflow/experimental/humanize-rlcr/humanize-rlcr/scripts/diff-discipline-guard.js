@@ -1,5 +1,10 @@
 const broadChangePattern =
 	/\b(repo[- ]?wide|whole[- ]?repo|whole[- ]?repository|global format|formatter migration|mechanical migration|format all|large refactor|mass update)\b/iu;
+const state = workflowContext.state && typeof workflowContext.state === "object" ? workflowContext.state : {};
+const humanize = state.humanize && typeof state.humanize === "object" ? state.humanize : {};
+const ledger = humanize.ledger && typeof humanize.ledger === "object" ? humanize.ledger : {};
+const roundNumber = Number.isFinite(ledger.currentRound) ? ledger.currentRound + 1 : 1;
+const evidenceFile = `workflow-output/round-${roundNumber}-diff-discipline-guard.json`;
 
 async function runGit(args) {
 	const child = Bun.spawn(["git", ...args], {
@@ -79,6 +84,8 @@ const semanticDiff = await runGit(["diff", "-w", "--numstat"]);
 if (regularDiff.exitCode !== 0 || semanticDiff.exitCode !== 0 || status.exitCode !== 0) {
 	const diagnostic = {
 		verdict: "REPAIR",
+		round: roundNumber,
+		evidenceFile,
 		reasons: ["git diff discipline guard could not inspect repository state"],
 		statusExitCode: status.exitCode,
 		regularExitCode: regularDiff.exitCode,
@@ -86,6 +93,7 @@ if (regularDiff.exitCode !== 0 || semanticDiff.exitCode !== 0 || status.exitCode
 		stderr: [status.stderr, regularDiff.stderr, semanticDiff.stderr].filter(Boolean).join("\n").slice(0, 1200),
 		checkedAtMs: Date.now(),
 	};
+	await writeEvidence(diagnostic);
 	return {
 		summary: "diff discipline guard requires repair: repository diff inspection failed",
 		data: diagnostic,
@@ -143,6 +151,8 @@ if (!broadChangeAllowed && untrackedProjectFiles.length > 0) {
 const verdict = reasons.length === 0 ? "PASS" : "REPAIR";
 const diagnostic = {
 	verdict,
+	round: roundNumber,
+	evidenceFile,
 	reasons,
 	broadChangeAllowed,
 	regular: {
@@ -170,6 +180,8 @@ const diagnostic = {
 	checkedAtMs: Date.now(),
 };
 
+await writeEvidence(diagnostic);
+
 return {
 	summary:
 		verdict === "PASS"
@@ -178,6 +190,22 @@ return {
 	data: diagnostic,
 	statePatch: [{ op: "set", path: "/humanize/diffGuard", value: diagnostic }],
 };
+
+async function writeEvidence(diagnostic) {
+	await Bun.write(
+		evidenceFile,
+		`${JSON.stringify(
+			{
+				flow: "humanize-rlcr",
+				node: "diffDisciplineGuard",
+				activationId: workflowContext.activation.id,
+				...diagnostic,
+			},
+			null,
+			2,
+		)}\n`,
+	);
+}
 
 function declaredMechanicalOverheadBudget(text) {
 	if (!text.trim()) return undefined;

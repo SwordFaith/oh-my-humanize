@@ -8,7 +8,12 @@ const operatorGate = humanize.operatorGate && typeof humanize.operatorGate === "
 const startedAtMs = Number.isFinite(operatorGate.recordedAtMs) ? operatorGate.recordedAtMs : Date.now();
 const elapsedMs = Math.max(0, Date.now() - startedAtMs);
 const patchInventory = await currentPatchInventory();
+await writeFinalReviewEvidence();
 const evidenceFiles = await workflowEvidenceFiles();
+const missingEvidence = requiredEvidenceGaps(evidenceFiles);
+if (missingEvidence.length > 0) {
+	throw new Error(`humanize RLCR finalize missing durable evidence: ${missingEvidence.join(", ")}`);
+}
 const final = {
 	status: "done",
 	rounds: Number.isFinite(ledger.currentRound) ? ledger.currentRound : 0,
@@ -85,6 +90,55 @@ async function workflowEvidenceFiles() {
 		return [];
 	}
 	return uniqueSorted(files);
+}
+
+async function writeFinalReviewEvidence() {
+	await writeRequiredActivationOutput("codexCodeReview", "workflow-output/final-codex-code-review.json");
+	await writeRequiredActivationOutput("finalAlignmentCheck", "workflow-output/final-alignment-check.json");
+}
+
+async function writeRequiredActivationOutput(nodeId, filePath) {
+	const output = latestActivationOutput(nodeId);
+	if (!output) {
+		throw new Error(`humanize RLCR finalize requires completed ${nodeId} output before archive`);
+	}
+	await Bun.write(
+		filePath,
+		`${JSON.stringify(
+			{
+				flow: "humanize-rlcr",
+				node: nodeId,
+				output,
+				recordedAtMs: Date.now(),
+			},
+			null,
+			2,
+		)}\n`,
+	);
+}
+
+function latestActivationOutput(nodeId) {
+	const activations = Array.isArray(workflowContext.completedActivations) ? workflowContext.completedActivations : [];
+	for (let index = activations.length - 1; index >= 0; index -= 1) {
+		const activation = activations[index];
+		if (activation?.nodeId === nodeId) return activation.output ?? {};
+	}
+	return null;
+}
+
+function requiredEvidenceGaps(files) {
+	const required = [
+		{ label: "round summary", pattern: /^workflow-output\/round-\d+-summary\.json$/u },
+		{ label: "diff discipline guard", pattern: /^workflow-output\/round-\d+-diff-discipline-guard\.json$/u },
+		{ label: "summary review", pattern: /^workflow-output\/round-\d+-codex-summary-review\.json$/u },
+		{ label: "code review", pattern: /^workflow-output\/final-codex-code-review\.json$/u },
+		{ label: "final alignment", pattern: /^workflow-output\/final-alignment-check\.json$/u },
+	];
+	const missing = [];
+	for (const item of required) {
+		if (!files.some(file => item.pattern.test(file))) missing.push(item.label);
+	}
+	return missing;
 }
 
 async function runGit(args) {

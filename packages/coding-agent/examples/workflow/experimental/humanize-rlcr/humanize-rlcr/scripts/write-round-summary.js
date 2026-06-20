@@ -1,4 +1,4 @@
-const state = workflowContext.state;
+const state = workflowContext.state && typeof workflowContext.state === "object" ? workflowContext.state : {};
 const humanize = state.humanize && typeof state.humanize === "object" ? state.humanize : {};
 const ledger = humanize.ledger && typeof humanize.ledger === "object" ? humanize.ledger : {};
 const operatorGate = humanize.operatorGate && typeof humanize.operatorGate === "object" ? humanize.operatorGate : {};
@@ -59,9 +59,11 @@ const acceptanceEvidence = evidenceValues(key => key.includes("acceptance"));
 const verificationEvidence = evidenceValues(key => key.includes("verification")) ?? acceptanceEvidence;
 const negativeEvidence = evidenceValues(key => key.includes("negative") || key.includes("regression"));
 const roundNumber = currentRound + 1;
+const roundSummaryFile = `workflow-output/round-${roundNumber}-summary.json`;
 const entry = {
 	round: roundNumber,
 	status: "ready-for-summary-review",
+	artifactFile: roundSummaryFile,
 	summaryActivationId: workflowContext.activation.id,
 	implementationActivationIds: parents,
 	implementationSummary: boundedImplementationSummary,
@@ -88,6 +90,7 @@ const nextLedger = {
 const summary = {
 	round: roundNumber,
 	status: "ready-for-summary-review",
+	artifactFile: roundSummaryFile,
 	implementationSummary: boundedImplementationSummary,
 	openIssueCount: Array.isArray(nextLedger.openIssues) ? nextLedger.openIssues.length : 0,
 	queuedIssueCount: Array.isArray(nextLedger.queuedIssues) ? nextLedger.queuedIssues.length : 0,
@@ -99,6 +102,24 @@ const runtime = {
 	startedAtMs,
 	elapsedMs,
 };
+
+await Bun.write(
+	roundSummaryFile,
+	`${JSON.stringify(
+		{
+			flow: "humanize-rlcr",
+			node: "writeRoundSummary",
+			activationId: workflowContext.activation.id,
+			round: roundNumber,
+			entry,
+			summary,
+			runtime,
+			recordedAtMs: Date.now(),
+		},
+		null,
+		2,
+	)}\n`,
+);
 
 return {
 	summary: `round ${roundNumber} summary written for reviewer-controlled RLCR loop`,
