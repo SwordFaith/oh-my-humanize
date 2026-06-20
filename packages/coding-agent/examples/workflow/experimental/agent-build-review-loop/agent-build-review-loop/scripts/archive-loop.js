@@ -1,5 +1,11 @@
 const taskText = await readRequiredTaskText();
 const progressText = await readOptionalText("progress.md");
+const VALIDATION_RERUN_PATTERNS = [
+	/\b(?:reran|re-ran|rerun|re-run)\s+(?:the\s+)?validation\b/iu,
+	/\bvalidation\s+(?:was\s+)?(?:rerun|re-run|reran|re-ran)\b/iu,
+	/\b(?:first|second|previous|earlier|prior)\s+validation\s+(?:run|attempt|failure)\b/iu,
+	/\boverwrit(?:e|es|ten|ing)\s+validation[- /](?:stdout|stderr|logs?)\b/iu,
+];
 const reviewRoute = workflowContext.state?.reviewRoute && typeof workflowContext.state.reviewRoute === "object" ? workflowContext.state.reviewRoute : {};
 const isRejectArchive = reviewRoute.decision === "reject";
 const archivePath = isRejectArchive ? "workflow-output/final-agent-loop-reject.md" : "workflow-output/final-agent-loop-archive.md";
@@ -37,6 +43,12 @@ const missingValidationArtifactRounds = await missingValidationArtifactRoundFile
 if (missingValidationArtifactRounds.length > 0) {
 	throw new Error(
 		`agent-build-review-loop cannot archive because validation rounds are missing durable stdout/stderr artifacts: ${missingValidationArtifactRounds.join(", ")}`,
+	);
+}
+const missingValidationAttemptRetentionRounds = await missingValidationAttemptRetentionRoundFiles(evidenceFiles);
+if (missingValidationAttemptRetentionRounds.length > 0) {
+	throw new Error(
+		`agent-build-review-loop cannot archive because validation rerun evidence lacks immutable attempt logs: ${missingValidationAttemptRetentionRounds.join(", ")}`,
 	);
 }
 const archive = [
@@ -242,6 +254,19 @@ async function missingValidationArtifactRoundFiles(progressText) {
 	return missingRoundDirs;
 }
 
+async function missingValidationAttemptRetentionRoundFiles(files) {
+	const rerunRoundDirs = new Set();
+	for (const file of files) {
+		const roundDir = roundEvidenceDir(file);
+		if (!roundDir) continue;
+		const text = await readOptionalText(file);
+		if (mentionsMultipleValidationAttempts(text)) rerunRoundDirs.add(roundDir);
+	}
+	return Array.from(rerunRoundDirs)
+		.filter(roundDir => completeValidationAttemptLogCount(files, roundDir) < 2)
+		.sort((left, right) => left.localeCompare(right, "en"));
+}
+
 function validationRounds(progressText) {
 	const rounds = [];
 	for (const line of progressText.split(/\r?\n/u)) {
@@ -271,6 +296,35 @@ function usesNondurableValidationArtifact(text) {
 		/\b(?:validation|stdout|stderr|evidence|harness).{0,160}\bartifact:\/\/\d+\b/ius.test(text) ||
 		/\bartifact:\/\/\d+\b.{0,160}\b(?:validation|stdout|stderr|evidence|harness)\b/ius.test(text)
 	);
+}
+
+function mentionsMultipleValidationAttempts(text) {
+	return VALIDATION_RERUN_PATTERNS.some(pattern => pattern.test(text));
+}
+
+function completeValidationAttemptLogCount(files, roundDir) {
+	const attempts = new Map();
+	const prefix = `${roundDir}/validation-attempt-`;
+	for (const file of files) {
+		if (!file.startsWith(prefix)) continue;
+		const match = /^(\d+)-(stdout|stderr)\.txt$/u.exec(file.slice(prefix.length));
+		if (!match) continue;
+		const attempt = match[1] ?? "";
+		const stream = match[2] ?? "";
+		const streams = attempts.get(attempt) ?? new Set();
+		streams.add(stream);
+		attempts.set(attempt, streams);
+	}
+	let completeCount = 0;
+	for (const streams of attempts.values()) {
+		if (streams.has("stdout") && streams.has("stderr")) completeCount += 1;
+	}
+	return completeCount;
+}
+
+function roundEvidenceDir(file) {
+	const match = /^(workflow-output\/round-\d+)\//u.exec(file);
+	return match?.[1] ?? "";
 }
 
 function ignoredEvidencePath(file) {

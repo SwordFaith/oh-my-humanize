@@ -5,6 +5,12 @@ const LOW_UNIQUE_LINE_RATIO = 0.2;
 const PADDING_WORD_PATTERN = /\b(padding|dummy|placeholder|lorem|sleep|hold|no-op|noop|filler)\b/iu;
 const VALIDATION_HARNESS_BOOTSTRAP_PATTERN =
 	/\b(?:(?:npm|pnpm|yarn|bun)(?:\s+\S+){0,5}\s+(?:install|add|ci|update|upgrade)|(?:pip|pip3)(?:\s+\S+){0,5}\s+install|python(?:3)?\s+-m\s+pip(?:\s+\S+){0,5}\s+install|uv\s+(?:sync|add|pip\s+install)|poetry\s+(?:install|add|update)|cargo\s+(?:install|update)|bundle\s+install|go\s+(?:install|get))\b/iu;
+const VALIDATION_RERUN_PATTERNS = [
+	/\b(?:reran|re-ran|rerun|re-run)\s+(?:the\s+)?validation\b/iu,
+	/\bvalidation\s+(?:was\s+)?(?:rerun|re-run|reran|re-ran)\b/iu,
+	/\b(?:first|second|previous|earlier|prior)\s+validation\s+(?:run|attempt|failure)\b/iu,
+	/\boverwrit(?:e|es|ten|ing)\s+validation[- /](?:stdout|stderr|logs?)\b/iu,
+];
 
 const taskText = await readOptionalText("task.md");
 const progressText = await readOptionalText("progress.md");
@@ -23,6 +29,7 @@ findings.push(...(await dependencyBootstrapFindings()));
 findings.push(...(await downstreamCompletionClaimFindings()));
 findings.push(...(await nondurableArtifactReferenceFindings()));
 findings.push(...(await missingValidationArtifactFindings(progressText)));
+findings.push(...(await missingValidationAttemptRetentionFindings()));
 
 const blockingFindings = explicitAllowance
 	? findings.filter(finding => finding.category !== "low-semantic-content")
@@ -137,6 +144,28 @@ async function missingValidationArtifactFindings(progressText) {
 	return findings;
 }
 
+async function missingValidationAttemptRetentionFindings() {
+	const findings = [];
+	const files = await workflowOutputFiles();
+	const rerunRoundDirs = new Set();
+	for (const file of files) {
+		const roundDir = roundEvidenceDir(file);
+		if (!roundDir) continue;
+		const text = await readOptionalText(file);
+		if (mentionsMultipleValidationAttempts(text)) rerunRoundDirs.add(roundDir);
+	}
+	for (const roundDir of Array.from(rerunRoundDirs).sort((left, right) => left.localeCompare(right, "en"))) {
+		if (completeValidationAttemptLogCount(files, roundDir) >= 2) continue;
+		findings.push({
+			file: roundDir,
+			reason: "validation rerun evidence is missing immutable attempt stdout/stderr logs",
+			policy:
+				"Every validation rerun in a round must preserve per-attempt raw logs as validation-attempt-K-stdout.txt and validation-attempt-K-stderr.txt before updating canonical latest logs.",
+		});
+	}
+	return findings;
+}
+
 function validationRounds(progressText) {
 	const rounds = [];
 	for (const line of progressText.split(/\r?\n/u)) {
@@ -245,6 +274,35 @@ function usesNondurableValidationArtifact(text) {
 		/\b(?:validation|stdout|stderr|evidence|harness).{0,160}\bartifact:\/\/\d+\b/ius.test(text) ||
 		/\bartifact:\/\/\d+\b.{0,160}\b(?:validation|stdout|stderr|evidence|harness)\b/ius.test(text)
 	);
+}
+
+function mentionsMultipleValidationAttempts(text) {
+	return VALIDATION_RERUN_PATTERNS.some(pattern => pattern.test(text));
+}
+
+function completeValidationAttemptLogCount(files, roundDir) {
+	const attempts = new Map();
+	const prefix = `${roundDir}/validation-attempt-`;
+	for (const file of files) {
+		if (!file.startsWith(prefix)) continue;
+		const match = /^(\d+)-(stdout|stderr)\.txt$/u.exec(file.slice(prefix.length));
+		if (!match) continue;
+		const attempt = match[1] ?? "";
+		const stream = match[2] ?? "";
+		const streams = attempts.get(attempt) ?? new Set();
+		streams.add(stream);
+		attempts.set(attempt, streams);
+	}
+	let completeCount = 0;
+	for (const streams of attempts.values()) {
+		if (streams.has("stdout") && streams.has("stderr")) completeCount += 1;
+	}
+	return completeCount;
+}
+
+function roundEvidenceDir(file) {
+	const match = /^(workflow-output\/round-\d+)\//u.exec(file);
+	return match?.[1] ?? "";
 }
 
 function normalizeLine(line) {

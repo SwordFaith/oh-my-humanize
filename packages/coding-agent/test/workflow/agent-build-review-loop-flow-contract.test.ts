@@ -675,6 +675,37 @@ describe("agent-build-review-loop flow contract", () => {
 		});
 	});
 
+	it("requires repair when validation reruns overwrite round evidence instead of preserving attempt logs", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output", "round-1"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "progress.md"),
+			"ROUND 1: changed asset tests; validation=./workflow-output/run-validation.sh; result=fail\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-stdout.txt"),
+			"latest validation stdout\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-stderr.txt"),
+			"latest validation stderr\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-summary.txt"),
+			"I reran validation after an earlier validation failure and overwrote the validation stdout/stderr logs.\n",
+		);
+
+		const result = await runSemanticArchiveGuard(cwd);
+
+		expect(result.verdict).toBe("REPAIR");
+		const finding = result.data.findings.find(
+			item => item.reason === "validation rerun evidence is missing immutable attempt stdout/stderr logs",
+		);
+		expect(finding).toMatchObject({
+			file: "workflow-output/round-1",
+		});
+	});
+
 	it("rejects archiving round evidence that claims downstream guard or archive completion", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "workflow-output", "round-2"), { recursive: true });
@@ -716,6 +747,35 @@ describe("agent-build-review-loop flow contract", () => {
 
 		await expect(runArchiveLoop(cwd, { decision: "complete" })).rejects.toThrow(
 			"validation rounds are missing durable stdout/stderr artifacts",
+		);
+	});
+
+	it("rejects archiving validation reruns without immutable attempt logs", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output", "round-1"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			"Validation Command:\n./workflow-output/run-validation.sh\n\nNo-Code Allowed: yes\n",
+		);
+		await Bun.write(
+			path.join(cwd, "progress.md"),
+			"ROUND 1: changed asset tests; validation=./workflow-output/run-validation.sh; result=fail\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-stdout.txt"),
+			"latest validation stdout\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-stderr.txt"),
+			"latest validation stderr\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-summary.txt"),
+			"The builder reran validation after an earlier validation failure but only kept the latest stdout/stderr.\n",
+		);
+
+		await expect(runArchiveLoop(cwd, { decision: "complete" })).rejects.toThrow(
+			"validation rerun evidence lacks immutable attempt logs",
 		);
 	});
 
@@ -763,6 +823,19 @@ describe("agent-build-review-loop flow contract", () => {
 		expect(prompt).toContain("workflow-output/review-route-<n>.json");
 		expect(prompt).toContain("classifyReviewRoute");
 		expect(prompt).toContain("must not create");
+	});
+
+	it("requires immutable validation attempt logs when a build round reruns validation", async () => {
+		const prompt = await Bun.file(
+			path.resolve(
+				import.meta.dir,
+				"../../examples/workflow/experimental/agent-build-review-loop/agent-build-review-loop/prompts/build-round.md",
+			),
+		).text();
+
+		expect(prompt).toContain("validation-attempt-<k>-stdout.txt");
+		expect(prompt).toContain("validation-attempt-<k>-stderr.txt");
+		expect(prompt).toContain("must not overwrite");
 	});
 });
 

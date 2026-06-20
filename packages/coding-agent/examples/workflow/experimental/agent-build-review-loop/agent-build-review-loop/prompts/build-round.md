@@ -65,6 +65,13 @@ General loop contract:
   `workflow-output/round-<n>/validation-stdout.txt` and
   `workflow-output/round-<n>/validation-stderr.txt`. Summaries are not enough;
   downstream guards require the raw logs to remain in the workspace.
+- If you rerun validation in the same round, preserve every invocation before
+  running the next one: write
+  `workflow-output/round-<n>/validation-attempt-<k>-stdout.txt` and
+  `workflow-output/round-<n>/validation-attempt-<k>-stderr.txt` for each
+  attempt. The canonical `validation-stdout.txt`/`validation-stderr.txt` may
+  mirror the latest attempt, but must not overwrite or erase earlier attempt
+  logs. Name the attempt files from `validation-summary.txt`.
 - If validation fails in a clearly out-of-scope, unrelated, or environmental
   test after real scoped work, write `workflow-output/round-<n>/validation-summary.txt`
   and explicitly name the external blocker. Do not convert unrelated validation
