@@ -607,6 +607,61 @@ edges: []
 		expect(reconstructWorkflowFamilies(entries)).toEqual([]);
 	});
 
+	it("rejects unattended workflow starts when the frozen flow contains human nodes", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "unattended-human"), { recursive: true });
+		const flowPath = path.join(dir, "unattended-human.omhflow");
+		await Bun.write(
+			flowPath,
+			`---
+name: unattended-human
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 50
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+# Unattended Human
+
+\`\`\`yaml workflow
+name: unattended-human
+version: 1
+nodes:
+  approve:
+    type: human
+    prompt: Confirm the unattended run.
+edges: []
+\`\`\`
+`,
+		);
+		const entries: CapturedEntry[] = [];
+		const calls: string[] = [];
+		const { output, runtime } = createRuntime(entries, {
+			runHumanNode: async input => {
+				calls.push(input.node.id);
+				return { data: { response: "proceed" } };
+			},
+		});
+
+		expect(
+			await executeAcpBuiltinSlashCommand(
+				`/workflow start ${flowPath} --run-id run-unattended-human --unattended --background`,
+				runtime,
+			),
+		).toEqual({
+			consumed: true,
+		});
+
+		expect(calls).toEqual([]);
+		expect(output.at(-1)).toContain(
+			'Workflow unattended start cannot run human nodes: approve. Start interactively or use a flow without "type: human".',
+		);
+		expect(reconstructWorkflowRuns(entries)).toEqual([]);
+		expect(reconstructWorkflowFamilies(entries)).toEqual([]);
+	});
+
 	it("reports .omhflow freeze errors during workflow start without rejecting the command", async () => {
 		const dir = await createTempDir();
 		await Bun.write(

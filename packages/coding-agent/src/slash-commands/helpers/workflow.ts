@@ -86,6 +86,7 @@ interface WorkflowStartArgs {
 	maxNodeActivations?: number;
 	maxRuntimeMs?: number;
 	background?: boolean;
+	unattended?: boolean;
 }
 
 interface WorkflowStopArgs {
@@ -398,6 +399,10 @@ async function handleStartCommand(rest: string, runtime: SlashCommandRuntime): P
 	const startNodeId = startNodeIds[0];
 	if (!startNodeId) {
 		return usage("Workflow start requires a workflow with at least one node.", runtime);
+	}
+	if (parsed.unattended) {
+		const humanNodeError = workflowUnattendedHumanNodeError(pkg.definition);
+		if (humanNodeError !== undefined) return usage(humanNodeError, runtime);
 	}
 	const runId = parsed.runId ?? `workflow-${Snowflake.next()}`;
 	const lifecycleFamilyId = pkg.freeze ? (parsed.familyId ?? `${runId}:family`) : undefined;
@@ -1064,6 +1069,15 @@ function defaultWorkflowStartNodeIds(definition: WorkflowDefinition): string[] {
 	return roots.length > 0 ? roots : fallback !== undefined ? [fallback] : [];
 }
 
+function workflowUnattendedHumanNodeError(definition: WorkflowDefinition): string | undefined {
+	const humanNodeIds = definition.nodes
+		.filter(node => node.type === "human")
+		.map(node => node.id)
+		.sort((left, right) => left.localeCompare(right));
+	if (humanNodeIds.length === 0) return undefined;
+	return `Workflow unattended start cannot run human nodes: ${humanNodeIds.join(", ")}. Start interactively or use a flow without "type: human".`;
+}
+
 function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: string } {
 	const tokens = parseCommandArgs(rest);
 	let workflowPath: string | undefined;
@@ -1074,11 +1088,16 @@ function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: stri
 	let maxNodeActivations: number | undefined;
 	let maxRuntimeMs: number | undefined;
 	let background = false;
+	let unattended = false;
 	for (let index = 0; index < tokens.length; index += 1) {
 		const token = tokens[index];
 		if (token === undefined) continue;
 		if (token === "--background") {
 			background = true;
+			continue;
+		}
+		if (token === "--unattended") {
+			unattended = true;
 			continue;
 		}
 		if (token === "--run-id") {
@@ -1148,6 +1167,7 @@ function parseWorkflowStartArgs(rest: string): WorkflowStartArgs | { error: stri
 	if (maxNodeActivations !== undefined) args.maxNodeActivations = maxNodeActivations;
 	if (maxRuntimeMs !== undefined) args.maxRuntimeMs = maxRuntimeMs;
 	if (background) args.background = true;
+	if (unattended) args.unattended = true;
 	return args;
 }
 
@@ -2307,7 +2327,8 @@ function formatWorkflowHelp(): string {
 		"Workflow help",
 		"",
 		"Common paths:",
-		"- Start: /workflow start <flow-or-path> --background",
+		"- Start: /workflow start <flow-or-path> --background [--unattended]",
+		"- Unattended start rejects human checkpoints before launch.",
 		"- Monitor: /workflow status, /workflow graph, /workflow dashboard status",
 		"- Screen space: /workflow dashboard collapse, /workflow dashboard compact, /workflow dashboard show",
 		"- Lifecycle: /workflow stop <attempt-id>, /workflow interrupt <attempt-id> <activation-or-node-id>, /workflow restart <checkpoint-id>",
@@ -2410,7 +2431,7 @@ function workflowUsage(): string {
 		"Usage: /workflow status [--family-id <id>]",
 		"Usage: /workflow dashboard show|full|compact|collapse|status|help",
 		"Usage: /workflow freeze <flow-or-path> [--family-id <id>]",
-		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--max-runtime-ms <n>] [--background]",
+		"Usage: /workflow start <flow-or-path> [--run-id <id>] [--family-id <id>] [--start <node-id>] [--max-activations <n>] [--max-node-activations <n>] [--max-runtime-ms <n>] [--background] [--unattended]",
 		"Usage: /workflow request-change <file> [--family-id <id>] [--attempt-id <id>]",
 		"Usage: /workflow approve-change <change-request-id> [--actor <actor>]",
 		"Usage: /workflow reject-change <change-request-id> [--actor <actor>] [--reason <text>]",
