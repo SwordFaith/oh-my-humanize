@@ -193,6 +193,18 @@ function installSubagentRetryFallbackChain(args: {
 	return role;
 }
 
+function isolateExactSubagentModelOverrideFallbacks(args: {
+	settings: Settings;
+	modelOverride: string | string[] | undefined;
+	modelOverrideAuthFallback: boolean | undefined;
+}): void {
+	if (args.modelOverrideAuthFallback !== false || args.modelOverride === undefined) return;
+	const modelPatterns = normalizeModelPatterns(args.modelOverride);
+	if (modelPatterns.length !== 1) return;
+	args.settings.override("retry.modelFallback", false);
+	args.settings.override("retry.fallbackChains", {});
+}
+
 function renderIrcPeerRoster(selfId: string): string {
 	const peers = AgentRegistry.global()
 		.list()
@@ -1757,6 +1769,11 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 		settings,
 		agent.readSummarize === false ? { "read.summarize.enabled": false } : undefined,
 	);
+	isolateExactSubagentModelOverrideFallbacks({
+		settings: subagentSettings,
+		modelOverride,
+		modelOverrideAuthFallback: options.modelOverrideAuthFallback,
+	});
 	const maxRecursionDepth = settings.get("task.maxRecursionDepth") ?? 2;
 	// Tailored specialist identity for this spawn. `subagentRole` is the full
 	// (trimmed) role text fed to the system-prompt preamble; `subagentDisplayName`

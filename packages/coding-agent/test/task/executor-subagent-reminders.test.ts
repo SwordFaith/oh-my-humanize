@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import { AgentBusyError, type AgentTelemetryConfig, type Tracer } from "@oh-my-pi/pi-agent-core";
 import { type Api, type AssistantMessage, Effort, type Model } from "@oh-my-pi/pi-ai";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { ExtensionActions, LoadExtensionsResult } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { CreateAgentSessionResult } from "@oh-my-pi/pi-coding-agent/sdk";
@@ -133,7 +134,7 @@ describe("runSubprocess yield reminders", () => {
 		settings: Settings.isolated(),
 		modelRegistry: {
 			refresh: async () => {},
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry,
+		} as unknown as ModelRegistry,
 		enableLsp: false,
 	};
 
@@ -208,7 +209,7 @@ describe("runSubprocess yield reminders", () => {
 		const createAgentSessionSpy = mockCreateAgentSession(session);
 		const modelRegistry = {
 			refresh: async () => {},
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 		const refreshSpy = vi.spyOn(modelRegistry, "refresh");
 
 		await runSubprocess({ ...baseOptions, id: "subagent-skip-refresh", modelRegistry });
@@ -408,7 +409,7 @@ describe("runSubprocess yield reminders", () => {
 		const modelRegistry = {
 			refresh: async () => {},
 			getAvailable: () => [{ provider: "openai", id: "gpt-4o", name: "GPT-4o" }],
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 
 		await runSubprocess({
 			...baseOptions,
@@ -427,7 +428,7 @@ describe("runSubprocess yield reminders", () => {
 		const modelRegistry = {
 			refresh: async () => {},
 			getAvailable: () => [{ provider: "openai", id: "gpt-4o", name: "GPT-4o" }],
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 
 		const cases = [
 			{ modelOverride: "openai/gpt-4o:low", expectedThinkingLevel: Effort.Low },
@@ -474,7 +475,7 @@ describe("runSubprocess yield reminders", () => {
 			refresh: async () => {},
 			getAvailable: () => [workflowModel, parentModel],
 			getApiKey: async (model: Model<Api>) => (model.provider === "openai" ? "sk-test" : undefined),
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 		const session = createMockSession(({ emit }) => {
 			emit({
 				type: "tool_execution_end",
@@ -500,6 +501,48 @@ describe("runSubprocess yield reminders", () => {
 
 		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.model?.provider).toBe("rust-cat");
 		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.model?.id).toBe("gpt-5.5");
+	});
+
+	it("does not inherit global model fallback chains for exact workflow model overrides", async () => {
+		vi.clearAllMocks();
+		const workflowModel = createModel("rust-cat", "gpt-5.5");
+		const fallbackModel = createModel("rust-cat", "gpt-5.4-mini");
+		const modelRegistry = {
+			refresh: async () => {},
+			getAvailable: () => [workflowModel, fallbackModel],
+			getApiKey: async () => "sk-test",
+		} as unknown as ModelRegistry;
+		const session = createMockSession(({ emit }) => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-exact-model-no-global-fallback",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		const createAgentSessionSpy = mockCreateAgentSession(session);
+		const settings = Settings.isolated({
+			"retry.fallbackChains": {
+				default: ["rust-cat/gpt-5.4-mini"],
+			},
+		});
+		settings.setModelRole("default", "rust-cat/gpt-5.5");
+
+		await runSubprocess({
+			...baseOptions,
+			id: "subagent-exact-model-no-global-fallback",
+			modelOverride: "rust-cat/gpt-5.5",
+			modelOverrideAuthFallback: false,
+			settings,
+			modelRegistry,
+		});
+
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.settings?.get("retry.fallbackChains")).toEqual({});
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.settings?.get("retry.modelFallback")).toBe(false);
 	});
 
 	it("fails after 3 reminders when yield is never called for a structured task", async () => {
@@ -612,7 +655,7 @@ describe("runSubprocess yield reminders", () => {
 		const modelRegistry = {
 			authStorage: fakeAuthStorage,
 			refresh: async () => {},
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 
 		await runSubprocess({ ...baseOptions, id: "subagent-registry-only", modelRegistry });
 
@@ -628,7 +671,7 @@ describe("runSubprocess yield reminders", () => {
 		const modelRegistry = {
 			authStorage: registryStorage,
 			refresh: async () => {},
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry;
+		} as unknown as ModelRegistry;
 
 		const result = await runSubprocess({
 			...baseOptions,
@@ -700,7 +743,7 @@ describe("runSubprocess telemetry propagation", () => {
 		settings: Settings.isolated(),
 		modelRegistry: {
 			refresh: async () => {},
-		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry,
+		} as unknown as ModelRegistry,
 		enableLsp: false,
 	};
 

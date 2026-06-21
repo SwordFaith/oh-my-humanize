@@ -15,6 +15,7 @@ import type { InteractiveModeContext } from "../../modes/types";
 import manualContinuePrompt from "../../prompts/system/manual-continue.md" with { type: "text" };
 import { SKILL_PROMPT_MESSAGE_TYPE, type SkillPromptDetails, USER_INTERRUPT_LABEL } from "../../session/messages";
 import { executeBuiltinSlashCommand } from "../../slash-commands/builtin-registry";
+import * as WorkflowCommandHelpers from "../../slash-commands/helpers/workflow";
 import { isTinyTitleLocalModelKey } from "../../tiny/models";
 import { isLowSignalTitleInput } from "../../tiny/text";
 import { tinyTitleClient } from "../../tiny/title-client";
@@ -106,6 +107,23 @@ export class InputController {
 	// Sequential index for `local://attachment-N` references created by the large-paste local-file
 	// action. Seeded from 0 and bumped past any existing attachment files in #attachPasteAsFile.
 	#attachmentCounter = 0;
+
+	#requestActiveWorkflowStopsForUserInterrupt(): void {
+		void WorkflowCommandHelpers.requestActiveWorkflowStopsForRuntime(this.ctx, {
+			abortActiveNodes: true,
+			deadlineMs: 0,
+			reason: USER_INTERRUPT_LABEL,
+		}).catch(error => {
+			logger.warn("workflow stop on user interrupt failed", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
+	}
+
+	#abortMainSessionForUserInterrupt(): Promise<void> {
+		this.#requestActiveWorkflowStopsForUserInterrupt();
+		return this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
+	}
 
 	#showTinyTitleDownloadProgress(modelKey: string): void {
 		if (!isTinyTitleLocalModelKey(modelKey)) return;
@@ -207,7 +225,7 @@ export class InputController {
 			if (this.ctx.loopModeEnabled) {
 				this.ctx.pauseLoop();
 				if (this.ctx.session.isStreaming) {
-					void this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
+					void this.#abortMainSessionForUserInterrupt();
 				} else {
 					this.ctx.cancelPendingSubmission();
 				}
@@ -258,7 +276,7 @@ export class InputController {
 				this.ctx.isPythonMode = false;
 				this.ctx.updateEditorBorderColor();
 			} else if (this.ctx.session.isStreaming) {
-				void this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
+				void this.#abortMainSessionForUserInterrupt();
 			} else if (this.ctx.editor.getText().trim()) {
 				// Esc with typed text clears the draft instead of (or before) any double-Esc action
 				this.ctx.editor.setText("");
@@ -492,7 +510,7 @@ export class InputController {
 			// turn and let the post-unwind drain deliver the agent-core queue.
 			if (!text && this.ctx.session.isStreaming) {
 				if (this.ctx.session.queuedMessageCount > 0) {
-					const aborting = this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
+					const aborting = this.#abortMainSessionForUserInterrupt();
 					await aborting;
 					this.ctx.updatePendingMessagesDisplay();
 					this.ctx.ui.requestRender();
@@ -831,6 +849,7 @@ export class InputController {
 	}
 
 	handleCtrlC(): void {
+		this.#requestActiveWorkflowStopsForUserInterrupt();
 		// Sync-flush the session JSONL so in-flight writes survive a hard exit.
 		// The TUI consumes Ctrl+C as a key event in raw mode, so postmortem's
 		// process-level SIGINT handler never fires. shutdown() awaits its own
@@ -1086,7 +1105,7 @@ export class InputController {
 		if (allQueued.length === 0) {
 			this.ctx.updatePendingMessagesDisplay();
 			if (options?.abort) {
-				void this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
+				void this.#abortMainSessionForUserInterrupt();
 			}
 			return 0;
 		}
@@ -1125,7 +1144,7 @@ export class InputController {
 		}
 		this.ctx.updatePendingMessagesDisplay();
 		if (options?.abort) {
-			void this.ctx.session.abort({ reason: USER_INTERRUPT_LABEL });
+			void this.#abortMainSessionForUserInterrupt();
 		}
 		return allQueued.length;
 	}

@@ -170,6 +170,17 @@ interface ActiveWorkflowAttempt {
 	finished: Promise<void>;
 }
 
+export interface WorkflowActiveStopRequestOptions {
+	deadlineMs?: number;
+	reason?: string;
+	abortActiveNodes?: boolean;
+}
+
+export interface WorkflowActiveStopRequestSummary {
+	attemptIds: string[];
+	abortedAttemptIds: string[];
+}
+
 interface ResolvedWorkflowAttempt {
 	family: WorkflowRunFamilySnapshot;
 	attempt: WorkflowRunAttemptSnapshot;
@@ -823,7 +834,7 @@ async function stopActiveWorkflowAttempt(
 		active.stopController.abort("slash command stop");
 	}
 	if (deadlineMs <= 0) {
-		abortActiveWorkflowNodes(active);
+		abortActiveWorkflowNodes(active, "stop deadline elapsed");
 		await active.finished;
 	} else {
 		const finishedBeforeDeadline = await Promise.race([
@@ -831,7 +842,7 @@ async function stopActiveWorkflowAttempt(
 			Bun.sleep(deadlineMs).then(() => false),
 		]);
 		if (!finishedBeforeDeadline) {
-			abortActiveWorkflowNodes(active);
+			abortActiveWorkflowNodes(active, "stop deadline elapsed");
 			await active.finished;
 		}
 	}
@@ -894,12 +905,12 @@ async function interruptActiveWorkflowActivation(
 	return commandConsumed();
 }
 
-function abortActiveWorkflowNodes(active: ActiveWorkflowAttempt): void {
+function abortActiveWorkflowNodes(active: ActiveWorkflowAttempt, reason: string): void {
 	if (!active.nodeAbortController.signal.aborted) {
-		active.nodeAbortController.abort("stop deadline elapsed");
+		active.nodeAbortController.abort(reason);
 	}
 	for (const controller of active.nodeAbortControllers.values()) {
-		abortWorkflowActivation(controller, "stop deadline elapsed");
+		abortWorkflowActivation(controller, reason);
 	}
 }
 
@@ -1033,7 +1044,7 @@ async function handleRestartCommand(rest: string, runtime: SlashCommandRuntime):
 	return commandConsumed();
 }
 
-async function flushWorkflowLifecycle(runtime: SlashCommandRuntime): Promise<void> {
+async function flushWorkflowLifecycle(runtime: Pick<SlashCommandRuntime, "sessionManager">): Promise<void> {
 	await runtime.sessionManager.ensureOnDisk();
 	await runtime.sessionManager.flush();
 }
@@ -1546,6 +1557,44 @@ function createWorkflowModelResolution(runtime: SlashCommandRuntime): WorkflowRu
 
 function registerActiveWorkflowAttempt(runtime: SlashCommandRuntime, active: ActiveWorkflowAttempt): void {
 	activeWorkflowAttemptMap(runtime).set(active.attemptId, active);
+}
+
+export async function requestActiveWorkflowStopsForRuntime(
+	runtime: Pick<SlashCommandRuntime, "sessionManager">,
+	options: WorkflowActiveStopRequestOptions = {},
+): Promise<WorkflowActiveStopRequestSummary> {
+	const deadlineMs = options.deadlineMs ?? 0;
+	const reason = options.reason ?? "operator interrupt";
+	const activeAttempts = [...activeWorkflowAttemptMap(runtime).values()];
+	const runningAttemptIds = new Set(
+		reconstructWorkflowFamilies(runtime.sessionManager.getBranch()).flatMap(family =>
+			family.attempts.filter(attempt => attempt.status === "running").map(attempt => attempt.id),
+		),
+	);
+	const attemptIds: string[] = [];
+	const abortedAttemptIds: string[] = [];
+	for (const active of activeAttempts) {
+		active.lifecycle.stopDeadlineMs = deadlineMs;
+		if (runningAttemptIds.has(active.attemptId)) {
+			requestWorkflowAttemptStop(runtime.sessionManager, {
+				attemptId: active.attemptId,
+				deadlineMs,
+				reason,
+			});
+			attemptIds.push(active.attemptId);
+		}
+		if (!active.stopController.signal.aborted) {
+			active.stopController.abort(reason);
+		}
+		if (options.abortActiveNodes === true) {
+			abortActiveWorkflowNodes(active, reason);
+			abortedAttemptIds.push(active.attemptId);
+		}
+	}
+	if (attemptIds.length > 0 || abortedAttemptIds.length > 0) {
+		await flushWorkflowLifecycle(runtime);
+	}
+	return { attemptIds, abortedAttemptIds };
 }
 
 function unregisterActiveWorkflowAttempt(runtime: SlashCommandRuntime, attemptId: string): void {

@@ -14,7 +14,10 @@ import { resolveResumableSession } from "../../src/session/session-listing";
 import { SessionManager } from "../../src/session/session-manager";
 import { executeAcpBuiltinSlashCommand } from "../../src/slash-commands/acp-builtins";
 import { type BuiltinSlashCommandRuntime, executeBuiltinSlashCommand } from "../../src/slash-commands/builtin-registry";
-import { buildWorkflowGraphViewForRuntime } from "../../src/slash-commands/helpers/workflow";
+import {
+	buildWorkflowGraphViewForRuntime,
+	requestActiveWorkflowStopsForRuntime,
+} from "../../src/slash-commands/helpers/workflow";
 import type { ToolSession } from "../../src/tools";
 import { parseWorkflowDefinition, type WorkflowDefinition } from "../../src/workflow/definition";
 import type { FlowFreeze } from "../../src/workflow/freeze";
@@ -3846,6 +3849,86 @@ edges:
 			frontierNodeIds: ["build"],
 			state: {},
 			sourceMapping: { build: "build" },
+		});
+	});
+
+	it("requests active workflow stops from an operator interrupt without parsing a slash command", async () => {
+		const dir = await createTempDir();
+		await fs.mkdir(path.join(dir, "operator-interrupt"), { recursive: true });
+		await Bun.write(
+			path.join(dir, "operator-interrupt.omhflow"),
+			`---
+name: operator-interrupt
+version: 1
+schema: omhflow/v1
+checkpoint:
+  stopDeadlineMs: 50
+changePolicy:
+  agentsCanPropose: true
+  humansCanApprove: true
+---
+
+\`\`\`yaml workflow
+nodes:
+  build:
+    type: agent
+    agent: task
+    prompt: Build until the operator interrupts.
+edges: []
+\`\`\`
+`,
+		);
+		const entries: CapturedEntry[] = [];
+		const agentStarted = Promise.withResolvers<void>();
+		const agentAborted = Promise.withResolvers<void>();
+		let capturedSignal: AbortSignal | undefined;
+		const runner: WorkflowAgentTaskRunner = async request => {
+			capturedSignal = request.signal;
+			request.signal?.addEventListener("abort", () => agentAborted.resolve(), { once: true });
+			agentStarted.resolve();
+			await agentAborted.promise;
+			return {
+				exitCode: 1,
+				output: "",
+				error: request.signal?.reason ?? "operator interrupt",
+			};
+		};
+		const { runtime } = createTuiRuntime(entries, dir, runner);
+
+		expect(
+			await executeBuiltinSlashCommand(
+				`/workflow start ${path.join(dir, "operator-interrupt.omhflow")} --run-id operator-interrupt --family-id family-operator-interrupt --background`,
+				runtime,
+			),
+		).toBe(true);
+		await agentStarted.promise;
+
+		expect(capturedSignal?.aborted).toBe(false);
+		const summary = await requestActiveWorkflowStopsForRuntime(runtime.ctx, {
+			abortActiveNodes: true,
+			deadlineMs: 0,
+			reason: "operator interrupt",
+		});
+		await agentAborted.promise;
+
+		expect(summary).toEqual({
+			attemptIds: ["operator-interrupt:attempt-1"],
+			abortedAttemptIds: ["operator-interrupt:attempt-1"],
+		});
+		expect(capturedSignal?.aborted).toBe(true);
+		for (let attempt = 0; attempt < 50; attempt += 1) {
+			const status = reconstructWorkflowFamilies(entries)[0]?.attempts[0]?.status;
+			if (status === "stopped") break;
+			await Bun.sleep(10);
+		}
+		const family = reconstructWorkflowFamilies(entries)[0];
+		expect(family?.attempts[0]?.status).toBe("stopped");
+		expect(family?.attempts[0]?.activations.map(activation => [activation.nodeId, activation.status])).toEqual([
+			["build", "aborted"],
+		]);
+		expect(family?.checkpoints[0]).toMatchObject({
+			abortedActivationIds: ["activation-1"],
+			frontierNodeIds: ["build"],
 		});
 	});
 

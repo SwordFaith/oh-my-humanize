@@ -3,6 +3,7 @@ import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config
 import { InputController } from "@oh-my-pi/pi-coding-agent/modes/controllers/input-controller";
 import type { InteractiveModeContext, SubmittedUserInput } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { USER_INTERRUPT_LABEL } from "@oh-my-pi/pi-coding-agent/session/messages";
+import * as WorkflowCommandHelpers from "@oh-my-pi/pi-coding-agent/slash-commands/helpers/workflow";
 
 type Spy = Mock<(...args: unknown[]) => unknown>;
 type StartPendingSubmissionSpy = Mock<InteractiveModeContext["startPendingSubmission"]>;
@@ -429,6 +430,25 @@ describe("InputController escape behavior", () => {
 		expect(spies.abort).toHaveBeenCalledTimes(1);
 	});
 
+	it("requests active workflow stops before aborting the active stream on Esc", () => {
+		const stopSpy = vi
+			.spyOn(WorkflowCommandHelpers, "requestActiveWorkflowStopsForRuntime")
+			.mockResolvedValue({ attemptIds: ["attempt-1"], abortedAttemptIds: ["attempt-1"] });
+		const { ctx, editor, spies } = createContext();
+		(ctx.session as { isStreaming: boolean }).isStreaming = true;
+		const controller = new InputController(ctx);
+
+		controller.setupKeyHandlers();
+		editor.onEscape?.();
+
+		expect(stopSpy).toHaveBeenCalledWith(ctx, {
+			abortActiveNodes: true,
+			deadlineMs: 0,
+			reason: USER_INTERRUPT_LABEL,
+		});
+		expect(spies.abort).toHaveBeenCalledWith({ reason: USER_INTERRUPT_LABEL });
+	});
+
 	it("returns focused subagent view to main on Esc instead of aborting", () => {
 		const { ctx, editor, spies } = createContext();
 		Object.defineProperty(ctx, "focusedAgentId", { value: "Worker", configurable: true });
@@ -549,6 +569,23 @@ describe("InputController Ctrl+C behavior", () => {
 		expect(spies.clearEditor).toHaveBeenCalledTimes(1);
 		expect(spies.flushSync).toHaveBeenCalledTimes(1);
 		expect(spies.shutdown).not.toHaveBeenCalled();
+	});
+
+	it("requests active workflow stops on first Ctrl+C", () => {
+		const stopSpy = vi
+			.spyOn(WorkflowCommandHelpers, "requestActiveWorkflowStopsForRuntime")
+			.mockResolvedValue({ attemptIds: ["attempt-1"], abortedAttemptIds: ["attempt-1"] });
+		const { ctx, editor } = createContext();
+		const controller = new InputController(ctx);
+
+		controller.setupKeyHandlers();
+		editor.onClear?.();
+
+		expect(stopSpy).toHaveBeenCalledWith(ctx, {
+			abortActiveNodes: true,
+			deadlineMs: 0,
+			reason: USER_INTERRUPT_LABEL,
+		});
 	});
 
 	it("sync-flushes the session JSONL on second Ctrl+C (shutdown)", () => {
