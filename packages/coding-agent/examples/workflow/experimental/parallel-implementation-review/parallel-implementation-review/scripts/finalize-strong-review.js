@@ -1,7 +1,9 @@
 const taskText = await readText("task.md");
 const tupleId = await tupleIdFromRunArtifacts(taskText);
-const verdict = verdictFromWorkflowState();
 const evidenceContract = objectState("/evidenceContract");
+const evidenceContractVerdict = evidenceContract?.verdict ?? evidenceContract?.status ?? "unknown";
+const requestedVerdict = verdictFromWorkflowState();
+const verdict = evidenceContractVerdict === "READY" ? requestedVerdict : "reject";
 const changedFiles = await changedProjectFiles();
 const evidenceFiles = await workflowEvidenceFiles();
 const finalReviewArtifact = `workflow-output/final-review${tupleId ? `-${tupleId}` : ""}.json`;
@@ -14,8 +16,10 @@ const payload = {
 	strong_review: {
 		verdict,
 		accepted: verdict === "promote",
+		requested_verdict: requestedVerdict,
 	},
 	evidence_contract: evidenceContract,
+	evidence_contract_verdict: evidenceContractVerdict,
 	changed_files: changedFiles,
 	evidence_files: evidenceFiles,
 	checked_at_ms: Date.now(),
@@ -34,7 +38,7 @@ await Bun.write(
 			verdict,
 			final_artifact: finalReviewArtifact,
 			archive_artifact: finalArchiveArtifact,
-			evidence_contract_verdict: payload.evidence_contract?.verdict ?? payload.evidence_contract?.status ?? "unknown",
+			evidence_contract_verdict: evidenceContractVerdict,
 			changed_files: changedFiles,
 			evidence_files: evidenceFiles,
 			checked_at_ms: Date.now(),

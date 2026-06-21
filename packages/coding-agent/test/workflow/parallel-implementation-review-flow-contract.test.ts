@@ -62,6 +62,16 @@ describe("parallel-implementation-review flow contract", () => {
 		await expect(runScript(cwd, "evidence-contract-guard.js", {})).rejects.toThrow("generic validation aliases");
 	});
 
+	it("rejects any premature final namespace artifact before strong review", async () => {
+		const cwd = await createTempDir();
+		await writeReadyEvidence(cwd, "P06-T06-test");
+		await Bun.write(path.join(cwd, "workflow-output", "P06-T06-test-final-validation.json"), "{}\n");
+
+		await expect(runScript(cwd, "evidence-contract-guard.js", {})).rejects.toThrow(
+			"premature final decision artifacts",
+		);
+	});
+
 	it("finalizes into a final-review artifact instead of claiming strongReview provenance", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
@@ -85,6 +95,36 @@ describe("parallel-implementation-review flow contract", () => {
 			status: "completed",
 			terminal: true,
 			final_artifact: "workflow-output/final-review-P06-T06-test.json",
+		});
+	});
+
+	it("finalizer fails closed when evidence contract is not ready", async () => {
+		const cwd = await createTempDir();
+		await writeReadyEvidence(cwd, "P06-T06-test");
+
+		const result = await runScript(cwd, "finalize-strong-review.js", {
+			state: {
+				verdict: { verdict: "promote" },
+				evidenceContract: { verdict: "REPAIR", reasons: ["premature final namespace artifact"] },
+			},
+		});
+
+		expect(result.verdict).toBe("reject");
+		expect(result.data).toMatchObject({
+			producer_node: "finalizeStrongReview",
+			strong_review: {
+				verdict: "reject",
+				accepted: false,
+			},
+			evidence_contract: {
+				verdict: "REPAIR",
+			},
+		});
+		await expect(Bun.file(path.join(cwd, "workflow-output", "tuple-state.json")).json()).resolves.toMatchObject({
+			status: "rejected",
+			terminal: true,
+			verdict: "reject",
+			evidence_contract_verdict: "REPAIR",
 		});
 	});
 

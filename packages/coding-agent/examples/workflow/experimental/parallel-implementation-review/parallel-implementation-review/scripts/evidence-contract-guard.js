@@ -355,9 +355,7 @@ function genericValidationAliasArtifacts(files) {
 }
 
 function isPrematureDecisionArtifact(file) {
-	return /(^|\/)(strong-review|final-(?:review|archive|decision|promotion)|promotion-decision)[^/]*\.(?:json|md|txt)$/iu.test(
-		file,
-	);
+	return /(^|\/)(?:(?:strong-review|promotion-decision)[^/]*|[^/]*final-[^/]*)\.(?:json|md|txt)$/iu.test(file);
 }
 
 async function validationEvidenceMatches(files, command, environment) {
