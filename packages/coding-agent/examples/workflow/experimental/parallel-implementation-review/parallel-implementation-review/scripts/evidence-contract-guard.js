@@ -156,10 +156,6 @@ await Bun.write(
 	].join("\n"),
 );
 
-if (verdict !== "READY") {
-	throw new Error(`declared validation evidence is not ready: ${reasons.join("; ")}`);
-}
-
 return {
 	summary:
 		verdict === "READY"

@@ -10,8 +10,17 @@ interface ScriptResult {
 		artifact?: string;
 		producer_node?: string;
 		validation?: {
+			environment?: Record<string, string>;
+			runtime_environment?: Record<string, string>;
+			result?: string;
+			exitCode?: number;
 			stdoutArtifact?: string;
 			stderrArtifact?: string;
+		};
+		checked_inputs?: {
+			generic_validation_aliases?: string[];
+			premature_decision_artifacts?: string[];
+			failed_validation_artifacts?: string[];
 		};
 	};
 }
@@ -54,22 +63,141 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(await fileExists(path.join(cwd, "workflow-output", "validation-P06-T06-test.stderr.txt"))).toBe(false);
 	});
 
-	it("rejects generic validation aliases before strong review", async () => {
+	it("uses an OS temp directory for validation when the task does not declare temp vars", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\nprintf '%s' \"$TMPDIR\"\n");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+
+		const result = await runScript(cwd, "run-declared-validation.js", {});
+
+		expect(result.verdict).toBe("PASS");
+		expect(result.data?.validation?.environment).toEqual({});
+		expect(result.data?.validation?.runtime_environment?.TMPDIR).toStartWith(
+			path.join(os.tmpdir(), "omh-validation-"),
+		);
+		expect(result.data?.validation?.runtime_environment?.TMPDIR).not.toStartWith(cwd);
+		const stdout = await Bun.file(path.join(cwd, "workflow-output", "validation-P06-T06-test.stdout")).text();
+		expect(stdout).toStartWith(path.join(os.tmpdir(), "omh-validation-"));
+		expect(stdout).not.toStartWith(cwd);
+	});
+
+	it("preserves declared validation temp vars while controlling undeclared temp vars", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			"Validation Command:\nprintf '%s' \"$TMPDIR\"\nValidation Environment:\nTMPDIR=workflow-output/declared-tmp\n",
+		);
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+
+		const result = await runScript(cwd, "run-declared-validation.js", {});
+
+		expect(result.verdict).toBe("PASS");
+		expect(result.data?.validation?.environment).toEqual({ TMPDIR: "workflow-output/declared-tmp" });
+		expect(result.data?.validation?.runtime_environment?.TMPDIR).toBe("workflow-output/declared-tmp");
+		expect(await fileExists(path.join(cwd, "workflow-output", "declared-tmp", ".omh-validation-tmp"))).toBe(true);
+		const stdout = await Bun.file(path.join(cwd, "workflow-output", "validation-P06-T06-test.stdout")).text();
+		expect(stdout).toBe("workflow-output/declared-tmp");
+	});
+
+	it("records failed declared validation as structured evidence instead of throwing", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\nfalse\n");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+
+		const result = await runScript(cwd, "run-declared-validation.js", {});
+
+		expect(result.verdict).toBe("FAIL");
+		expect(result.data).toMatchObject({
+			artifact: "workflow-output/validation-P06-T06-test.json",
+			producer_node: "runDeclaredValidation",
+			validation: {
+				result: "failed",
+				exitCode: 1,
+			},
+		});
+		await expect(
+			Bun.file(path.join(cwd, "workflow-output", "validation-P06-T06-test.json")).json(),
+		).resolves.toMatchObject({
+			validation: {
+				result: "failed",
+				exitCode: 1,
+			},
+		});
+	});
+
+	it("reports generic validation aliases as repair evidence before strong review", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
 		await Bun.write(path.join(cwd, "workflow-output", "validation.txt"), "generic validation alias\n");
 
-		await expect(runScript(cwd, "evidence-contract-guard.js", {})).rejects.toThrow("generic validation aliases");
+		const result = await runScript(cwd, "evidence-contract-guard.js", {});
+
+		expect(result.verdict).toBe("REPAIR");
+		expect(result.data?.checked_inputs?.generic_validation_aliases).toEqual(["workflow-output/validation.txt"]);
+		await expect(
+			Bun.file(path.join(cwd, "workflow-output", "evidence-contract-guard-P06-T06-test.json")).json(),
+		).resolves.toMatchObject({
+			verdict: "REPAIR",
+			checked_inputs: {
+				generic_validation_aliases: ["workflow-output/validation.txt"],
+			},
+		});
 	});
 
-	it("rejects any premature final namespace artifact before strong review", async () => {
+	it("reports any premature final namespace artifact as repair evidence before strong review", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
 		await Bun.write(path.join(cwd, "workflow-output", "P06-T06-test-final-validation.json"), "{}\n");
 
-		await expect(runScript(cwd, "evidence-contract-guard.js", {})).rejects.toThrow(
-			"premature final decision artifacts",
-		);
+		const result = await runScript(cwd, "evidence-contract-guard.js", {});
+
+		expect(result.verdict).toBe("REPAIR");
+		expect(result.data?.checked_inputs?.premature_decision_artifacts).toEqual([
+			"workflow-output/P06-T06-test-final-validation.json",
+		]);
+		await expect(
+			Bun.file(path.join(cwd, "workflow-output", "evidence-contract-guard-P06-T06-test.json")).json(),
+		).resolves.toMatchObject({
+			verdict: "REPAIR",
+			checked_inputs: {
+				premature_decision_artifacts: ["workflow-output/P06-T06-test-final-validation.json"],
+			},
+		});
+	});
+
+	it("lets finalization reject failed declared validation through the evidence contract path", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await Bun.write(path.join(cwd, "task.md"), "Validation Command:\nfalse\n");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "workflow-output", "core-lane-P06-T06-test.json"), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", "tests-lane-P06-T06-test.json"), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", "docs-lane-P06-T06-test.json"), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", "integration-review-P06-T06-test.json"), "{}\n");
+		await runScript(cwd, "run-declared-validation.js", {});
+
+		const guardResult = await runScript(cwd, "evidence-contract-guard.js", {});
+		const finalResult = await runScript(cwd, "finalize-strong-review.js", {
+			state: {
+				verdict: { verdict: "promote" },
+				evidenceContract: guardResult.data,
+			},
+		});
+
+		expect(guardResult.verdict).toBe("REPAIR");
+		expect(guardResult.data?.checked_inputs?.failed_validation_artifacts).toEqual([
+			"workflow-output/validation-P06-T06-test.json",
+		]);
+		expect(finalResult.verdict).toBe("reject");
+		await expect(Bun.file(path.join(cwd, "workflow-output", "tuple-state.json")).json()).resolves.toMatchObject({
+			status: "rejected",
+			terminal: true,
+			verdict: "reject",
+			evidence_contract_verdict: "REPAIR",
+		});
 	});
 
 	it("finalizes into a final-review artifact instead of claiming strongReview provenance", async () => {

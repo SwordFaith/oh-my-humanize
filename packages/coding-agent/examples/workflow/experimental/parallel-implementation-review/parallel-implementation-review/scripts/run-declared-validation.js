@@ -26,11 +26,12 @@ if (!validationCommand) {
 }
 
 assertSafeValidationCommand(validationCommand);
-await ensureDeclaredTempDirectories(validationEnvironment);
+const runtimeEnvironment = validationRuntimeEnvironment(validationEnvironment, tupleId);
+await ensureDeclaredTempDirectories(runtimeEnvironment);
 
 const child = Bun.spawn(["bash", "-lc", validationCommand], {
 	cwd: process.cwd(),
-	env: { ...process.env, ...validationEnvironment },
+	env: { ...process.env, ...runtimeEnvironment },
 	stdout: "pipe",
 	stderr: "pipe",
 });
@@ -44,6 +45,7 @@ const artifact = await writeValidationArtifact({
 	tupleId,
 	validationCommand,
 	validationEnvironment,
+	runtimeEnvironment,
 	result,
 	exitCode,
 	stdout,
@@ -51,7 +53,12 @@ const artifact = await writeValidationArtifact({
 });
 
 if (exitCode !== 0) {
-	throw new Error(`declared validation command failed with exit code ${exitCode}; see ${artifact.stdoutArtifact} and ${artifact.stderrArtifact}`);
+	return {
+		summary: `declared validation failed with exit code ${exitCode}: ${validationCommand}`,
+		verdict: "FAIL",
+		data: artifact,
+		statePatch: [{ op: "set", path: "/declaredValidation", value: artifact }],
+	};
 }
 
 return {
@@ -61,7 +68,16 @@ return {
 	statePatch: [{ op: "set", path: "/declaredValidation", value: artifact }],
 };
 
-async function writeValidationArtifact({ tupleId, validationCommand, validationEnvironment, result, exitCode, stdout, stderr }) {
+async function writeValidationArtifact({
+	tupleId,
+	validationCommand,
+	validationEnvironment,
+	runtimeEnvironment,
+	result,
+	exitCode,
+	stdout,
+	stderr,
+}) {
 	const suffix = tupleId ? `-${tupleId}` : "";
 	const stdoutArtifact = `workflow-output/validation${suffix}.stdout`;
 	const stderrArtifact = `workflow-output/validation${suffix}.stderr`;
@@ -76,6 +92,7 @@ async function writeValidationArtifact({ tupleId, validationCommand, validationE
 		validation: {
 			command: validationCommand,
 			environment: validationEnvironment,
+			runtime_environment: runtimeEnvironment,
 			result,
 			status: result,
 			exitCode,
@@ -200,6 +217,33 @@ function assertSafeValidationCommand(command) {
 	if (seconds > 3600) {
 		throw new Error("parallel-implementation-review validation command timeout must be 1 hour or less");
 	}
+}
+
+function validationRuntimeEnvironment(declaredEnvironment, tupleId) {
+	const defaultTempRoot = defaultValidationTempRoot(tupleId);
+	return {
+		TMPDIR: defaultTempRoot,
+		TMP: defaultTempRoot,
+		TEMP: defaultTempRoot,
+		...declaredEnvironment,
+	};
+}
+
+function defaultValidationTempRoot(tupleId) {
+	const tempRoot = systemTempRoot();
+	const suffixSource = tupleId || workflowContext.activation?.id || `${process.pid}-${Date.now()}`;
+	const suffix = suffixSource.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 96) || "run";
+	return joinTempPath(tempRoot, `omh-validation-${suffix}`);
+}
+
+function systemTempRoot() {
+	if (process.platform === "win32") return process.env.TEMP || process.env.TMP || "C:\\Windows\\Temp";
+	return "/tmp";
+}
+
+function joinTempPath(root, child) {
+	const separator = process.platform === "win32" ? "\\" : "/";
+	return root.endsWith("/") || root.endsWith("\\") ? `${root}${child}` : `${root}${separator}${child}`;
 }
 
 async function ensureDeclaredTempDirectories(environment) {
