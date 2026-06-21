@@ -552,9 +552,11 @@ describe("parallel-implementation-review flow contract", () => {
 				reason: "declared validation environment mismatch",
 			})}\n`,
 		);
-		await runScript(cwd, "lane-hard-stop-guard.js", {});
+		const laneGuardResult = await runScript(cwd, "lane-hard-stop-guard.js", {});
 
-		const guardResult = await runScript(cwd, "evidence-contract-guard.js", {});
+		const guardResult = await runScript(cwd, "evidence-contract-guard.js", {
+			state: stateFromPatches(laneGuardResult),
+		});
 		const finalResult = await runScript(cwd, "finalize-strong-review.js", {
 			state: {
 				verdict: { verdict: "promote" },
@@ -592,7 +594,10 @@ describe("parallel-implementation-review flow contract", () => {
 			})}\n`,
 		);
 
-		const result = await runScript(cwd, "evidence-contract-guard.js", {});
+		const laneGuardResult = await runScript(cwd, "lane-hard-stop-guard.js", {});
+		const result = await runScript(cwd, "evidence-contract-guard.js", {
+			state: stateFromPatches(laneGuardResult),
+		});
 
 		expect(result.verdict).toBe("READY");
 		expect(result.data?.checked_inputs?.lane_hard_stop_artifacts).toEqual([]);
@@ -681,6 +686,17 @@ async function runScript(cwd: string, scriptName: string, context: Partial<Workf
 	} finally {
 		process.chdir(originalCwd);
 	}
+}
+
+function stateFromPatches(...results: ScriptResult[]): object {
+	const state: Record<string, unknown> = {};
+	for (const result of results) {
+		for (const patch of result.statePatch ?? []) {
+			if (patch.op !== "set" || !patch.path.startsWith("/")) continue;
+			state[patch.path.slice(1)] = patch.value;
+		}
+	}
+	return state;
 }
 
 async function writeReadyEvidence(

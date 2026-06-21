@@ -13,7 +13,7 @@ const trustedFinalValidationArtifacts = validationMatch.trustedFinalFiles.filter
 );
 const untrustedFinalValidationArtifacts = finalValidationArtifacts.filter(file => !trustedFinalValidationArtifacts.includes(file));
 const genericValidationAliases = genericValidationAliasArtifacts(evidenceFiles);
-const laneHardStopResult = await laneHardStopArtifacts(tupleId);
+const laneHardStopResult = laneHardStopResultFromState(workflowContext.state);
 const activeLaneHardStopArtifacts = laneHardStopResult.active;
 const supersededFailedValidationArtifacts =
 	trustedFinalValidationArtifacts.length > 0
@@ -404,58 +404,37 @@ function genericValidationAliasArtifacts(files) {
 	return files.filter(file => /^workflow-output\/(?:validation|verify|test|tests)\.(?:json|md|txt|log)$/iu.test(file));
 }
 
-async function laneHardStopArtifacts(tupleId) {
-	const glob = new Bun.Glob("workflow-output/lane-hard-stop-*.json");
-	const active = [];
-	const ignored = [];
-	const nonterminal = [];
-	for await (const filePath of glob.scan({ cwd: process.cwd(), onlyFiles: true })) {
-		if (isLaneHardStopGuardArtifact(filePath)) continue;
-		if (tupleId && !filePath.includes(tupleId)) continue;
-		const classification = await hardStopClassification(filePath);
-		if (classification === "active") active.push(filePath);
-		if (classification === "superseded") ignored.push(filePath);
-		if (classification === "nonterminal") nonterminal.push(filePath);
+function laneHardStopResultFromState(state) {
+	const laneHardStopGuard = stateValueAtPath(state, "/laneHardStopGuard");
+	if (!laneHardStopGuard || typeof laneHardStopGuard !== "object") {
+		return { active: [], ignored: [], nonterminal: [] };
 	}
 	return {
-		active: active.sort((left, right) => left.localeCompare(right, "en")),
-		ignored: ignored.sort((left, right) => left.localeCompare(right, "en")),
-		nonterminal: nonterminal.sort((left, right) => left.localeCompare(right, "en")),
+		active: stringArrayField(laneHardStopGuard, "hard_stop_artifacts"),
+		ignored: stringArrayField(laneHardStopGuard, "ignored_historical_hard_stop_artifacts"),
+		nonterminal: stringArrayField(laneHardStopGuard, "ignored_nonterminal_hard_stop_artifacts"),
 	};
 }
 
-function isLaneHardStopGuardArtifact(filePath) {
-	return /(^|\/)lane-hard-stop-guard[^/]*\.json$/iu.test(filePath);
-}
-
-async function hardStopClassification(filePath) {
-	try {
-		const data = await Bun.file(filePath).json();
-		const isHardStop = stringField(data, "status") === "hard_stop" || stringField(data, "verdict") === "hard_stop";
-		if (!isHardStop) return "none";
-		if (!isWorkflowTerminalHardStop(data)) return "nonterminal";
-		if (await hasSupersedingEvidence(data)) return "superseded";
-		return "active";
-	} catch {
-		return "none";
+function stateValueAtPath(state, pointer) {
+	if (!state || typeof state !== "object") return null;
+	const segments = pointer
+		.split("/")
+		.slice(1)
+		.map(segment => segment.replace(/~1/gu, "/").replace(/~0/gu, "~"));
+	let current = state;
+	for (const segment of segments) {
+		if (!current || typeof current !== "object" || !(segment in current)) return null;
+		current = current[segment];
 	}
+	return current;
 }
 
-function isWorkflowTerminalHardStop(data) {
-	const terminalScope = stringField(data, "terminal_scope");
-	if (terminalScope) return terminalScope === "workflow";
-	return data?.workflow_terminal === true;
-}
-
-async function hasSupersedingEvidence(data) {
-	const supersededBy = stringField(data, "superseded_by");
-	if (!supersededBy.startsWith("workflow-output/")) return false;
-	if (supersededBy.includes("..")) return false;
-	try {
-		return await Bun.file(supersededBy).exists();
-	} catch {
-		return false;
-	}
+function stringArrayField(value, key) {
+	if (!value || typeof value !== "object") return [];
+	const field = value[key];
+	if (!Array.isArray(field)) return [];
+	return field.filter(item => typeof item === "string").sort((left, right) => left.localeCompare(right, "en"));
 }
 
 function isPrematureDecisionArtifact(file) {

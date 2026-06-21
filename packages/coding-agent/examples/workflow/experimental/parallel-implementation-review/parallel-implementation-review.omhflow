@@ -208,6 +208,8 @@ sequence:
       script:
         language: js
         file: scripts/evidence-contract-guard.js
+      reads:
+        - /laneHardStopGuard
       writes:
         - /evidenceContract
   - node:
