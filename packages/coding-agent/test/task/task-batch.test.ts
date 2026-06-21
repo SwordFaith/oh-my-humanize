@@ -34,7 +34,13 @@ const taskAgent: AgentDefinition = {
 };
 
 function createSession(
-	options: { manager?: AsyncJobManager; settings?: Record<string, unknown>; agentId?: string } = {},
+	options: {
+		manager?: AsyncJobManager;
+		settings?: Record<string, unknown>;
+		agentId?: string;
+		defaultSubagentModelOverride?: string | string[];
+		defaultSubagentModelOverrideAuthFallback?: boolean;
+	} = {},
 ): ToolSession {
 	return {
 		cwd: "/tmp",
@@ -44,6 +50,8 @@ function createSession(
 		getSessionSpawns: () => "*",
 		getAgentId: () => options.agentId ?? null,
 		asyncJobManager: options.manager,
+		defaultSubagentModelOverride: options.defaultSubagentModelOverride,
+		defaultSubagentModelOverrideAuthFallback: options.defaultSubagentModelOverrideAuthFallback,
 	} as unknown as ToolSession;
 }
 
@@ -351,6 +359,39 @@ describe("task.batch spawning", () => {
 			assignment: "Run a workflow review node.",
 			modelOverride: "rust-cat/gpt-5.5",
 			modelOverrideAuthFallback: false,
+		} as TaskParams);
+
+		expect(seen).toEqual([
+			{
+				modelOverride: "rust-cat/gpt-5.5",
+				modelOverrideAuthFallback: false,
+			},
+		]);
+	});
+
+	it("inherits workflow-owned exact model defaults for nested task spawns", async () => {
+		mockDiscovery();
+		const seen: Array<{ modelOverride?: string | string[]; modelOverrideAuthFallback?: boolean }> = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			seen.push({
+				modelOverride: options.modelOverride,
+				modelOverrideAuthFallback: options.modelOverrideAuthFallback,
+			});
+			return makeResult(options.id ?? "?");
+		});
+
+		const tool = await TaskTool.create(
+			createSession({
+				settings: { "async.enabled": false, "task.batch": true },
+				defaultSubagentModelOverride: "rust-cat/gpt-5.5",
+				defaultSubagentModelOverrideAuthFallback: false,
+			}),
+		);
+
+		await tool.execute("tc-nested-exact-model", {
+			agent: "task",
+			id: "Nested",
+			assignment: "Spawn from inside a workflow-owned node.",
 		} as TaskParams);
 
 		expect(seen).toEqual([

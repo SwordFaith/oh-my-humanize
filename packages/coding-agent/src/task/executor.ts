@@ -296,6 +296,8 @@ export interface ExecutorOptions {
 	detached?: boolean;
 	modelOverride?: string | string[];
 	modelOverrideAuthFallback?: boolean;
+	defaultSubagentModelOverride?: string | string[];
+	defaultSubagentModelOverrideAuthFallback?: boolean;
 	/**
 	 * Active model selector of the parent session, used as an auth-aware fallback
 	 * if the resolved subagent model has no working credentials. See #985.
@@ -2049,6 +2051,14 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				settings: subagentSettings,
 				model,
 				thinkingLevel: effectiveThinkingLevel,
+				defaultSubagentModelOverride:
+					options.modelOverrideAuthFallback === false && options.modelOverride !== undefined
+						? options.modelOverride
+						: options.defaultSubagentModelOverride,
+				defaultSubagentModelOverrideAuthFallback:
+					options.modelOverrideAuthFallback === false && options.modelOverride !== undefined
+						? false
+						: options.defaultSubagentModelOverrideAuthFallback,
 				toolNames,
 				outputSchema,
 				requireYieldTool: true,

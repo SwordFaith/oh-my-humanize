@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { commands, isSubcommand, resolveCliArgv } from "@oh-my-pi/pi-coding-agent/cli-commands";
-import { buildHeadlessAgentTaskArgs, resolveWorkflowCommandArgs } from "../src/cli/workflow-cli";
+import {
+	buildHeadlessAgentTaskArgs,
+	buildHeadlessAgentTaskEnv,
+	resolveWorkflowCommandArgs,
+} from "../src/cli/workflow-cli";
 import Workflow from "../src/commands/workflow";
+import {
+	WORKFLOW_SUBAGENT_MODEL_OVERRIDE_AUTH_FALLBACK_ENV,
+	WORKFLOW_SUBAGENT_MODEL_OVERRIDE_ENV,
+} from "../src/workflow/model-env";
 
 describe("workflow command is registered as a top-level subcommand", () => {
 	test("CLI runner routes workflow commands to the workflow command, not launch", () => {
@@ -75,5 +83,13 @@ describe("resolveWorkflowCommandArgs", () => {
 			"-p",
 			"Implement the workflow task.",
 		]);
+	});
+
+	test("pins nested headless workflow subagents to the exact workflow model", () => {
+		const env = buildHeadlessAgentTaskEnv({ PATH: "/bin" }, "rust-cat/gpt-5.5", false);
+
+		expect(env.PATH).toBe("/bin");
+		expect(env[WORKFLOW_SUBAGENT_MODEL_OVERRIDE_ENV]).toBe("rust-cat/gpt-5.5");
+		expect(env[WORKFLOW_SUBAGENT_MODEL_OVERRIDE_AUTH_FALLBACK_ENV]).toBe("false");
 	});
 });

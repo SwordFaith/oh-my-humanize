@@ -209,6 +209,14 @@ export interface ToolSession {
 	requireYieldTool?: boolean;
 	/** Task recursion depth (0 = top-level, 1 = first child, etc.) */
 	taskDepth?: number;
+	/**
+	 * Default model selector for child task/eval `agent()` spawns created inside
+	 * this session. Workflow-owned subagents set this when a node has an exact
+	 * model binding, so the whole node execution tree stays within that model
+	 * boundary unless an internal caller supplies its own explicit override.
+	 */
+	defaultSubagentModelOverride?: string | string[];
+	defaultSubagentModelOverrideAuthFallback?: boolean;
 	/** Get shared eval executor session ID. Subagents inherit this to share JS/Python state. */
 	getEvalSessionId?: () => string | null;
 	/** Get session file */

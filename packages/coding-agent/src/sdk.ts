@@ -394,6 +394,13 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ConfiguredThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model; thinkingLevel?: ThinkingLevel }>;
+	/**
+	 * Default model selector inherited by child task/eval `agent()` spawns inside
+	 * this session. Used by workflow-owned subagents to keep exact node bindings
+	 * across nested agent calls.
+	 */
+	defaultSubagentModelOverride?: string | string[];
+	defaultSubagentModelOverrideAuthFallback?: boolean;
 
 	/** Provider-facing system prompt override. Replaces the fully rendered default blocks. */
 	systemPrompt?: string | string[] | ((defaultPrompt: string[]) => string | string[]);
@@ -1462,6 +1469,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			outputSchema: options.outputSchema,
 			requireYieldTool: options.requireYieldTool,
 			taskDepth: options.taskDepth ?? 0,
+			defaultSubagentModelOverride: options.defaultSubagentModelOverride,
+			defaultSubagentModelOverrideAuthFallback: options.defaultSubagentModelOverrideAuthFallback,
 			getSessionFile: () => sessionManager.getSessionFile() ?? null,
 			getEvalKernelOwnerId: () => evalKernelOwnerId,
 			getEvalSessionId: () =>

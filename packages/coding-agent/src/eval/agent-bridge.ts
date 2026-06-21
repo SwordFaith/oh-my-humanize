@@ -212,13 +212,19 @@ export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOption
 	const effectiveAgent = agent;
 	const parentActiveModelPattern = options.session.getActiveModelString?.();
 	const agentModelOverrides = options.session.settings.get("task.agentModelOverrides");
-	const modelOverride = resolveAgentModelPatterns({
-		settingsOverride: parsed.model ?? agentModelOverrides[agentName],
-		agentModel: effectiveAgent.model,
-		settings: options.session.settings,
-		activeModelPattern: parentActiveModelPattern,
-		fallbackModelPattern: options.session.getModelString?.(),
-	});
+	const defaultSubagentModelOverride =
+		parsed.model === undefined ? options.session.defaultSubagentModelOverride : undefined;
+	const modelOverride =
+		defaultSubagentModelOverride ??
+		resolveAgentModelPatterns({
+			settingsOverride: parsed.model ?? agentModelOverrides[agentName],
+			agentModel: effectiveAgent.model,
+			settings: options.session.settings,
+			activeModelPattern: parentActiveModelPattern,
+			fallbackModelPattern: options.session.getModelString?.(),
+		});
+	const modelOverrideAuthFallback =
+		defaultSubagentModelOverride !== undefined ? options.session.defaultSubagentModelOverrideAuthFallback : undefined;
 	const availableSkills = [...(options.session.skills ?? [])];
 	const resolvedAutoloadSkills =
 		effectiveAgent.autoloadSkills?.length && availableSkills.length > 0
@@ -252,6 +258,7 @@ export async function runEvalAgent(args: unknown, options: EvalAgentBridgeOption
 			id,
 			taskDepth: options.session.taskDepth ?? 0,
 			modelOverride,
+			modelOverrideAuthFallback,
 			parentActiveModelPattern,
 			thinkingLevel: effectiveAgent.thinkingLevel,
 			outputSchema: structured ? parsed.schema : undefined,

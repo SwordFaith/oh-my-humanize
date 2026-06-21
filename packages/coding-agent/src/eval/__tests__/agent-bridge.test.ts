@@ -45,6 +45,8 @@ interface SessionOptions {
 	settings?: Settings;
 	outputManager?: AgentOutputManager;
 	planMode?: boolean;
+	defaultSubagentModelOverride?: string | string[];
+	defaultSubagentModelOverrideAuthFallback?: boolean;
 }
 
 function makeSession(options: SessionOptions = {}): ToolSession {
@@ -70,6 +72,8 @@ function makeSession(options: SessionOptions = {}): ToolSession {
 		getArtifactsDir: () => artifactsDir,
 		getSessionId: () => "test-session",
 		getEvalSessionId: () => "test-eval-session",
+		defaultSubagentModelOverride: options.defaultSubagentModelOverride,
+		defaultSubagentModelOverrideAuthFallback: options.defaultSubagentModelOverrideAuthFallback,
 		getPlanModeState: options.planMode
 			? () =>
 					({
@@ -231,6 +235,23 @@ describe("runEvalAgent", () => {
 		expect(firstOptions.description).toBe("My Agent");
 		expect(firstOptions.modelOverride).toEqual(["p/override"]);
 		expect(secondOptions.outputSchema).toBeUndefined();
+	});
+
+	it("inherits workflow-owned exact model defaults for eval agent spawns", async () => {
+		mockAgents();
+		const runSpy = vi.spyOn(taskExecutor, "runSubprocess").mockImplementation(async options => singleResult(options));
+		const session = makeSession({
+			activeModel: "rust-cat/gpt-5.5",
+			defaultSubagentModelOverride: "rust-cat/gpt-5.5",
+			defaultSubagentModelOverrideAuthFallback: false,
+		});
+
+		await runEvalAgent({ prompt: "review this", agentType: "reviewer" }, { session });
+
+		const options = runSpy.mock.calls[0]?.[0];
+		if (!options) throw new Error("runSubprocess was not called");
+		expect(options.modelOverride).toBe("rust-cat/gpt-5.5");
+		expect(options.modelOverrideAuthFallback).toBe(false);
 	});
 
 	it("forces LSP off for bridge subagents even when task.enableLsp is on", async () => {

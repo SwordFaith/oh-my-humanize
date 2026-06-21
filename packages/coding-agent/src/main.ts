@@ -83,6 +83,10 @@ import {
 	writeLastChangelogVersion,
 } from "./utils/changelog";
 import { EventBus } from "./utils/event-bus";
+import {
+	WORKFLOW_SUBAGENT_MODEL_OVERRIDE_AUTH_FALLBACK_ENV,
+	WORKFLOW_SUBAGENT_MODEL_OVERRIDE_ENV,
+} from "./workflow/model-env";
 
 type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
 type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<void>;
@@ -788,6 +792,16 @@ async function buildSessionOptions(
 		cwd: parsed.cwd ?? getProjectDir(),
 		autoApprove: parsed.autoApprove ?? false,
 	};
+	const workflowSubagentModelOverride = Bun.env[WORKFLOW_SUBAGENT_MODEL_OVERRIDE_ENV]?.trim();
+	if (workflowSubagentModelOverride) {
+		options.defaultSubagentModelOverride = workflowSubagentModelOverride;
+		const authFallback = Bun.env[WORKFLOW_SUBAGENT_MODEL_OVERRIDE_AUTH_FALLBACK_ENV];
+		if (authFallback === "false") {
+			options.defaultSubagentModelOverrideAuthFallback = false;
+		} else if (authFallback === "true") {
+			options.defaultSubagentModelOverrideAuthFallback = true;
+		}
+	}
 	if (parsed.maxTime !== undefined) {
 		options.deadline = Date.now() + parsed.maxTime * 1000;
 	}

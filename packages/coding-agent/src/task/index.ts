@@ -1108,8 +1108,11 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 		const agentModelOverrides = this.session.settings.get("task.agentModelOverrides");
 		const settingsModelOverride = agentModelOverrides[agentName];
 		const parentActiveModelPattern = this.session.getActiveModelString?.();
+		const defaultSubagentModelOverride =
+			params.modelOverride === undefined ? this.session.defaultSubagentModelOverride : undefined;
 		const modelOverride =
 			params.modelOverride ??
+			defaultSubagentModelOverride ??
 			resolveAgentModelPatterns({
 				settingsOverride: settingsModelOverride,
 				agentModel: effectiveAgent.model,
@@ -1117,6 +1120,11 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				activeModelPattern: parentActiveModelPattern,
 				fallbackModelPattern: this.session.getModelString?.(),
 			});
+		const modelOverrideAuthFallback =
+			params.modelOverrideAuthFallback ??
+			(defaultSubagentModelOverride !== undefined
+				? this.session.defaultSubagentModelOverrideAuthFallback
+				: undefined);
 		const thinkingLevelOverride = effectiveAgent.thinkingLevel;
 
 		// Output schema priority: agent frontmatter > inherited parent session.
@@ -1286,7 +1294,7 @@ export class TaskTool implements AgentTool<TaskToolSchemaInstance, TaskToolDetai
 				invokedAt: launchTiming?.invokedAt,
 				acquiredAt: launchTiming?.acquiredAt,
 				modelOverride,
-				modelOverrideAuthFallback: params.modelOverrideAuthFallback,
+				modelOverrideAuthFallback,
 				parentActiveModelPattern,
 				thinkingLevel: thinkingLevelOverride,
 				outputSchema: effectiveOutputSchema,

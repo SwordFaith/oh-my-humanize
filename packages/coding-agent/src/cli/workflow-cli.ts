@@ -13,6 +13,10 @@ import type { WorkflowDefinition } from "../workflow/definition";
 import { type FlowFreeze, freezeWorkflowArtifact } from "../workflow/freeze";
 import type { RuntimeBindingSnapshot } from "../workflow/lifecycle";
 import { reconstructWorkflowFamilies } from "../workflow/lifecycle";
+import {
+	WORKFLOW_SUBAGENT_MODEL_OVERRIDE_AUTH_FALLBACK_ENV,
+	WORKFLOW_SUBAGENT_MODEL_OVERRIDE_ENV,
+} from "../workflow/model-env";
 import { loadWorkflowArtifact, WorkflowPackageError } from "../workflow/package-loader";
 import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../workflow/run-store";
 import { runWorkflow } from "../workflow/runner";
@@ -481,6 +485,7 @@ async function runHeadlessAgentTask(
 		stdout: "pipe",
 		stderr: "pipe",
 		signal: request.signal,
+		env: buildHeadlessAgentTaskEnv(Bun.env, request.modelOverride, request.modelOverrideAuthFallback),
 	});
 	const [stdout, stderr, exitCode] = await Promise.all([
 		streamText(child.stdout),
@@ -500,6 +505,19 @@ export function buildHeadlessAgentTaskArgs(cwd: string, assignment: string, mode
 	if (modelOverride !== undefined) args.push("--model", modelOverride);
 	args.push("-p", assignment);
 	return args;
+}
+
+export function buildHeadlessAgentTaskEnv(
+	env: NodeJS.ProcessEnv,
+	modelOverride: string | undefined,
+	modelOverrideAuthFallback: boolean | undefined,
+): NodeJS.ProcessEnv {
+	if (modelOverride === undefined) return env;
+	return {
+		...env,
+		[WORKFLOW_SUBAGENT_MODEL_OVERRIDE_ENV]: modelOverride,
+		[WORKFLOW_SUBAGENT_MODEL_OVERRIDE_AUTH_FALLBACK_ENV]: modelOverrideAuthFallback === false ? "false" : "true",
+	};
 }
 
 function currentCliInvocation(): string[] {

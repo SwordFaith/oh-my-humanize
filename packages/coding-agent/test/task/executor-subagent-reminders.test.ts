@@ -545,6 +545,40 @@ describe("runSubprocess yield reminders", () => {
 		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.settings?.get("retry.modelFallback")).toBe(false);
 	});
 
+	it("passes exact workflow model overrides as nested subagent defaults", async () => {
+		vi.clearAllMocks();
+		const workflowModel = createModel("rust-cat", "gpt-5.5");
+		const modelRegistry = {
+			refresh: async () => {},
+			getAvailable: () => [workflowModel],
+			getApiKey: async () => "sk-test",
+		} as unknown as ModelRegistry;
+		const session = createMockSession(({ emit }) => {
+			emit({
+				type: "tool_execution_end",
+				toolCallId: "tool-exact-model-nested-default",
+				toolName: "yield",
+				result: {
+					content: [{ type: "text", text: "Result submitted." }],
+					details: { status: "success", data: { ok: true } },
+				},
+				isError: false,
+			});
+		});
+		const createAgentSessionSpy = mockCreateAgentSession(session);
+
+		await runSubprocess({
+			...baseOptions,
+			id: "subagent-exact-model-nested-default",
+			modelOverride: "rust-cat/gpt-5.5",
+			modelOverrideAuthFallback: false,
+			modelRegistry,
+		});
+
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.defaultSubagentModelOverride).toBe("rust-cat/gpt-5.5");
+		expect(createAgentSessionSpy.mock.calls[0]?.[0]?.defaultSubagentModelOverrideAuthFallback).toBe(false);
+	});
+
 	it("fails after 3 reminders when yield is never called for a structured task", async () => {
 		const prompts: string[] = [];
 		const session = createMockSession(({ text, promptIndex, emit, state }) => {
