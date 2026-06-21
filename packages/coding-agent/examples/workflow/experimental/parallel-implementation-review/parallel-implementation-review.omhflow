@@ -28,6 +28,8 @@ resources:
     kind: script
   - path: scripts/materialize-integration-review.js
     kind: script
+  - path: scripts/finalize-rollback-coverage.js
+    kind: script
   - path: scripts/evidence-contract-guard.js
     kind: script
   - path: scripts/finalize-strong-review.js
@@ -192,6 +194,14 @@ sequence:
         file: scripts/run-declared-validation.js
       writes:
         - /declaredValidation
+  - node:
+      id: finalizeRollbackCoverage
+      type: script
+      script:
+        language: js
+        file: scripts/finalize-rollback-coverage.js
+      writes:
+        - /rollbackCoverage
   - node:
       id: evidenceContractGuard
       type: script

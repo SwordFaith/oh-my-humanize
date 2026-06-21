@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { $ } from "bun";
 import { validateWorkflowActivationOutput } from "../../src/workflow/state";
 
 interface ScriptResult {
@@ -26,6 +27,8 @@ interface ScriptResult {
 			failed_validation_artifacts?: string[];
 			lane_hard_stop_artifacts?: string[];
 			ignored_nonterminal_lane_hard_stop_artifacts?: string[];
+			rollback_artifacts?: string[];
+			missing_rollback_files?: string[];
 		};
 	};
 }
@@ -246,6 +249,65 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(result.data?.checked_inputs?.integration_artifacts).toEqual([
 			"workflow-output/integration-review-materialized-P06-T06-test.json",
 		]);
+	});
+
+	it("requires rollback evidence to cover every changed project file after parallel lanes join", async () => {
+		const cwd = await createTempDir();
+		await initGitRepo(cwd);
+		await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+		await fs.mkdir(path.join(cwd, "tests"), { recursive: true });
+		await Bun.write(path.join(cwd, "src", "walk.rs"), "fn walk() {}\n");
+		await Bun.write(path.join(cwd, "tests", "tests.rs"), "test baseline\n");
+		await $`git add src/walk.rs tests/tests.rs`.cwd(cwd).quiet();
+		await $`git -c user.name=omh-test -c user.email=omh-test@example.invalid commit -m baseline`.cwd(cwd).quiet();
+		await Bun.write(path.join(cwd, "src", "walk.rs"), "fn walk() { /* changed */ }\n");
+		await Bun.write(path.join(cwd, "tests", "tests.rs"), "test baseline\ntest new behavior\n");
+		await writeReadyEvidence(cwd, "P06-T06-test");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "rollback-P06-T06-test.md"),
+			"Rollback steps:\n- Revert src/walk.rs to restore traversal behavior.\n",
+		);
+
+		const result = await runScript(cwd, "evidence-contract-guard.js", {});
+
+		expect(result.verdict).toBe("REPAIR");
+		expect(result.data?.checked_inputs?.rollback_artifacts).toEqual(["workflow-output/rollback-P06-T06-test.md"]);
+		expect(result.data?.checked_inputs?.missing_rollback_files).toEqual(["tests/tests.rs"]);
+	});
+
+	it("materializes final rollback coverage for every changed project file before evidence guard", async () => {
+		const cwd = await createTempDir();
+		await initGitRepo(cwd);
+		await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+		await fs.mkdir(path.join(cwd, "tests"), { recursive: true });
+		await Bun.write(path.join(cwd, "src", "walk.rs"), "fn walk() {}\n");
+		await Bun.write(path.join(cwd, "tests", "tests.rs"), "test baseline\n");
+		await $`git add src/walk.rs tests/tests.rs`.cwd(cwd).quiet();
+		await $`git -c user.name=omh-test -c user.email=omh-test@example.invalid commit -m baseline`.cwd(cwd).quiet();
+		await Bun.write(path.join(cwd, "src", "walk.rs"), "fn walk() { /* changed */ }\n");
+		await Bun.write(path.join(cwd, "tests", "tests.rs"), "test baseline\ntest new behavior\n");
+		await writeReadyEvidence(cwd, "P06-T06-test");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "rollback-P06-T06-test.md"),
+			"Rollback steps:\n- Revert src/walk.rs to restore traversal behavior.\n",
+		);
+
+		const rollbackResult = await runScript(cwd, "finalize-rollback-coverage.js", {});
+		const guardResult = await runScript(cwd, "evidence-contract-guard.js", {});
+
+		expect(rollbackResult.verdict).toBe("ready");
+		expect(rollbackResult.data).toMatchObject({
+			artifact: "workflow-output/final-rollback-coverage-P06-T06-test.md",
+			producer_node: "finalizeRollbackCoverage",
+			changed_files: ["src/walk.rs", "tests/tests.rs"],
+		});
+		const rollbackText = await Bun.file(
+			path.join(cwd, "workflow-output", "final-rollback-coverage-P06-T06-test.md"),
+		).text();
+		expect(rollbackText).toContain("src/walk.rs");
+		expect(rollbackText).toContain("tests/tests.rs");
+		expect(guardResult.verdict).toBe("READY");
+		expect(guardResult.data?.checked_inputs?.missing_rollback_files).toEqual([]);
 	});
 
 	it("lets finalization reject failed declared validation through the evidence contract path", async () => {
@@ -563,6 +625,10 @@ async function writeReadyEvidence(
 
 async function writeTupleFiles(cwd: string, tupleId: string): Promise<void> {
 	await Bun.write(path.join(cwd, "monitor-assignment.json"), `${JSON.stringify({ tupleId })}\n`);
+}
+
+async function initGitRepo(cwd: string): Promise<void> {
+	await $`git init`.cwd(cwd).quiet();
 }
 
 async function createTempDir(): Promise<string> {

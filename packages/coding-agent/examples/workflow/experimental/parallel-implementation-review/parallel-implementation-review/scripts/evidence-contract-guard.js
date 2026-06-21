@@ -25,9 +25,11 @@ const coreArtifacts = evidenceFiles.filter(isCoreLaneEvidenceFile);
 const testArtifacts = evidenceFiles.filter(isTestLaneEvidenceFile);
 const docsArtifacts = evidenceFiles.filter(isDocsLaneEvidenceFile);
 const integrationArtifacts = evidenceFiles.filter(isIntegrationReviewEvidenceFile);
+const rollbackArtifacts = evidenceFiles.filter(isRollbackEvidenceFile);
 const laneArtifacts = [...coreArtifacts, ...testArtifacts, ...docsArtifacts, ...integrationArtifacts].sort((left, right) =>
 	left.localeCompare(right, "en"),
 );
+const missingRollbackFiles = await missingRollbackCoverage(changedFiles, rollbackArtifacts);
 const reasons = [];
 
 if (!validationCommand && !manualEvidenceAllowed) {
@@ -48,6 +50,12 @@ if (docsArtifacts.length === 0) {
 
 if (integrationArtifacts.length === 0) {
 	reasons.push("no tuple-scoped integration review artifact was found under workflow-output/");
+}
+
+if (missingRollbackFiles.length > 0) {
+	reasons.push(
+		`rollback evidence does not cover changed project files: ${missingRollbackFiles.join(", ")}; rollback evidence must mention every changed file after parallel lanes join`,
+	);
 }
 
 if (!manualEvidenceAllowed && validationArtifacts.length === 0) {
@@ -105,6 +113,8 @@ const diagnostic = {
 		test_artifacts: testArtifacts.slice(0, 40),
 		docs_artifacts: docsArtifacts.slice(0, 40),
 		integration_artifacts: integrationArtifacts.slice(0, 40),
+		rollback_artifacts: rollbackArtifacts.slice(0, 40),
+		missing_rollback_files: missingRollbackFiles.slice(0, 80),
 		lane_artifacts: laneArtifacts.slice(0, 80),
 		validation_artifacts: validationArtifacts.slice(0, 80),
 		final_validation_artifacts: finalValidationArtifacts.slice(0, 80),
@@ -168,6 +178,12 @@ await Bun.write(
 		"",
 		"Premature final decision artifacts:",
 		...(prematureDecisionArtifacts.length > 0 ? prematureDecisionArtifacts.map(file => `- ${file}`) : ["- (none)"]),
+		"",
+		"Rollback artifacts:",
+		...(rollbackArtifacts.length > 0 ? rollbackArtifacts.map(file => `- ${file}`) : ["- (none)"]),
+		"",
+		"Changed files missing rollback coverage:",
+		...(missingRollbackFiles.length > 0 ? missingRollbackFiles.map(file => `- ${file}`) : ["- (none)"]),
 		"",
 		"Reasons:",
 		...(reasons.length > 0 ? reasons.map(reason => `- ${reason}`) : ["- ready for strong review"]),
@@ -356,8 +372,27 @@ function isIntegrationReviewEvidenceFile(file) {
 	return /(^|\/)integration-review-[^/]+\.(?:json|md|txt)$/iu.test(file);
 }
 
+function isRollbackEvidenceFile(file) {
+	return /(^|\/)(?:final-rollback-coverage|rollback(?!-notes))[^/]*\.(?:json|md|txt)$/iu.test(file);
+}
+
 function isValidationEvidenceFile(file) {
 	return /(^|\/)(validation|verify|test|tests|core-lane|tests?-lane|evidence-contract)[^/]*\.(?:json|md|txt|log)$/iu.test(file);
+}
+
+async function missingRollbackCoverage(files, rollbackFiles) {
+	if (files.length === 0) return [];
+	if (rollbackFiles.length === 0) return files;
+	const rollbackText = (await Promise.all(rollbackFiles.map(readText))).join("\n");
+	return files.filter(file => !rollbackText.includes(file));
+}
+
+async function readText(file) {
+	try {
+		return await Bun.file(file).text();
+	} catch {
+		return "";
+	}
 }
 
 function isFinalDeclaredValidationArtifact(file, currentTupleId) {
@@ -424,6 +459,7 @@ async function hasSupersedingEvidence(data) {
 }
 
 function isPrematureDecisionArtifact(file) {
+	if (/(^|\/)final-rollback-coverage[^/]*\.(?:json|md|txt)$/iu.test(file)) return false;
 	return /(^|\/)(?:(?:strong-review|promotion-decision)[^/]*|[^/]*final-[^/]*)\.(?:json|md|txt)$/iu.test(file);
 }
 
