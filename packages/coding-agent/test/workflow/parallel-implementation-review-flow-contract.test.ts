@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { validateWorkflowActivationOutput } from "../../src/workflow/state";
 
 interface ScriptResult {
 	summary: string;
 	verdict?: string;
+	artifacts?: string[];
 	data?: {
 		artifact?: string;
 		producer_node?: string;
@@ -217,6 +219,7 @@ describe("parallel-implementation-review flow contract", () => {
 			status: "materialized",
 			producer_node: "materializeIntegrationReview",
 		});
+		expect(() => validateWorkflowActivationOutput(result)).not.toThrow();
 	});
 
 	it("accepts materialized integration review evidence for the evidence contract", async () => {

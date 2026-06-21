@@ -38,7 +38,6 @@ return {
 			: `integration review activation missing; wrote diagnostic artifact: ${artifactPath}`,
 	verdict: status === "materialized" ? "materialized" : "missing_review_activation",
 	data: payload,
-	artifacts: [artifactPath],
 	statePatch: [{ op: "set", path: "/integrationReviewArtifact", value: payload }],
 };
 
