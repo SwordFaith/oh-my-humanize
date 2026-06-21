@@ -316,6 +316,9 @@ function isReviewerDeclaredTerminalValidationBlocker(text) {
 
 function negatesTerminalValidationBlocker(text) {
 	return (
+		/\b(?:unless|until|if|only\s+if|when)\b.{0,80}\bterminal\b.{0,120}\b(?:external|out[- ]of[- ]scope|unrelated|environment(?:al)?)\b.{0,120}\b(?:validation\s+)?blocker\b.{0,80}\b(?:is|was|were|has\s+been|gets?)?\s*(?:proven|proved|confirmed|demonstrated|shown|established)\b/ius.test(
+			text,
+		) ||
 		/\b(?:no|without)\b.{0,80}\bterminal\b.{0,120}\b(?:external|out[- ]of[- ]scope|unrelated|environment(?:al)?)\b.{0,120}\b(?:validation\s+)?blocker\b/ius.test(
 			text,
 		) ||

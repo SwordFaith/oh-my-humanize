@@ -494,6 +494,44 @@ describe("agent-build-review-loop flow contract", () => {
 		expect(result.data.reason).toContain("review requested another build round");
 	});
 
+	it("does not route conditional terminal blocker acceptance language to reject", async () => {
+		const cwd = await createTempDir();
+		await fs.mkdir(path.join(cwd, "workflow-output", "round-1"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			[
+				"Acceptance Criteria:",
+				"- Produce at least twelve meaningful build/review cycles before archive unless a terminal setup or external blocker is proven.",
+				"Validation Command:",
+				"./workflow-output/run-validation.sh",
+			].join("\n"),
+		);
+		await Bun.write(
+			path.join(cwd, "progress.md"),
+			"ROUND 1: fixed import.meta asset URL fragment handling; validation=./workflow-output/run-validation.sh; result=pass\n",
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "round-1", "validation-summary.txt"),
+			["attempts=1", "exit_code=0", "result=pass"].join("\n"),
+		);
+
+		const result = await runReviewRouteClassifier(cwd, {
+			verdict: "continue",
+			summary:
+				"Only 1 line beginning with ROUND is present in progress.md, but task.md requires at least 12 meaningful build/review cycles before archive unless a terminal setup or external blocker is proven. Latest clean-copy validation evidence under workflow-output/round-1 reports exit_code=0/result=pass, and the newest round made scoped source/test changes, so the next build round is needed to satisfy the declared minimum round count.",
+		});
+
+		expect(result.data).toMatchObject({
+			decision: "continue",
+			reviewVerdict: "continue",
+			requiredRoundCount: 12,
+			setupBlockerEvidenceFiles: [],
+			externalValidationBlockerEvidenceFiles: [],
+			terminalBlockerEvidenceFiles: [],
+		});
+		expect(result.data.reason).toContain("review requested another build round");
+	});
+
 	it("routes repeated clean-copy missing dependency blockers to reject", async () => {
 		const cwd = await createTempDir();
 		for (const round of [1, 2]) {
