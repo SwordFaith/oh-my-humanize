@@ -26,6 +26,25 @@ if (!validationCommand) {
 }
 
 assertSafeValidationCommand(validationCommand);
+const reusableValidation = await reusablePassedTestLaneValidation({
+	tupleId,
+	validationCommand,
+	validationEnvironment,
+});
+if (reusableValidation) {
+	const artifact = await writeReusedValidationArtifact({
+		tupleId,
+		validationCommand,
+		validationEnvironment,
+		reusableValidation,
+	});
+	return {
+		summary: `declared validation reused exact passed test-lane evidence: ${reusableValidation.artifact}`,
+		verdict: "PASS",
+		data: artifact,
+		statePatch: [{ op: "set", path: "/declaredValidation", value: artifact }],
+	};
+}
 const runtimeEnvironment = validationRuntimeEnvironment(validationEnvironment, tupleId);
 await ensureDeclaredTempDirectories(runtimeEnvironment);
 
@@ -103,6 +122,174 @@ async function writeValidationArtifact({
 	};
 	await Bun.write(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
 	return artifact;
+}
+
+async function writeReusedValidationArtifact({ tupleId, validationCommand, validationEnvironment, reusableValidation }) {
+	const suffix = tupleId ? `-${tupleId}` : "";
+	const artifactPath = `workflow-output/validation${suffix}.json`;
+	const artifact = {
+		tuple_id: tupleId,
+		artifact: artifactPath,
+		producer_node: "runDeclaredValidation",
+		producer_kind: "workflow-script",
+		validation: {
+			command: validationCommand,
+			environment: validationEnvironment,
+			runtime_environment: reusableValidation.runtimeEnvironment,
+			result: "passed",
+			status: "passed",
+			exitCode: 0,
+			stdoutArtifact: reusableValidation.stdoutArtifact,
+			stderrArtifact: reusableValidation.stderrArtifact,
+			exitCodeArtifact: reusableValidation.exitCodeArtifact,
+			reusedFromTestLane: reusableValidation.artifact,
+			reusedArtifactHashes: reusableValidation.recordedHashes,
+			reusedCoverageProfiles: reusableValidation.coverageProfiles,
+		},
+		checked_at_ms: Date.now(),
+	};
+	await Bun.write(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
+	return artifact;
+}
+
+async function reusablePassedTestLaneValidation({ tupleId, validationCommand, validationEnvironment }) {
+	if ((await changedProjectFiles()).length > 0) return null;
+	const candidates = await testLaneValidationArtifacts(tupleId);
+	for (const artifact of candidates) {
+		const data = await readJson(artifact);
+		const validation = data?.validation;
+		if (!data || data.producer_node !== "implementTests") continue;
+		if (!validation || typeof validation !== "object") continue;
+		if (validation.command !== validationCommand) continue;
+		if (!environmentMatches(validation.environment, validationEnvironment)) continue;
+		if (!validationPassed(validation)) continue;
+		const recordedHashes = recordedValidationHashes(data);
+		if (Object.keys(recordedHashes).length === 0) continue;
+		if (!(await recordedHashesStillMatch(recordedHashes))) continue;
+		return {
+			artifact,
+			stdoutArtifact: stringField(validation, "stdout_path") || stringField(validation, "stdoutArtifact"),
+			stderrArtifact: stringField(validation, "stderr_path") || stringField(validation, "stderrArtifact"),
+			exitCodeArtifact: stringField(validation, "exit_code_path") || stringField(validation, "exitCodeArtifact"),
+			runtimeEnvironment: objectField(validation, "runtime_environment"),
+			recordedHashes,
+			coverageProfiles: Array.isArray(data.coverage_profiles) ? data.coverage_profiles : [],
+		};
+	}
+	return null;
+}
+
+async function testLaneValidationArtifacts(tupleId) {
+	const files = [];
+	try {
+		const glob = new Bun.Glob("workflow-output/tests-lane*.json");
+		for await (const filePath of glob.scan({ cwd: process.cwd(), onlyFiles: true })) {
+			if (tupleId && !filePath.includes(tupleId)) continue;
+			files.push(filePath);
+		}
+	} catch {
+		return [];
+	}
+	return files.sort((left, right) => left.localeCompare(right, "en"));
+}
+
+async function readJson(filePath) {
+	try {
+		return await Bun.file(filePath).json();
+	} catch {
+		return null;
+	}
+}
+
+function validationPassed(validation) {
+	const result = String(validation.result ?? validation.status ?? "").toLowerCase();
+	const exitCode = validation.exit_code ?? validation.exitCode;
+	return (result === "pass" || result === "passed") && exitCode === 0;
+}
+
+function environmentMatches(actual, expected) {
+	const actualObject = actual && typeof actual === "object" && !Array.isArray(actual) ? actual : {};
+	const expectedObject = expected && typeof expected === "object" && !Array.isArray(expected) ? expected : {};
+	const actualEntries = Object.entries(actualObject).sort(([left], [right]) => left.localeCompare(right, "en"));
+	const expectedEntries = Object.entries(expectedObject).sort(([left], [right]) => left.localeCompare(right, "en"));
+	return JSON.stringify(actualEntries) === JSON.stringify(expectedEntries);
+}
+
+function recordedValidationHashes(data) {
+	const hashes = {};
+	if (data?.artifact_hashes && typeof data.artifact_hashes === "object" && !Array.isArray(data.artifact_hashes)) {
+		for (const [filePath, hash] of Object.entries(data.artifact_hashes)) {
+			if (typeof hash === "string" && isSafeWorkflowOutputPath(filePath)) hashes[filePath] = hash;
+		}
+	}
+	if (Array.isArray(data?.coverage_profiles)) {
+		for (const profile of data.coverage_profiles) {
+			const filePath = typeof profile?.path === "string" ? profile.path : "";
+			const hash = typeof profile?.sha256 === "string" ? profile.sha256 : "";
+			if (hash && isSafeWorkflowOutputPath(filePath)) hashes[filePath] = hash;
+		}
+	}
+	return hashes;
+}
+
+async function recordedHashesStillMatch(hashes) {
+	for (const [filePath, hash] of Object.entries(hashes)) {
+		if ((await sha256File(filePath)) !== hash) return false;
+	}
+	return true;
+}
+
+async function sha256File(filePath) {
+	try {
+		const bytes = new Uint8Array(await Bun.file(filePath).arrayBuffer());
+		return new Bun.SHA256().update(bytes).digest("hex");
+	} catch {
+		return "";
+	}
+}
+
+function isSafeWorkflowOutputPath(filePath) {
+	return typeof filePath === "string" && filePath.startsWith("workflow-output/") && !filePath.includes("..");
+}
+
+function objectField(value, key) {
+	if (!value || typeof value !== "object") return {};
+	const field = value[key];
+	return field && typeof field === "object" && !Array.isArray(field) ? field : {};
+}
+
+async function changedProjectFiles() {
+	const child = Bun.spawn(["git", "status", "--short", "--untracked-files=all"], {
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+	if (exitCode !== 0) return [];
+	return stdout
+		.split(/\r?\n/u)
+		.map(line => line.trimEnd())
+		.filter(Boolean)
+		.map(statusLinePath)
+		.filter(filePath => filePath && !isWorkflowControlPath(filePath))
+		.sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function statusLinePath(line) {
+	const raw = line.slice(3).trim();
+	if (raw.includes(" -> ")) return raw.split(" -> ").pop()?.trim() ?? raw;
+	return raw;
+}
+
+function isWorkflowControlPath(filePath) {
+	return (
+		filePath === "task.md" ||
+		filePath === "progress.md" ||
+		filePath === "manifest-entry.json" ||
+		filePath === "monitor-assignment.json" ||
+		filePath === "evidence-ledger.jsonl" ||
+		filePath.startsWith("workflow-output/") ||
+		filePath.startsWith("transcripts/")
+	);
 }
 
 async function readRequiredTaskText() {

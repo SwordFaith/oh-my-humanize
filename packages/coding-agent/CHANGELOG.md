@@ -19,6 +19,9 @@
 - Fixed the experimental parallel implementation workflow so lane-created
   reserved final artifacts are quarantined at the parallel join guard before
   integration review can consume polluted final-state files.
+- Fixed the experimental parallel implementation workflow so final validation
+  reuses exact passed test-lane evidence when no product diff invalidates it,
+  avoiding duplicate validation runs that overwrite lane-owned artifacts.
 - Fixed the experimental parallel implementation workflow so lane and reviewer
   agents treat archive requests as lane-owned evidence and reserve `final-*`
   artifacts for the workflow finalizer.

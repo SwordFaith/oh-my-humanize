@@ -187,6 +187,76 @@ describe("parallel-implementation-review flow contract", () => {
 		});
 	});
 
+	it("reuses exact passed test-lane validation when no product diff would invalidate it", async () => {
+		const cwd = await createTempDir();
+		await initGitRepo(cwd);
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			[
+				"Validation Command:",
+				"bash -lc 'echo should-not-rerun > workflow-output/rerun-marker; exit 42'",
+				"Validation Environment:",
+				"TMPDIR=workflow-output/reuse-tmp",
+			].join("\n"),
+		);
+		await Bun.write(path.join(cwd, "workflow-output", "test-validation-P06-T06-test.stdout"), "passed once\n");
+		await Bun.write(path.join(cwd, "workflow-output", "test-validation-P06-T06-test.stderr"), "");
+		await Bun.write(path.join(cwd, "workflow-output", "test-validation-P06-T06-test.exitcode"), "0\n");
+		await Bun.write(path.join(cwd, "workflow-output", "unit-cover-P06-T06-test.out"), "mode: atomic\n");
+		const laneArtifact = {
+			tuple_id: "P06-T06-test",
+			producer_node: "implementTests",
+			status: "completed",
+			validation: {
+				command: "bash -lc 'echo should-not-rerun > workflow-output/rerun-marker; exit 42'",
+				environment: { TMPDIR: "workflow-output/reuse-tmp" },
+				result: "pass",
+				exit_code: 0,
+				stdout_path: "workflow-output/test-validation-P06-T06-test.stdout",
+				stderr_path: "workflow-output/test-validation-P06-T06-test.stderr",
+				exit_code_path: "workflow-output/test-validation-P06-T06-test.exitcode",
+			},
+			artifact_hashes: {
+				"workflow-output/test-validation-P06-T06-test.stdout": await sha256File(
+					path.join(cwd, "workflow-output", "test-validation-P06-T06-test.stdout"),
+				),
+				"workflow-output/test-validation-P06-T06-test.stderr": await sha256File(
+					path.join(cwd, "workflow-output", "test-validation-P06-T06-test.stderr"),
+				),
+				"workflow-output/test-validation-P06-T06-test.exitcode": await sha256File(
+					path.join(cwd, "workflow-output", "test-validation-P06-T06-test.exitcode"),
+				),
+			},
+			coverage_profiles: [
+				{
+					path: "workflow-output/unit-cover-P06-T06-test.out",
+					sha256: await sha256File(path.join(cwd, "workflow-output", "unit-cover-P06-T06-test.out")),
+				},
+			],
+		};
+		await Bun.write(
+			path.join(cwd, "workflow-output", "tests-lane-P06-T06-test.json"),
+			`${JSON.stringify(laneArtifact, null, 2)}\n`,
+		);
+
+		const result = await runScript(cwd, "run-declared-validation.js", {});
+
+		expect(result.verdict).toBe("PASS");
+		expect(result.data?.validation).toMatchObject({
+			result: "passed",
+			exitCode: 0,
+			stdoutArtifact: "workflow-output/test-validation-P06-T06-test.stdout",
+			stderrArtifact: "workflow-output/test-validation-P06-T06-test.stderr",
+			reusedFromTestLane: "workflow-output/tests-lane-P06-T06-test.json",
+		});
+		expect(await fileExists(path.join(cwd, "workflow-output", "rerun-marker"))).toBe(false);
+		expect(await sha256File(path.join(cwd, "workflow-output", "unit-cover-P06-T06-test.out"))).toBe(
+			laneArtifact.coverage_profiles[0]?.sha256,
+		);
+	});
+
 	it("reports generic validation aliases as repair evidence before strong review", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
@@ -1005,6 +1075,11 @@ async function writeReadyEvidence(
 
 async function writeTupleFiles(cwd: string, tupleId: string): Promise<void> {
 	await Bun.write(path.join(cwd, "monitor-assignment.json"), `${JSON.stringify({ tupleId })}\n`);
+}
+
+async function sha256File(filePath: string): Promise<string> {
+	const bytes = new Uint8Array(await Bun.file(filePath).arrayBuffer());
+	return new Bun.SHA256().update(bytes).digest("hex");
 }
 
 async function initGitRepo(cwd: string): Promise<void> {
