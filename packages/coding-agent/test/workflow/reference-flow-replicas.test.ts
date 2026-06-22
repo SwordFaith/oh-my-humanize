@@ -289,7 +289,7 @@ async function expectReviewPromptUsesLatestOutput(
 		completedActivation("activation-2", outputNodeId, expectedLatestSummary),
 	];
 	const resolved = await resolveWorkflowPrompt(node, {
-		state: { plan: "Implement candidate, validate, and measure." },
+		state: { plan: "test plan" },
 		completedActivations,
 		parentActivationIds: completedActivations.map(activation => activation.id),
 		packageRoot,
