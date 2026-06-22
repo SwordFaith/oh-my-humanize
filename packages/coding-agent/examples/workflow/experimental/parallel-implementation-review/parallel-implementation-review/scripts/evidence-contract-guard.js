@@ -15,6 +15,8 @@ const untrustedFinalValidationArtifacts = finalValidationArtifacts.filter(file =
 const genericValidationAliases = genericValidationAliasArtifacts(evidenceFiles);
 const laneHardStopResult = laneHardStopResultFromState(workflowContext.state);
 const activeLaneHardStopArtifacts = laneHardStopResult.active;
+const reservedFinalArtifacts = laneHardStopResult.reservedFinalArtifacts;
+const quarantinedReservedFinalArtifacts = laneHardStopResult.quarantinedReservedFinalArtifacts;
 const supersededFailedValidationArtifacts =
 	trustedFinalValidationArtifacts.length > 0
 		? validationMatch.failedFiles.filter(file => !isFinalDeclaredValidationArtifact(file, tupleId))
@@ -91,6 +93,12 @@ if (prematureDecisionArtifacts.length > 0) {
 	);
 }
 
+if (reservedFinalArtifacts.length > 0) {
+	reasons.push(
+		`parallel lanes produced reserved final artifacts before the finalizer: ${reservedFinalArtifacts.join(", ")}; laneHardStopGuard quarantined them and promotion must be rejected`,
+	);
+}
+
 if (activeLaneHardStopArtifacts.length > 0) {
 	reasons.push(
 		`parallel lane hard stop artifacts found: ${activeLaneHardStopArtifacts.join(", ")}; hard stops must be resolved or superseded before promotion`,
@@ -127,6 +135,8 @@ const diagnostic = {
 		failed_validation_artifacts: failedValidationArtifacts.slice(0, 80),
 		superseded_failed_validation_artifacts: supersededFailedValidationArtifacts.slice(0, 80),
 		premature_decision_artifacts: prematureDecisionArtifacts.slice(0, 80),
+		reserved_final_artifacts: reservedFinalArtifacts.slice(0, 80),
+		quarantined_reserved_final_artifacts: quarantinedReservedFinalArtifacts.slice(0, 80),
 	},
 	checked_at_ms: Date.now(),
 };
@@ -178,6 +188,9 @@ await Bun.write(
 		"",
 		"Premature final decision artifacts:",
 		...(prematureDecisionArtifacts.length > 0 ? prematureDecisionArtifacts.map(file => `- ${file}`) : ["- (none)"]),
+		"",
+		"Lane-quarantined reserved final artifacts:",
+		...(reservedFinalArtifacts.length > 0 ? reservedFinalArtifacts.map(file => `- ${file}`) : ["- (none)"]),
 		"",
 		"Rollback artifacts:",
 		...(rollbackArtifacts.length > 0 ? rollbackArtifacts.map(file => `- ${file}`) : ["- (none)"]),
@@ -407,12 +420,23 @@ function genericValidationAliasArtifacts(files) {
 function laneHardStopResultFromState(state) {
 	const laneHardStopGuard = stateValueAtPath(state, "/laneHardStopGuard");
 	if (!laneHardStopGuard || typeof laneHardStopGuard !== "object") {
-		return { active: [], ignored: [], nonterminal: [] };
+		return {
+			active: [],
+			ignored: [],
+			nonterminal: [],
+			reservedFinalArtifacts: [],
+			quarantinedReservedFinalArtifacts: [],
+		};
 	}
 	return {
 		active: stringArrayField(laneHardStopGuard, "hard_stop_artifacts"),
 		ignored: stringArrayField(laneHardStopGuard, "ignored_historical_hard_stop_artifacts"),
 		nonterminal: stringArrayField(laneHardStopGuard, "ignored_nonterminal_hard_stop_artifacts"),
+		reservedFinalArtifacts: stringArrayField(laneHardStopGuard, "reserved_final_artifacts"),
+		quarantinedReservedFinalArtifacts: artifactMoveArrayField(
+			laneHardStopGuard,
+			"quarantined_reserved_final_artifacts",
+		),
 	};
 }
 
@@ -435,6 +459,20 @@ function stringArrayField(value, key) {
 	const field = value[key];
 	if (!Array.isArray(field)) return [];
 	return field.filter(item => typeof item === "string").sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function artifactMoveArrayField(value, key) {
+	if (!value || typeof value !== "object") return [];
+	const field = value[key];
+	if (!Array.isArray(field)) return [];
+	return field
+		.filter(item => item && typeof item === "object")
+		.map(item => ({
+			original: typeof item.original === "string" ? item.original : "",
+			quarantine: typeof item.quarantine === "string" ? item.quarantine : "",
+		}))
+		.filter(item => item.original && item.quarantine)
+		.sort((left, right) => left.original.localeCompare(right.original, "en"));
 }
 
 function isPrematureDecisionArtifact(file) {

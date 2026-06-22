@@ -68,6 +68,7 @@ export interface WorkflowScriptEvalRequest {
 	title: string;
 	timeoutMs?: number;
 	resourceDir?: string;
+	signal?: AbortSignal;
 	context?: WorkflowScriptContext;
 }
 
@@ -363,6 +364,7 @@ async function runEvalWorkflowScript(
 		scriptPath?: string;
 		timeoutMs?: number;
 		resourceDir?: string;
+		signal?: AbortSignal;
 		context?: WorkflowScriptContext;
 	},
 	options: WorkflowSessionRuntimeOptions,
@@ -387,6 +389,9 @@ async function runEvalWorkflowScript(
 	}
 	if (input.resourceDir !== undefined) {
 		request.resourceDir = input.resourceDir;
+	}
+	if (input.signal !== undefined) {
+		request.signal = input.signal;
 	}
 	if (context !== undefined) {
 		request.context = context;

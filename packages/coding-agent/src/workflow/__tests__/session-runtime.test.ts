@@ -5,7 +5,11 @@ import type { ToolSession } from "../../tools";
 import type { WorkflowDefinition, WorkflowNode } from "../definition";
 import { createEvalToolScriptRunner } from "../eval-tool-runtime";
 import { runWorkflow } from "../runner";
-import { createSessionWorkflowRuntimeHost, type WorkflowShellScriptRequest } from "../session-runtime";
+import {
+	createSessionWorkflowRuntimeHost,
+	type WorkflowScriptEvalRequest,
+	type WorkflowShellScriptRequest,
+} from "../session-runtime";
 
 describe("createSessionWorkflowRuntimeHost review nodes", () => {
 	it("retries transient provider failures for agent nodes before completing", async () => {
@@ -301,6 +305,29 @@ describe("createSessionWorkflowRuntimeHost review nodes", () => {
 		expect(result.scheduler.state).toEqual({ ledger: { round: 3 } });
 	});
 
+	it("passes the node abort signal to js eval script nodes", async () => {
+		const requests: WorkflowScriptEvalRequest[] = [];
+		const controller = new AbortController();
+		const host = createSessionWorkflowRuntimeHost({
+			cwd: "/workspace",
+			runEvalScript: async request => {
+				requests.push(request);
+				return { exitCode: 0, output: JSON.stringify({ summary: "ok" }) };
+			},
+		});
+
+		await runWorkflow({
+			host: new MemoryWorkflowHost(),
+			definition: singleEvalDefinition(),
+			runId: "run-eval-abort-signal",
+			startNodeId: "longEval",
+			runtimeHost: host,
+			nodeAbortSignal: controller.signal,
+		});
+
+		expect(requests[0]?.signal).toBe(controller.signal);
+	});
+
 	it("captures returned js workflow script objects through the real eval tool runner", async () => {
 		using tempDir = TempDir.createSync("@omp-workflow-eval-context-");
 		const settings = await Settings.init();
@@ -325,6 +352,38 @@ describe("createSessionWorkflowRuntimeHost review nodes", () => {
 		});
 
 		expect(result.scheduler.state).toEqual({ ledger: { round: 3 } });
+	});
+
+	it("cancels a running js workflow script through the real eval tool runner", async () => {
+		using tempDir = TempDir.createSync("@omp-workflow-eval-cancel-");
+		const settings = await Settings.init();
+		const session: ToolSession = {
+			cwd: tempDir.path(),
+			hasUI: false,
+			getSessionFile: () => null,
+			getSessionSpawns: () => null,
+			settings,
+		};
+		const runner = createEvalToolScriptRunner(session);
+		const controller = new AbortController();
+		const startedAt = performance.now();
+		const abortSoon = Bun.sleep(50).then(() => controller.abort("stop workflow"));
+
+		const result = await runner({
+			activationId: "activation-cancel-js",
+			nodeId: "longEval",
+			code: 'await Bun.sleep(10_000); return { summary: "should-not-finish" };',
+			language: "js",
+			title: "long-eval.js",
+			timeoutMs: 5_000,
+			signal: controller.signal,
+		});
+		await abortSoon;
+
+		expect(performance.now() - startedAt).toBeLessThan(2_000);
+		expect(result.exitCode).toBe(1);
+		expect(result.error).toBeDefined();
+		expect(result.output).not.toContain("should-not-finish");
 	});
 });
 
@@ -479,5 +538,24 @@ function contextEvalDefinition(): WorkflowDefinition {
 			},
 		],
 		edges: [{ from: "seed", to: "record" }],
+	};
+}
+
+function singleEvalDefinition(): WorkflowDefinition {
+	return {
+		name: "single-eval",
+		version: 1,
+		models: { roles: {}, defaults: {} },
+		nodes: [
+			{
+				id: "longEval",
+				type: "script",
+				script: {
+					language: "js",
+					code: 'return { summary: "ok" };',
+				},
+			},
+		],
+		edges: [],
 	};
 }

@@ -1,13 +1,18 @@
 const tupleId = await tupleIdFromRunArtifacts();
 const hardStopResult = await laneHardStopArtifacts(tupleId);
 const hardStopArtifacts = hardStopResult.active;
+const reservedFinalArtifacts = await reservedFinalArtifactFiles(tupleId);
+const quarantinedReservedFinalArtifacts = await quarantineReservedFinalArtifacts(reservedFinalArtifacts);
+const hasBlockingArtifacts = hardStopArtifacts.length > 0 || reservedFinalArtifacts.length > 0;
 const artifactPath = `workflow-output/lane-hard-stop-guard${tupleId ? `-${tupleId}` : ""}.json`;
 const diagnostic = {
 	tuple_id: tupleId,
 	producer_node: "laneHardStopGuard",
 	producer_kind: "workflow-script",
-	status: hardStopArtifacts.length > 0 ? "hard_stop" : "continue",
+	status: hasBlockingArtifacts ? "hard_stop" : "continue",
 	hard_stop_artifacts: hardStopArtifacts,
+	reserved_final_artifacts: reservedFinalArtifacts,
+	quarantined_reserved_final_artifacts: quarantinedReservedFinalArtifacts,
 	ignored_historical_hard_stop_artifacts: hardStopResult.ignored,
 	ignored_nonterminal_hard_stop_artifacts: hardStopResult.nonterminal,
 	checked_at_ms: Date.now(),
@@ -15,15 +20,20 @@ const diagnostic = {
 
 await Bun.write(artifactPath, `${JSON.stringify(diagnostic, null, 2)}\n`);
 
-if (hardStopArtifacts.length > 0) {
+if (hasBlockingArtifacts) {
+	const blockers = [...hardStopArtifacts, ...reservedFinalArtifacts].sort((left, right) =>
+		left.localeCompare(right, "en"),
+	);
 	return {
-		summary: `parallel lane hard stop reported: ${hardStopArtifacts.join(", ")}`,
+		summary: `parallel lane hard stop reported: ${blockers.join(", ")}`,
 		verdict: "hard_stop",
 		data: {
 			artifact: artifactPath,
 			producer_node: "laneHardStopGuard",
 			status: "hard_stop",
 			hard_stop_artifacts: hardStopArtifacts,
+			reserved_final_artifacts: reservedFinalArtifacts,
+			quarantined_reserved_final_artifacts: quarantinedReservedFinalArtifacts,
 		},
 		statePatch: [{ op: "set", path: "/laneHardStopGuard", value: diagnostic }],
 	};
@@ -58,6 +68,48 @@ async function laneHardStopArtifacts(tupleId) {
 		ignored: ignored.sort((left, right) => left.localeCompare(right, "en")),
 		nonterminal: nonterminal.sort((left, right) => left.localeCompare(right, "en")),
 	};
+}
+
+async function reservedFinalArtifactFiles(tupleId) {
+	const files = [];
+	try {
+		const glob = new Bun.Glob("workflow-output/**");
+		for await (const filePath of glob.scan({ cwd: process.cwd(), onlyFiles: true })) {
+			if (filePath.startsWith("workflow-output/tmp/")) continue;
+			if (filePath.startsWith("workflow-output/quarantined-premature-final-artifacts/")) continue;
+			if (!isReservedFinalArtifact(filePath)) continue;
+			if (tupleId && hasOtherTupleId(filePath, tupleId)) continue;
+			files.push(filePath);
+		}
+	} catch {
+		return [];
+	}
+	return files.sort((left, right) => left.localeCompare(right, "en"));
+}
+
+async function quarantineReservedFinalArtifacts(files) {
+	const preserved = [];
+	for (const file of files) {
+		const quarantine = `workflow-output/quarantined-premature-final-artifacts/${artifactBasename(file)}`;
+		await Bun.write(quarantine, await Bun.file(file).text());
+		await Bun.file(file).delete();
+		preserved.push({ original: file, quarantine });
+	}
+	return preserved;
+}
+
+function isReservedFinalArtifact(filePath) {
+	if (/(^|\/)final-rollback-coverage[^/]*\.(?:json|md|txt)$/iu.test(filePath)) return false;
+	return /(^|\/)(?:(?:strong-review|promotion-decision)[^/]*|[^/]*final-[^/]*)\.(?:json|md|txt)$/iu.test(filePath);
+}
+
+function hasOtherTupleId(filePath, tupleId) {
+	const tupleMatches = filePath.match(/[A-Z][0-9]{2}-T[0-9]{2}(?:-[A-Za-z0-9]+)?/gu) ?? [];
+	return tupleMatches.length > 0 && !tupleMatches.includes(tupleId);
+}
+
+function artifactBasename(filePath) {
+	return filePath.split("/").pop()?.replace(/[^\w.-]/gu, "_") || "artifact";
 }
 
 async function hardStopClassification(filePath) {

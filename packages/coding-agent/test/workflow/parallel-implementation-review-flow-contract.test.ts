@@ -23,6 +23,11 @@ interface ScriptResult {
 			original: string;
 			quarantine: string;
 		}>;
+		reserved_final_artifacts?: string[];
+		quarantined_reserved_final_artifacts?: Array<{
+			original: string;
+			quarantine: string;
+		}>;
 		validation?: {
 			environment?: Record<string, string>;
 			runtime_environment?: Record<string, string>;
@@ -35,6 +40,11 @@ interface ScriptResult {
 			generic_validation_aliases?: string[];
 			integration_artifacts?: string[];
 			premature_decision_artifacts?: string[];
+			reserved_final_artifacts?: string[];
+			quarantined_reserved_final_artifacts?: Array<{
+				original: string;
+				quarantine: string;
+			}>;
 			failed_validation_artifacts?: string[];
 			lane_hard_stop_artifacts?: string[];
 			ignored_nonterminal_lane_hard_stop_artifacts?: string[];
@@ -724,6 +734,52 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(await fileExists(path.join(cwd, "workflow-output", "tuple-state.json"))).toBe(false);
 	});
 
+	it("quarantines lane-created final artifacts before integration review can consume them", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "workflow-output", "final-review-P06-T06-test.json"),
+			`${JSON.stringify({ producer_node: "implementDocs", status: "premature" })}\n`,
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", "final-archive-P06-T06-test.md"),
+			"# premature archive\n\nProducer: implementDocs\n",
+		);
+
+		const result = await runScript(cwd, "lane-hard-stop-guard.js", {});
+
+		expect(result.verdict).toBe("hard_stop");
+		expect(result.data?.reserved_final_artifacts).toEqual([
+			"workflow-output/final-archive-P06-T06-test.md",
+			"workflow-output/final-review-P06-T06-test.json",
+		]);
+		expect(result.data?.quarantined_reserved_final_artifacts).toEqual([
+			{
+				original: "workflow-output/final-archive-P06-T06-test.md",
+				quarantine: "workflow-output/quarantined-premature-final-artifacts/final-archive-P06-T06-test.md",
+			},
+			{
+				original: "workflow-output/final-review-P06-T06-test.json",
+				quarantine: "workflow-output/quarantined-premature-final-artifacts/final-review-P06-T06-test.json",
+			},
+		]);
+		expect(await fileExists(path.join(cwd, "workflow-output", "final-review-P06-T06-test.json"))).toBe(false);
+		await expect(
+			Bun.file(
+				path.join(
+					cwd,
+					"workflow-output",
+					"quarantined-premature-final-artifacts",
+					"final-review-P06-T06-test.json",
+				),
+			).json(),
+		).resolves.toMatchObject({
+			producer_node: "implementDocs",
+			status: "premature",
+		});
+	});
+
 	it("lets finalization reject active lane hard stops through the evidence contract path", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
@@ -762,6 +818,31 @@ describe("parallel-implementation-review flow contract", () => {
 			verdict: "reject",
 			evidence_contract_verdict: "REPAIR",
 		});
+	});
+
+	it("rejects promotion when the lane guard quarantined premature final artifacts", async () => {
+		const cwd = await createTempDir();
+		await writeReadyEvidence(cwd, "P06-T06-test");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "final-review-P06-T06-test.json"),
+			`${JSON.stringify({ producer_node: "implementDocs", status: "premature" })}\n`,
+		);
+		const laneGuardResult = await runScript(cwd, "lane-hard-stop-guard.js", {});
+
+		const guardResult = await runScript(cwd, "evidence-contract-guard.js", {
+			state: stateFromPatches(laneGuardResult),
+		});
+
+		expect(guardResult.verdict).toBe("REPAIR");
+		expect(guardResult.data?.checked_inputs?.reserved_final_artifacts).toEqual([
+			"workflow-output/final-review-P06-T06-test.json",
+		]);
+		expect(guardResult.data?.checked_inputs?.quarantined_reserved_final_artifacts).toEqual([
+			{
+				original: "workflow-output/final-review-P06-T06-test.json",
+				quarantine: "workflow-output/quarantined-premature-final-artifacts/final-review-P06-T06-test.json",
+			},
+		]);
 	});
 
 	it("lets evidence contract ignore lane-local validation hard stops", async () => {

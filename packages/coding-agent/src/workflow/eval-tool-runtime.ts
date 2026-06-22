@@ -19,7 +19,7 @@ export function createEvalToolScriptRunner(toolSession: ToolSession): WorkflowSc
 		const params: EvalToolParams = {
 			cells: [cell],
 		};
-		const result = await evalTool.execute(`workflow-${request.activationId}`, params);
+		const result = await evalTool.execute(`workflow-${request.activationId}`, params, request.signal);
 		return workflowScriptResultFromEvalTool(request.language, result);
 	};
 }

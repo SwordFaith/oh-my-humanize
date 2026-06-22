@@ -13,6 +13,12 @@
 
 ### Fixed
 
+- Fixed workflow JavaScript script nodes so workflow stop and node abort signals
+  propagate into the eval runtime instead of leaving validation subprocesses
+  running after an aborted attempt.
+- Fixed the experimental parallel implementation workflow so lane-created
+  reserved final artifacts are quarantined at the parallel join guard before
+  integration review can consume polluted final-state files.
 - Fixed the experimental parallel implementation workflow so lane and reviewer
   agents treat archive requests as lane-owned evidence and reserve `final-*`
   artifacts for the workflow finalizer.
