@@ -17,6 +17,8 @@ interface ScriptResult {
 	data?: {
 		artifact?: string;
 		producer_node?: string;
+		review_handoff_artifact?: string;
+		review_handoff_bytes?: number;
 		preexisting_final_artifacts?: Array<{
 			original: string;
 			quarantine: string;
@@ -277,6 +279,79 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(() => validateWorkflowActivationOutput(result)).not.toThrow();
 	});
 
+	it("materializes a bounded review handoff before strong review consumes lane evidence", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(path.join(cwd, "workflow-output", "core-lane-P06-T06-test.json"), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", "tests-lane-P06-T06-test.json"), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", "docs-lane-P06-T06-test.json"), "{}\n");
+		const largeSummary = "tracked and untracked integration detail ".repeat(3000);
+
+		const result = await runScript(cwd, "materialize-integration-review.js", {
+			completedActivations: [
+				{
+					id: "activation-core",
+					nodeId: "implementCore",
+					graphRevisionId: "graph",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: "core lane detail ".repeat(3000),
+						artifacts: ["workflow-output/core-lane-P06-T06-test.json"],
+					},
+				},
+				{
+					id: "activation-tests",
+					nodeId: "implementTests",
+					graphRevisionId: "graph",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: "tests lane detail ".repeat(3000),
+						artifacts: ["workflow-output/tests-lane-P06-T06-test.json"],
+					},
+				},
+				{
+					id: "activation-docs",
+					nodeId: "implementDocs",
+					graphRevisionId: "graph",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: "docs lane detail ".repeat(3000),
+						artifacts: ["workflow-output/docs-lane-P06-T06-test.json"],
+					},
+				},
+				{
+					id: "activation-integration",
+					nodeId: "integrationReview",
+					graphRevisionId: "graph",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: largeSummary,
+						data: { findings: Array.from({ length: 200 }, (_, index) => ({ index, detail: largeSummary })) },
+						artifacts: ["workflow-output/reviewer-note.txt"],
+					},
+				},
+			],
+		});
+		const handoff = result.statePatch?.find(patch => patch.path === "/reviewHandoff")?.value;
+
+		expect(typeof handoff).toBe("string");
+		expect(new TextEncoder().encode(handoff as string).byteLength).toBeLessThanOrEqual(16 * 1024);
+		expect(handoff as string).toContain("workflow-output/integration-review-materialized-P06-T06-test.json");
+		expect(handoff as string).toContain("workflow-output/review-handoff-P06-T06-test.json");
+		expect(handoff as string).toContain("[truncated");
+		expect(handoff as string).not.toContain(largeSummary);
+		expect(result.data).toMatchObject({
+			review_handoff_artifact: "workflow-output/review-handoff-P06-T06-test.json",
+			review_handoff_bytes: expect.any(Number),
+		});
+		expect(() => validateWorkflowActivationOutput(result)).not.toThrow();
+	});
+
 	it("accepts materialized integration review evidence for the evidence contract", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test", { integrationReviewArtifact: false });
@@ -379,14 +454,21 @@ describe("parallel-implementation-review flow contract", () => {
 		);
 
 		expect(workflow).toContain("id: materializePlanHandoff");
+		expect(workflow).toContain("reviewHandoff:\n              state: /reviewHandoff");
 		expect(workflow).toContain("- /planHandoff");
 		expect(workflow).toContain("planHandoff:\n                  state: /planHandoff");
 		expect(workflow).toContain("planHandoff:\n              state: /planHandoff");
+		expect(workflow).not.toContain("integrationSummary:\n              output:");
 		expect(workflow).not.toContain("{{jsonStringify plan}}");
 		for (const prompt of prompts) {
 			expect(prompt).toContain("{{planHandoff}}");
 			expect(prompt).not.toContain("{{jsonStringify plan}}");
 		}
+		expect(prompts[4]).toContain("{{reviewHandoff}}");
+		expect(prompts[4]).not.toContain("{{integrationSummary}}");
+		expect(prompts[4]).not.toContain("{{coreSummary}}");
+		expect(prompts[4]).not.toContain("{{testsSummary}}");
+		expect(prompts[4]).not.toContain("{{docsSummary}}");
 		expect(prompts[0]).toContain("Do not edit validation or run-control scripts");
 		expect(prompts[2]).toContain("Do not edit validation or run-control scripts");
 	});

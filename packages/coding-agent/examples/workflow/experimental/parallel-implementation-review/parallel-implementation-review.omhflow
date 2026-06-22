@@ -197,6 +197,7 @@ sequence:
         - /laneHardStopGuard
       writes:
         - /integrationReviewArtifact
+        - /reviewHandoff
   - node:
       id: runDeclaredValidation
       type: script
@@ -233,7 +234,7 @@ sequence:
       reads:
         - /planHandoff
         - /taskContract
-        - /summary
+        - /reviewHandoff
         - /evidenceContract
       prompt:
         template:
@@ -243,26 +244,8 @@ sequence:
               state: /planHandoff
             taskContract:
               state: /taskContract
-            coreSummary:
-              output:
-                node: implementCore
-                path: /summary
-                activation: latest-completed
-            testsSummary:
-              output:
-                node: implementTests
-                path: /summary
-                activation: latest-completed
-            docsSummary:
-              output:
-                node: implementDocs
-                path: /summary
-                activation: latest-completed
-            integrationSummary:
-              output:
-                node: integrationReview
-                path: /summary
-                activation: latest-completed
+            reviewHandoff:
+              state: /reviewHandoff
             evidenceContract:
               state: /evidenceContract
       gates:

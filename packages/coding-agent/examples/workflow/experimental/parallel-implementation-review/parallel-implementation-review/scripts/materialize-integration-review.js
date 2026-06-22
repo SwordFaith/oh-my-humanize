@@ -1,3 +1,4 @@
+const MAX_REVIEW_HANDOFF_BYTES = 16 * 1024;
 const taskText = await readText("task.md");
 const tupleId = await tupleIdFromRunArtifacts(taskText);
 const integrationActivation = latestCompletedActivation("integrationReview");
@@ -7,6 +8,7 @@ const diffStat = await gitOutput(["git", "diff", "--stat"]);
 const laneArtifacts = await laneEvidenceArtifacts(tupleId);
 const validationArtifacts = await validationEvidenceArtifacts(tupleId);
 const artifactPath = `workflow-output/integration-review-materialized${tupleId ? `-${tupleId}` : ""}.json`;
+const handoffArtifact = `workflow-output/review-handoff${tupleId ? `-${tupleId}` : ""}.json`;
 const payload = {
 	tuple_id: tupleId,
 	artifact: artifactPath,
@@ -28,17 +30,54 @@ const payload = {
 	validation_artifacts: validationArtifacts,
 	checked_at_ms: Date.now(),
 };
+const reviewHandoff = boundedReviewHandoff({
+	tupleId,
+	status,
+	artifactPath,
+	handoffArtifact,
+	changedFiles,
+	diffStat,
+	laneArtifacts,
+	validationArtifacts,
+});
 
 await Bun.write(artifactPath, `${JSON.stringify(payload, null, 2)}\n`);
+await Bun.write(handoffArtifact, `${reviewHandoff}\n`);
+
+const resultData = {
+	tuple_id: tupleId,
+	artifact: artifactPath,
+	producer_node: "materializeIntegrationReview",
+	producer_kind: "workflow-script",
+	status,
+	review_handoff_artifact: handoffArtifact,
+	review_handoff_bytes: new TextEncoder().encode(reviewHandoff).byteLength,
+	review_activation: integrationActivation
+		? {
+				id: integrationActivation.id,
+				node_id: integrationActivation.nodeId,
+				summary: truncateText(integrationActivation.output?.summary ?? "", 1600),
+				summary_truncated: (integrationActivation.output?.summary ?? "").length > 1600,
+				artifacts: boundedArray(integrationActivation.output?.artifacts ?? [], 20),
+			}
+		: null,
+	changed_files: boundedArray(changedFiles, 40),
+	diff_stat: truncateText(diffStat, 1600),
+	lane_artifacts: boundedArray(laneArtifacts, 40),
+	validation_artifacts: boundedArray(validationArtifacts, 40),
+};
 
 return {
 	summary:
 		status === "materialized"
-			? `materialized integration review evidence: ${artifactPath}`
-			: `integration review activation missing; wrote diagnostic artifact: ${artifactPath}`,
+			? `materialized integration review evidence: ${artifactPath}; compact review handoff: ${handoffArtifact}`
+			: `integration review activation missing; wrote diagnostic artifact: ${artifactPath}; compact review handoff: ${handoffArtifact}`,
 	verdict: status === "materialized" ? "materialized" : "missing_review_activation",
-	data: payload,
-	statePatch: [{ op: "set", path: "/integrationReviewArtifact", value: payload }],
+	data: resultData,
+	statePatch: [
+		{ op: "set", path: "/integrationReviewArtifact", value: resultData },
+		{ op: "set", path: "/reviewHandoff", value: reviewHandoff },
+	],
 };
 
 async function readText(filePath) {
@@ -76,6 +115,45 @@ function latestCompletedActivation(nodeId) {
 		if (activation?.nodeId === nodeId && activation.status === "completed") return activation;
 	}
 	return null;
+}
+
+function boundedReviewHandoff(input) {
+	const handoff = {
+		status: "compact_review_handoff",
+		producer_node: "materializeIntegrationReview",
+		tuple_id: input.tupleId,
+		instruction:
+			"Use this bounded handoff for strong review. It summarizes evidence and points to durable artifacts; do not paste raw artifacts into downstream prompts.",
+		integration_review_artifact: input.artifactPath,
+		review_handoff_artifact: input.handoffArtifact,
+		integration_review_status: input.status,
+		lane_outputs: {
+			core: activationHandoff("implementCore"),
+			tests: activationHandoff("implementTests"),
+			docs: activationHandoff("implementDocs"),
+			integration_review: activationHandoff("integrationReview"),
+		},
+		changed_files: boundedArray(input.changedFiles, 40),
+		diff_stat: truncateText(input.diffStat, 1600),
+		lane_artifacts: boundedArray(input.laneArtifacts, 50),
+		validation_artifacts: boundedArray(input.validationArtifacts, 50),
+	};
+	return truncateUtf8Bytes(safeJsonStringify(handoff), MAX_REVIEW_HANDOFF_BYTES);
+}
+
+function activationHandoff(nodeId) {
+	const activation = latestCompletedActivation(nodeId);
+	if (!activation) return { node_id: nodeId, status: "missing" };
+	const output = activation.output ?? {};
+	return {
+		node_id: nodeId,
+		activation_id: activation.id,
+		status: activation.status,
+		verdict: output.verdict ?? output.status ?? null,
+		summary: truncateText(output.summary ?? "", 1800),
+		artifacts: boundedArray(output.artifacts ?? [], 20),
+		data_keys: output.data && typeof output.data === "object" ? Object.keys(output.data).slice(0, 30) : [],
+	};
 }
 
 async function changedProjectFiles() {
@@ -121,6 +199,39 @@ async function validationEvidenceArtifacts(tupleId) {
 		files.push(file);
 	}
 	return files.sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function boundedArray(values, limit) {
+	if (!Array.isArray(values)) return [];
+	const bounded = values.slice(0, limit);
+	if (values.length > limit) {
+		bounded.push(`... omitted ${values.length - limit} items`);
+	}
+	return bounded;
+}
+
+function safeJsonStringify(value) {
+	try {
+		return JSON.stringify(value, null, 2) ?? "null";
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		return JSON.stringify({ status: "unserializable_review_handoff", reason }, null, 2);
+	}
+}
+
+function truncateText(text, maxLength) {
+	const value = typeof text === "string" ? text : safeJsonStringify(text);
+	if (value.length <= maxLength) return value;
+	return `${value.slice(0, Math.max(0, maxLength - 64))}...[truncated ${value.length - maxLength} chars]`;
+}
+
+function truncateUtf8Bytes(text, maxBytes) {
+	const bytes = new TextEncoder().encode(text);
+	if (bytes.byteLength <= maxBytes) return text;
+	const suffix = "\n... [truncated to workflow review handoff byte budget]";
+	const suffixBytes = new TextEncoder().encode(suffix).byteLength;
+	const decoder = new TextDecoder();
+	return `${decoder.decode(bytes.slice(0, Math.max(0, maxBytes - suffixBytes)))}${suffix}`;
 }
 
 function isLaneEvidenceArtifact(file) {

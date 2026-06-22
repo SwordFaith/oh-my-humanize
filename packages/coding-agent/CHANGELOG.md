@@ -16,6 +16,9 @@
 - Fixed the experimental parallel implementation workflow so lane and reviewer
   agents treat archive requests as lane-owned evidence and reserve `final-*`
   artifacts for the workflow finalizer.
+- Fixed the experimental parallel implementation workflow so the final strong
+  reviewer consumes a bounded review handoff instead of raw lane and integration
+  outputs, preventing prompt-size failures on broad repository canaries.
 - Fixed the experimental parallel implementation workflow so broad scope plans
   are materialized into bounded handoff artifacts before fan-out prompts consume
   them, avoiding prompt-size failures on large repositories.
