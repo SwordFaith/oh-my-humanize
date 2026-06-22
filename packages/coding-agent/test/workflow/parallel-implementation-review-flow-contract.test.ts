@@ -35,6 +35,7 @@ interface ScriptResult {
 			exitCode?: number;
 			stdoutArtifact?: string;
 			stderrArtifact?: string;
+			exitCodeArtifact?: string;
 			reusedFromTestLane?: string;
 			reusedArtifactHashes?: Record<string, string>;
 			reusedCoverageProfiles?: Array<{ path: string; sha256: string }>;
@@ -132,7 +133,7 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(await fileExists(path.join(cwd, "workflow-output", "rerun-marker"))).toBe(false);
 	});
 
-	it("reuses exact passed test-lane validation when no product diff would invalidate it", async () => {
+	it("reuses exact passed test-lane validation when tuple-scoped artifact hashes still match", async () => {
 		const cwd = await createTempDir();
 		await initGitRepo(cwd);
 		await writeTupleFiles(cwd, "P06-T06-test");
@@ -200,6 +201,86 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(await sha256File(path.join(cwd, "workflow-output", "unit-cover-P06-T06-test.out"))).toBe(
 			laneArtifact.coverage_profiles[0]?.sha256,
 		);
+	});
+
+	it("reuses latest attempt validation evidence after real product changes", async () => {
+		const cwd = await createTempDir();
+		await initGitRepo(cwd);
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		const command = "bash -lc 'echo should-not-rerun > workflow-output/rerun-marker; exit 42'";
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			["Validation Command:", command, "Validation Environment:", "TMPDIR=workflow-output/reuse-tmp"].join("\n"),
+		);
+		await Bun.write(path.join(cwd, "src", "real-change.ts"), "export const fixed = true;\n");
+		await Bun.write(path.join(cwd, "workflow-output", "validation-attempt-1-stdout-P06-T06-test.txt"), "baseline\n");
+		await Bun.write(path.join(cwd, "workflow-output", "validation-attempt-1-stderr-P06-T06-test.txt"), "");
+		await Bun.write(path.join(cwd, "workflow-output", "validation-attempt-1-exitcode-P06-T06-test.txt"), "0\n");
+		await Bun.write(path.join(cwd, "workflow-output", "validation-attempt-2-stdout-P06-T06-test.txt"), "latest\n");
+		await Bun.write(path.join(cwd, "workflow-output", "validation-attempt-2-stderr-P06-T06-test.txt"), "");
+		await Bun.write(path.join(cwd, "workflow-output", "validation-attempt-2-exitcode-P06-T06-test.txt"), "0\n");
+		await Bun.write(path.join(cwd, "workflow-output", "race-cover-P06-T06-test.out"), "mode: atomic\n");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "tests-lane-P06-T06-test.json"),
+			`${JSON.stringify(
+				{
+					tuple_id: "P06-T06-test",
+					producer_node: "implementTests",
+					status: "complete",
+					result: "pass",
+					validation: {
+						command,
+						environment: { TMPDIR: "workflow-output/reuse-tmp" },
+						result: "pass",
+						latest_attempt: 2,
+						latest_stdout: "workflow-output/validation-attempt-2-stdout-P06-T06-test.txt",
+						latest_stderr: "workflow-output/validation-attempt-2-stderr-P06-T06-test.txt",
+						latest_exit_code: "workflow-output/validation-attempt-2-exitcode-P06-T06-test.txt",
+						attempts: [
+							{
+								attempt: 1,
+								result: "pass",
+								stdout: "workflow-output/validation-attempt-1-stdout-P06-T06-test.txt",
+								stderr: "workflow-output/validation-attempt-1-stderr-P06-T06-test.txt",
+								exit_code: "workflow-output/validation-attempt-1-exitcode-P06-T06-test.txt",
+							},
+							{
+								attempt: 2,
+								result: "pass",
+								stdout: "workflow-output/validation-attempt-2-stdout-P06-T06-test.txt",
+								stderr: "workflow-output/validation-attempt-2-stderr-P06-T06-test.txt",
+								exit_code: "workflow-output/validation-attempt-2-exitcode-P06-T06-test.txt",
+							},
+						],
+					},
+				},
+				null,
+				2,
+			)}\n`,
+		);
+
+		const result = await runScript(cwd, "run-declared-validation.js", {});
+
+		expect(result.verdict).toBe("PASS");
+		expect(result.data?.validation).toMatchObject({
+			result: "passed",
+			exitCode: 0,
+			stdoutArtifact: "workflow-output/validation-attempt-2-stdout-P06-T06-test.txt",
+			stderrArtifact: "workflow-output/validation-attempt-2-stderr-P06-T06-test.txt",
+			exitCodeArtifact: "workflow-output/validation-attempt-2-exitcode-P06-T06-test.txt",
+			reusedFromTestLane: "workflow-output/tests-lane-P06-T06-test.json",
+		});
+		expect(result.data?.validation?.reusedArtifactHashes).toMatchObject({
+			"workflow-output/validation-attempt-2-stdout-P06-T06-test.txt": await sha256File(
+				path.join(cwd, "workflow-output", "validation-attempt-2-stdout-P06-T06-test.txt"),
+			),
+			"workflow-output/race-cover-P06-T06-test.out": await sha256File(
+				path.join(cwd, "workflow-output", "race-cover-P06-T06-test.out"),
+			),
+		});
+		expect(await fileExists(path.join(cwd, "workflow-output", "rerun-marker"))).toBe(false);
 	});
 
 	it("reuses exact failed test-lane validation without rerunning the same command", async () => {

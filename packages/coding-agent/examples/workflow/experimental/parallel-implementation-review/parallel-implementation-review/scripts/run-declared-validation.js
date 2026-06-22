@@ -115,7 +115,6 @@ async function writeReusedValidationArtifact({ tupleId, validationCommand, valid
 }
 
 async function reusableExactTestLaneValidation({ tupleId, validationCommand, validationEnvironment }) {
-	if ((await changedProjectFiles()).length > 0) return null;
 	const candidates = await testLaneValidationArtifacts(tupleId);
 	for (const artifact of candidates) {
 		const data = await readJson(artifact);
@@ -201,15 +200,21 @@ async function reusableTupleScopedValidationFiles({
 	if (!validation || typeof validation !== "object") return null;
 	const stdoutArtifact =
 		stringField(validation, "stdout_path") ||
+		stringField(validation, "latest_stdout") ||
+		stringField(validation, "canonical_stdout") ||
 		stringField(validation, "stdoutArtifact") ||
 		`workflow-output/validation-${tupleId}.stdout`;
 	const stderrArtifact =
 		stringField(validation, "stderr_path") ||
+		stringField(validation, "latest_stderr") ||
+		stringField(validation, "canonical_stderr") ||
 		stringField(validation, "stderrArtifact") ||
 		`workflow-output/validation-${tupleId}.stderr`;
 	const exitCodeArtifact =
 		stringField(validation, "exit_code_path") ||
 		stringField(validation, "exitcode_path") ||
+		stringField(validation, "latest_exit_code") ||
+		stringField(validation, "canonical_exit_code") ||
 		stringField(validation, "exitCodeArtifact") ||
 		`workflow-output/validation-${tupleId}.exitcode`;
 	const artifacts = [stdoutArtifact, stderrArtifact, exitCodeArtifact];
@@ -247,7 +252,7 @@ async function reusableTupleScopedValidationFiles({
 }
 
 function declaredValidationObject(data) {
-	return objectField(data, "declared_validation") || objectField(data, "validation");
+	return optionalObjectField(data, "declared_validation") ?? optionalObjectField(data, "validation") ?? {};
 }
 
 async function recordedValidationHashes(data) {
@@ -395,43 +400,13 @@ function isSafeTupleWorkflowOutputPath(filePath, tupleId) {
 }
 
 function objectField(value, key) {
-	if (!value || typeof value !== "object") return {};
+	return optionalObjectField(value, key) ?? {};
+}
+
+function optionalObjectField(value, key) {
+	if (!value || typeof value !== "object") return null;
 	const field = value[key];
-	return field && typeof field === "object" && !Array.isArray(field) ? field : {};
-}
-
-async function changedProjectFiles() {
-	const child = Bun.spawn(["git", "status", "--short", "--untracked-files=all"], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-	if (exitCode !== 0) return [];
-	return stdout
-		.split(/\r?\n/u)
-		.map(line => line.trimEnd())
-		.filter(Boolean)
-		.map(statusLinePath)
-		.filter(filePath => filePath && !isWorkflowControlPath(filePath))
-		.sort((left, right) => left.localeCompare(right, "en"));
-}
-
-function statusLinePath(line) {
-	const raw = line.slice(3).trim();
-	if (raw.includes(" -> ")) return raw.split(" -> ").pop()?.trim() ?? raw;
-	return raw;
-}
-
-function isWorkflowControlPath(filePath) {
-	return (
-		filePath === "task.md" ||
-		filePath === "progress.md" ||
-		filePath === "manifest-entry.json" ||
-		filePath === "monitor-assignment.json" ||
-		filePath === "evidence-ledger.jsonl" ||
-		filePath.startsWith("workflow-output/") ||
-		filePath.startsWith("transcripts/")
-	);
+	return field && typeof field === "object" && !Array.isArray(field) ? field : null;
 }
 
 async function readRequiredTaskText() {
