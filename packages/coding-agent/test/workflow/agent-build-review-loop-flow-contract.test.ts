@@ -106,6 +106,7 @@ const ArchiveLoopFunctionConstructor = Object.getPrototypeOf(async () => {}).con
 				reason?: string;
 				reviewVerdict?: string;
 				reviewSummary?: string;
+				reviewDecisionTrailFile?: string;
 				setupBlockerEvidenceFiles?: string[];
 			};
 		};
@@ -1412,6 +1413,69 @@ describe("agent-build-review-loop flow contract", () => {
 		});
 	});
 
+	it("maps each changed file to objective, validation evidence, rollback risk, and reviewer decision", async () => {
+		const cwd = await createTempDir();
+		await initGitRepo(cwd);
+		await fs.mkdir(path.join(cwd, "src"), { recursive: true });
+		await fs.mkdir(path.join(cwd, "tests"), { recursive: true });
+		await fs.mkdir(path.join(cwd, "workflow-output", "round-1"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			[
+				"Tuple: AGENT-LOOP-TUPLE-2",
+				"",
+				"Objective: preserve import.meta.url query/hash handling across asset and worker paths.",
+				"Rollback Plan: revert the task-scoped source and test files together if validation regresses.",
+				"Validation Command:",
+				"./workflow-output/run-validation.sh",
+				"Allowed paths: src/asset.ts, tests/asset.test.ts, workflow-output/**, progress.md.",
+			].join("\n"),
+		);
+		await Bun.write(
+			path.join(cwd, "progress.md"),
+			"ROUND 1: changed asset implementation and tests; validation=./workflow-output/run-validation.sh; result=pass\n",
+		);
+		await Bun.write(path.join(cwd, "src", "asset.ts"), "export const assetUrl = new URL(import.meta.url);\n");
+		await Bun.write(path.join(cwd, "tests", "asset.test.ts"), "import '../src/asset';\n");
+		await Bun.write(path.join(cwd, "workflow-output", "round-1", "validation-stdout.txt"), "1 test passed\n");
+		await Bun.write(path.join(cwd, "workflow-output", "round-1", "validation-stderr.txt"), "\n");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "review-route-1.json"),
+			JSON.stringify({ decision: "complete", reason: "review accepted task-scoped implementation and tests" }),
+		);
+
+		await runArchiveLoop(cwd, {
+			decision: "complete",
+			reason: "review accepted task-scoped implementation and tests",
+			reviewVerdict: "complete",
+			reviewSummary: "Implementation and tests satisfy the import.meta.url query/hash objective.",
+			reviewDecisionTrailFile: "workflow-output/review-route-1.json",
+		});
+
+		const archive = await Bun.file(path.join(cwd, "workflow-output", "final-agent-loop-archive.md")).text();
+		expect(archive).toContain("## Changed File Evidence Map");
+		for (const changedFile of ["src/asset.ts", "tests/asset.test.ts"]) {
+			expect(archive).toContain(`### ${changedFile}`);
+			const section = archive.slice(
+				archive.indexOf(`### ${changedFile}`),
+				archive.indexOf("### ", archive.indexOf(`### ${changedFile}`) + 4) === -1
+					? undefined
+					: archive.indexOf("### ", archive.indexOf(`### ${changedFile}`) + 4),
+			);
+			expect(section).toContain(
+				"- Objective: preserve import.meta.url query/hash handling across asset and worker paths.",
+			);
+			expect(section).toContain("- Validation evidence: `./workflow-output/run-validation.sh`");
+			expect(section).toContain("workflow-output/round-1/validation-stdout.txt");
+			expect(section).toContain(
+				"- Rollback risk: revert the task-scoped source and test files together if validation regresses.",
+			);
+			expect(section).toContain(
+				"- Reviewer decision: complete - review accepted task-scoped implementation and tests",
+			);
+		}
+	});
+
 	it("writes a rejected archive and fails the attempt for setup-blocker routes", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
@@ -1579,6 +1643,7 @@ async function runArchiveLoop(
 		reason?: string;
 		reviewVerdict?: string;
 		reviewSummary?: string;
+		reviewDecisionTrailFile?: string;
 		setupBlockerEvidenceFiles?: string[];
 	} = { decision: "reject" },
 ): Promise<ArchiveLoopResult> {

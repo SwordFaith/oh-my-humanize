@@ -102,6 +102,16 @@ const archive = [
 	"",
 	changedFiles.length > 0 ? changedFiles.map(file => `- ${file}`).join("\n") : "No changed files; task contract explicitly allowed no-code/no-change evidence.",
 	"",
+	"## Changed File Evidence Map",
+	"",
+	changedFileEvidenceMapSection({
+		changedFiles,
+		taskText,
+		verifyCommand,
+		evidenceFiles: archivedEvidenceFiles,
+		reviewRoute,
+	}),
+	"",
 	"## Archived Evidence Files",
 	"",
 	archivedEvidenceFiles.map(file => `- ${file}`).join("\n"),
@@ -256,6 +266,100 @@ function mentionsBuildOrRepairWorkStillNeeded(text) {
 			text,
 		)
 	);
+}
+
+function changedFileEvidenceMapSection({ changedFiles, taskText, verifyCommand, evidenceFiles, reviewRoute }) {
+	if (changedFiles.length === 0) {
+		return "No changed project files; task contract explicitly allowed no-code/no-change evidence.";
+	}
+	const objective = taskObjective(taskText);
+	const rollbackRisk = taskRollbackRisk(taskText);
+	const reviewerDecision = reviewerDecisionSummary(reviewRoute);
+	const validationEvidence = validationEvidenceSummary(verifyCommand, evidenceFiles);
+	return changedFiles
+		.map(file =>
+			[
+				`### ${file}`,
+				"",
+				`- Objective: ${objective}`,
+				`- Validation evidence: ${validationEvidence}`,
+				`- Rollback risk: ${rollbackRisk}`,
+				`- Reviewer decision: ${reviewerDecision}`,
+			].join("\n"),
+		)
+		.join("\n\n");
+}
+
+function taskObjective(taskText) {
+	return taskLabeledValue(taskText, ["Objective", "Goal", "Task"]) || firstTaskParagraph(taskText);
+}
+
+function taskRollbackRisk(taskText) {
+	return (
+		taskLabeledValue(taskText, ["Rollback Plan", "Rollback Risk", "Rollback"]) ||
+		"revert this file with its paired implementation/tests and rerun the declared validation command before keeping changes."
+	);
+}
+
+function reviewerDecisionSummary(reviewRoute) {
+	const decision = reviewRoute.decision ?? "not recorded";
+	const reason =
+		typeof reviewRoute.reason === "string" && reviewRoute.reason.trim()
+			? reviewRoute.reason.trim()
+			: typeof reviewRoute.reviewSummary === "string" && reviewRoute.reviewSummary.trim()
+				? reviewRoute.reviewSummary.trim()
+				: "no reviewer rationale recorded";
+	return `${decision} - ${reason}`;
+}
+
+function validationEvidenceSummary(verifyCommand, evidenceFiles) {
+	const validationFiles = evidenceFiles.filter(file => validationEvidenceFile(file));
+	const listedFiles = validationFiles.length > 0 ? validationFiles : evidenceFiles;
+	if (listedFiles.length === 0) return `\`${verifyCommand}\``;
+	return `\`${verifyCommand}\`; artifacts: ${listedFiles.map(file => `\`${file}\``).join(", ")}`;
+}
+
+function validationEvidenceFile(file) {
+	return /\b(?:validation|stdout|stderr|test|round-\d+)\/?/iu.test(file);
+}
+
+function taskLabeledValue(taskText, labels) {
+	const lines = taskText.split(/\r?\n/u);
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index] ?? "";
+		for (const label of labels) {
+			const match = new RegExp(`^\\s*${escapeRegExp(label)}\\s*:\\s*(.*)\\s*$`, "iu").exec(line);
+			if (!match) continue;
+			const inlineValue = match[1]?.trim();
+			if (inlineValue) return inlineValue;
+			const followingValue = firstFollowingTaskTextLine(lines, index + 1);
+			if (followingValue) return followingValue;
+		}
+	}
+	return "";
+}
+
+function firstFollowingTaskTextLine(lines, startIndex) {
+	for (const line of lines.slice(startIndex)) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("```")) continue;
+		if (isTaskSectionHeading(trimmed)) return "";
+		return trimmed.replace(/^[-*]\s*/u, "");
+	}
+	return "";
+}
+
+function firstTaskParagraph(taskText) {
+	for (const line of taskText.split(/\r?\n/u)) {
+		const trimmed = line.trim();
+		if (!trimmed || trimmed.startsWith("#") || /^[A-Z][A-Za-z /-]{0,80}:\s*/u.test(trimmed)) continue;
+		return trimmed.replace(/^[-*]\s*/u, "");
+	}
+	return "complete the task.md objective with task-scoped project changes.";
+}
+
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function firstFollowingCommandLine(lines, startIndex) {
