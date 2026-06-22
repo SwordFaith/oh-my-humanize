@@ -8,6 +8,14 @@ define the project-specific goal, acceptance checks, verification command, and
 any minimum round count. If the contract is incomplete, produce the smallest
 useful clarification/evidence artifact instead of inventing project policy.
 
+Before editing project files, also inspect applicable local project instructions
+for this working tree, including nearby or parent `AGENTS.md` files and
+project-authored contributing/style guidance when present. Treat these
+instructions as part of the task contract. Do not introduce code that violates
+explicit local instructions, even when the declared validation command passes.
+If a previous round introduced such a violation, repair that violation before
+choosing unrelated work.
+
 {{#if previousReviewVerdict}}
 Previous review verdict: `{{previousReviewVerdict}}`
 
@@ -51,6 +59,9 @@ General loop contract:
   a task-specific source, test, script, or documentation defect.
 - Do one bounded implementation improvement per round. Bounded does not mean
   trivial; it means leave the project in a reviewable state.
+- Keep every implementation improvement compliant with applicable local project
+  instructions. A style or API ban stated by `AGENTS.md`, contributing docs, or
+  task instructions is a real task defect, not a cosmetic preference.
 - Make a real source, test, documentation, or task artifact improvement every
   round. Do not add an empty progress line just to satisfy the loop counter.
 - Do not add repeated filler fixtures, dummy content, sleep/hold scripts, or

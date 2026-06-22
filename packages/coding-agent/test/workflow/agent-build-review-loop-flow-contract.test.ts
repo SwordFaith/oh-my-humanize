@@ -1565,6 +1565,33 @@ describe("agent-build-review-loop flow contract", () => {
 		expect(prompt).toContain("produced by downstream workflow nodes");
 		expect(prompt).toContain("return `complete`");
 	});
+
+	it("requires build rounds to obey applicable local project instructions", async () => {
+		const prompt = await Bun.file(
+			path.resolve(
+				import.meta.dir,
+				"../../examples/workflow/experimental/agent-build-review-loop/agent-build-review-loop/prompts/build-round.md",
+			),
+		).text();
+
+		expect(prompt).toContain("AGENTS.md");
+		expect(prompt).toContain("applicable local project instructions");
+		expect(prompt).toContain("Do not introduce code that violates");
+		expect(prompt).toContain("explicit local instructions");
+	});
+
+	it("requires review rounds to flag local instruction violations before continuing", async () => {
+		const prompt = await Bun.file(
+			path.resolve(
+				import.meta.dir,
+				"../../examples/workflow/experimental/agent-build-review-loop/agent-build-review-loop/prompts/review-round.md",
+			),
+		).text();
+
+		expect(prompt).toContain("applicable local project instructions");
+		expect(prompt).toContain("Return `continue` if the newest diff violates");
+		expect(prompt).toContain("even when the minimum round count is not yet satisfied");
+	});
 });
 
 async function runInitializeLoop(cwd: string): Promise<InitializeLoopResult> {

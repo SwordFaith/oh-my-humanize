@@ -22,6 +22,10 @@
   every changed project file to the task objective, declared validation
   evidence, rollback risk, and reviewer decision instead of only listing file
   names.
+- Fixed the experimental agent build/review loop workflow so builder and
+  reviewer prompts treat applicable local project instructions such as
+  `AGENTS.md` as task requirements, requiring reviewers to flag instruction
+  violations before continuing.
 - Fixed the experimental agent build/review loop workflow so tuple-state
   archives preserve task tuple IDs and do not invent an implicit round minimum
   when the task contract omits one, while rejecting non-positive round numbers

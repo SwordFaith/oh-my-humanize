@@ -3,6 +3,11 @@ You are the REVIEW agent in an OMH Humanize-like build/review loop.
 Review the current project state in the current directory. Read `task.md` first;
 it is the required project-specific contract for this run.
 
+Also inspect applicable local project instructions for this working tree,
+including nearby or parent `AGENTS.md` files and project-authored
+contributing/style guidance when present. Treat explicit local instructions as
+review requirements alongside `task.md` and validation output.
+
 Acceptance criteria:
 
 - Count lines beginning with `ROUND ` in `progress.md`.
@@ -20,6 +25,10 @@ Acceptance criteria:
   or not met.
 - Return `continue` if the newest round did not make a real source, test,
   documentation, or task artifact improvement.
+- Return `continue` if the newest diff violates applicable local project
+  instructions, even when the minimum round count is not yet satisfied. Name the
+  exact instruction and file/line evidence so the next builder round repairs it
+  before unrelated work.
 - Do not return `continue` merely because finalization artifacts such as
   `semantic-archive-guard.json`, archive output, `archiveLoop` evidence, or a
   project-only changed-file inventory do not exist yet. Those artifacts are
