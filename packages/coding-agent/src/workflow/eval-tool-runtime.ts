@@ -25,10 +25,14 @@ export function createEvalToolScriptRunner(toolSession: ToolSession): WorkflowSc
 }
 
 async function workflowScriptToolSession(toolSession: ToolSession): Promise<ToolSession> {
-	if (toolSession.settings.get("tools.outputMaxColumns") === 0) return toolSession;
 	const settings = await toolSession.settings.cloneForCwd(toolSession.cwd);
-	settings.override("tools.outputMaxColumns", 0);
-	return { ...toolSession, settings };
+	if (settings.get("tools.outputMaxColumns") !== 0) {
+		settings.override("tools.outputMaxColumns", 0);
+	}
+	// Workflow script nodes are attempt-scoped runtime resources. Do not retain
+	// Python kernels under the interactive session after a workflow has completed.
+	settings.override("python.kernelMode", "per-call");
+	return { ...toolSession, getEvalKernelOwnerId: () => null, settings };
 }
 
 function workflowScriptResultFromEvalTool(
