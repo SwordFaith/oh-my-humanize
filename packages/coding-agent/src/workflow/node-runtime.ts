@@ -1,5 +1,5 @@
 import type { WorkflowModelContext, WorkflowNode, WorkflowScriptLanguage } from "./definition";
-import type { WorkflowActivation } from "./scheduler";
+import type { WorkflowActivation, WorkflowMappedActivationContext } from "./scheduler";
 import type { WorkflowActivationOutput } from "./state";
 
 export interface WorkflowNodeRuntimeInput {
@@ -57,7 +57,9 @@ export interface WorkflowNodeExecutionContext {
 }
 
 export interface WorkflowScriptContext {
-	activation: Pick<WorkflowActivation, "id" | "nodeId" | "graphRevisionId" | "parentActivationIds">;
+	activation: Pick<WorkflowActivation, "id" | "nodeId" | "graphRevisionId" | "parentActivationIds"> & {
+		mapped?: WorkflowMappedActivationContext;
+	};
 	node: Pick<WorkflowNode, "id" | "type">;
 	state: Record<string, unknown>;
 	completedActivations: WorkflowActivation[];
@@ -183,12 +185,14 @@ function workflowScriptContextSnapshot(
 		state: structuredClone(context.state),
 		completedActivations: structuredClone(context.completedActivations),
 	};
+	if (activation.mapped !== undefined) {
+		snapshot.activation.mapped = activation.mapped as WorkflowMappedActivationContext;
+	}
 	if (resourceDir !== undefined) {
 		snapshot.resources = { root: resourceDir };
 	}
 	return snapshot;
 }
-
 async function executeHumanNode(
 	node: WorkflowNode,
 	activation: WorkflowActivation,
@@ -244,12 +248,17 @@ async function executeReviewNode(
 	const result: WorkflowActivationOutput = {
 		summary: output.summary,
 		data: { verdict: output.verdict },
-		statePatch: [{ op: "set", path: reviewVerdictStatePath(node), value: output.verdict }],
+		statePatch: [{ op: "set", path: reviewVerdictStatePath(node, activation), value: output.verdict }],
 	};
 	if (output.artifacts !== undefined) result.artifacts = output.artifacts;
 	return result;
 }
 
-function reviewVerdictStatePath(node: WorkflowNode): string {
-	return node.writes?.[0] ?? "/verdict";
+function reviewVerdictStatePath(node: WorkflowNode, activation: WorkflowActivation): string {
+	const base = node.writes?.[0] ?? "/verdict";
+	const mapped = activation.mapped;
+	if (mapped !== undefined) {
+		return `${base.replace(/\/+$/, "")}/${mapped.itemKey.replace(/^\/+/, "").replace(/\/$/, "")}/verdict`;
+	}
+	return base;
 }

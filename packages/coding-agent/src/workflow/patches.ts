@@ -631,7 +631,7 @@ function validatePromptSourceShape(source: WorkflowPromptSource, nodeId: string)
 		validateNonEmptyString(source.path, `workflow graph patch node "${nodeId}" prompt file path`);
 		return;
 	}
-	if (source.kind === "state" || source.kind === "human") {
+	if (source.kind === "state" || source.kind === "human" || source.kind === "activation") {
 		validateJsonPointer(source.path, `workflow graph patch node "${nodeId}" prompt path`);
 		return;
 	}
@@ -647,37 +647,37 @@ function validatePromptSourceShape(source: WorkflowPromptSource, nodeId: string)
 	}
 	if (source.kind === "template") {
 		validateNonEmptyString(source.file, `workflow graph patch node "${nodeId}" prompt template file path`);
-		for (const [name, binding] of Object.entries(source.bindings)) {
-			validateNonEmptyString(name, `workflow graph patch node "${nodeId}" prompt template binding name`);
-			if (binding.kind === "inline") {
-				validateNonEmptyString(binding.text, `workflow graph patch node "${nodeId}" prompt template binding`);
-				continue;
-			}
-			if (binding.kind === "state" || binding.kind === "human") {
-				validateJsonPointer(binding.path, `workflow graph patch node "${nodeId}" prompt template binding path`);
-				continue;
-			}
-			if (binding.kind === "output") {
-				validateNonEmptyString(
-					binding.node,
-					`workflow graph patch node "${nodeId}" prompt template binding output node`,
-				);
-				validateJsonPointer(
-					binding.path,
-					`workflow graph patch node "${nodeId}" prompt template binding output path`,
-				);
-				if (binding.activation !== "parent" && binding.activation !== "latest-completed") {
-					throw new WorkflowGraphPatchError(
-						`workflow graph patch node "${nodeId}" prompt template binding activation selector is invalid`,
-					);
-				}
-				continue;
-			}
-			const invalidBinding: never = binding;
-			throw new WorkflowGraphPatchError(
-				`workflow graph patch prompt template binding is invalid: ${String(invalidBinding)}`,
-			);
+	for (const [name, binding] of Object.entries(source.bindings)) {
+		validateNonEmptyString(name, `workflow graph patch node "${nodeId}" prompt template binding name`);
+		if (binding.kind === "inline") {
+			validateNonEmptyString(binding.text, `workflow graph patch node "${nodeId}" prompt template binding`);
+			continue;
 		}
+		if (binding.kind === "state" || binding.kind === "human" || binding.kind === "activation") {
+			validateJsonPointer(binding.path, `workflow graph patch node "${nodeId}" prompt template binding path`);
+			continue;
+		}
+		if (binding.kind === "output") {
+			validateNonEmptyString(
+				binding.node,
+				`workflow graph patch node "${nodeId}" prompt template binding output node`,
+			);
+			validateJsonPointer(
+				binding.path,
+				`workflow graph patch node "${nodeId}" prompt template binding output path`,
+			);
+			if (binding.activation !== "parent" && binding.activation !== "latest-completed") {
+				throw new WorkflowGraphPatchError(
+					`workflow graph patch node "${nodeId}" prompt template binding activation selector is invalid`,
+				);
+			}
+			continue;
+		}
+		const invalidBinding: never = binding;
+		throw new WorkflowGraphPatchError(
+			`workflow graph patch prompt template binding is invalid: ${String(invalidBinding)}`,
+		);
+	}
 		return;
 	}
 	const unreachable: never = source;

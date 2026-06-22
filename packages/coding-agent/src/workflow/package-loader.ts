@@ -463,12 +463,16 @@ function promptSourceToRawPrompt(promptSource: WorkflowPromptSource): unknown {
 	if (promptSource.kind === "file") return { file: promptSource.path };
 	if (promptSource.kind === "state") return { state: promptSource.path };
 	if (promptSource.kind === "human") return { human: promptSource.path };
+	if (promptSource.kind === "activation") return { activation: promptSource.path };
 	if (promptSource.kind === "template") {
 		return {
 			template: {
 				file: promptSource.file,
 				bindings: Object.fromEntries(
-					Object.entries(promptSource.bindings).map(([name, binding]) => [name, promptSourceToRawPrompt(binding)]),
+					Object.entries(promptSource.bindings).map(([name, binding]) => [
+						name,
+						promptSourceToRawPrompt(binding),
+					]),
 				),
 			},
 		};

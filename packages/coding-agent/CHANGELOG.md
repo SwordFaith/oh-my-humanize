@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added workflow `mapped_worker_verifier_pool` DSL template for Airflow/Dagster-style mapped execution. A frozen pool node claims items from a state-backed queue, routes each item through worker → verifier → reducer, and lets the reducer expand the queue while honoring `maxItems` and `maxConcurrency`. Mapped activations carry per-item context (`/mapped/item`, `/mapped/itemKey`) through prompts, scripts, inspection, and graph views.
+
 ### Changed
 
 - Changed public branding from Oh My Pi / `omp` to Oh My Humanize / `omh` across package metadata, CLI help, ACP metadata, setup/welcome surfaces, workflow docs, and README examples while preserving `omp` as a compatibility bin alias.

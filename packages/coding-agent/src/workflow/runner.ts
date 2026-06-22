@@ -367,6 +367,7 @@ async function executeAndPersistActivation(
 			graphRevisionId: activation.graphRevisionId,
 			parentActivationIds: activation.parentActivationIds,
 			input,
+			mapped: activation.mapped,
 		});
 		appendLifecycleActivationStarted(options, activation, node);
 		started = true;
@@ -413,6 +414,7 @@ async function executeAndPersistActivation(
 				nodeId: node.id,
 				graphRevisionId: activation.graphRevisionId,
 				parentActivationIds: activation.parentActivationIds,
+				mapped: activation.mapped,
 			});
 			appendLifecycleActivationStarted(options, activation, node);
 		}
@@ -493,6 +495,7 @@ function appendLifecycleActivationStarted(
 		activationId: activation.id,
 		nodeId: node.id,
 		parentActivationIds: activation.parentActivationIds,
+		mapped: activation.mapped,
 	});
 }
 
@@ -568,6 +571,7 @@ async function resolvePromptForActivation(
 		state: context.state,
 		completedActivations: context.completedActivations,
 		parentActivationIds: activation.parentActivationIds,
+		activation,
 		packageRoot: options.packageRoot,
 		maxPromptBytes: options.maxPromptBytes,
 		frozenResources: workflowFrozenResources(options),
