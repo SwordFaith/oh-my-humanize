@@ -452,7 +452,11 @@ function validateConditionReferences(
 	}
 	for (const node of nodes) {
 		if (node.type !== "mapped_pool" || node.mappedPool?.stopWhen === undefined) continue;
-		for (const diagnostic of diagnoseWorkflowConditionReferences(node.mappedPool.stopWhen.source, nodes, stateSchema)) {
+		for (const diagnostic of diagnoseWorkflowConditionReferences(
+			node.mappedPool.stopWhen.source,
+			nodes,
+			stateSchema,
+		)) {
 			throw new WorkflowDefinitionError(`node "${node.id}" stopWhen ${diagnostic}`, sourcePath);
 		}
 	}
@@ -580,13 +584,21 @@ function parseMappedPoolSpec(
 	const raw = expectRecord(value, path, sourcePath);
 	const itemSource = expectJsonPointer(raw.itemSource, `${path}.itemSource`, sourcePath);
 	const itemKey = expectJsonPointer(raw.itemKey, `${path}.itemKey`, sourcePath);
-	const maxConcurrency = parseMappedPoolPositiveInteger(raw.maxConcurrency, nodeId, "maxConcurrency", `${path}.maxConcurrency`, sourcePath);
+	const maxConcurrency = parseMappedPoolPositiveInteger(
+		raw.maxConcurrency,
+		nodeId,
+		"maxConcurrency",
+		`${path}.maxConcurrency`,
+		sourcePath,
+	);
 	const maxItems = parseMappedPoolPositiveInteger(raw.maxItems, nodeId, "maxItems", `${path}.maxItems`, sourcePath);
 	const workerNodeId = expectString(raw.worker, `${path}.worker`, sourcePath);
 	const verifierNodeId = expectString(raw.verifier, `${path}.verifier`, sourcePath);
 	const reducerNodeId = expectString(raw.reducer, `${path}.reducer`, sourcePath);
-	const stopWhenSource = raw.stopWhen === undefined ? undefined : expectString(raw.stopWhen, `${path}.stopWhen`, sourcePath);
-	const stopWhen = stopWhenSource === undefined ? undefined : parseConditionSource(stopWhenSource, `${path}.stopWhen`, sourcePath);
+	const stopWhenSource =
+		raw.stopWhen === undefined ? undefined : expectString(raw.stopWhen, `${path}.stopWhen`, sourcePath);
+	const stopWhen =
+		stopWhenSource === undefined ? undefined : parseConditionSource(stopWhenSource, `${path}.stopWhen`, sourcePath);
 	return compactMappedPoolSpec({
 		itemSource,
 		itemKey,
@@ -617,7 +629,7 @@ function parseMappedPoolPositiveInteger(
 	value: unknown,
 	nodeId: string,
 	field: string,
-	path: string,
+	_path: string,
 	sourcePath?: string,
 ): number {
 	if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
@@ -673,7 +685,9 @@ function parsePromptSource(
 		};
 	}
 	const raw = expectRecord(value, path, sourcePath);
-	const sourceKeys = ["inline", "file", "state", "output", "human", "template", "activation"].filter(key => raw[key] !== undefined);
+	const sourceKeys = ["inline", "file", "state", "output", "human", "template", "activation"].filter(
+		key => raw[key] !== undefined,
+	);
 	if (sourceKeys.length !== 1) {
 		throw new WorkflowDefinitionError(
 			`${path} must define exactly one of inline, file, state, output, human, template, or activation`,
@@ -787,7 +801,8 @@ function parseModelContext(value: unknown, path: string, sourcePath?: string): W
 }
 
 function parseNodeType(value: unknown, path: string, sourcePath?: string): WorkflowNodeType {
-	if (value === "agent" || value === "script" || value === "human" || value === "review" || value === "mapped_pool") return value;
+	if (value === "agent" || value === "script" || value === "human" || value === "review" || value === "mapped_pool")
+		return value;
 	throw new WorkflowDefinitionError(`${path} must be agent, script, human, review, or mapped_pool`, sourcePath);
 }
 
@@ -866,8 +881,6 @@ function parsePromptActivationSelector(
 	if (value === "latest-completed") return "latest-completed";
 	throw new WorkflowDefinitionError(`${path} must be parent or latest-completed`, sourcePath);
 }
-
-
 
 function parseStringRecord(value: unknown, path: string, sourcePath?: string): Record<string, string> {
 	if (value === undefined) return {};

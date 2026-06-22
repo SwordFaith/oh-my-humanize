@@ -235,7 +235,9 @@ class WorkflowDslCompiler {
 		if (kind === "parallel_search") return this.compileParallelSearchTemplate(template, path);
 		if (kind === "retry_until") return this.compileRetryUntilTemplate(template, path);
 		if (kind === "mapped_worker_verifier_pool") return this.compileMappedWorkerVerifierPoolTemplate(template, path);
-		throw new WorkflowDslError(`${path}.kind must be review_gate, parallel_search, retry_until, or mapped_worker_verifier_pool`);
+		throw new WorkflowDslError(
+			`${path}.kind must be review_gate, parallel_search, retry_until, or mapped_worker_verifier_pool`,
+		);
 	}
 
 	compileReviewGateTemplate(template: Record<string, unknown>, path: string): CompileResult {
@@ -284,22 +286,17 @@ class WorkflowDslCompiler {
 		const workerNodeId = `${poolId}.${expectString(workerNode.id, `${path}.worker.id`)}`;
 		const verifierNodeId = `${poolId}.${expectString(verifierNode.id, `${path}.verifier.id`)}`;
 		const reducerNodeId = `${poolId}.${expectString(reducerNode.id, `${path}.reducer.id`)}`;
-		const normalizeInternalNode = (raw: Record<string, unknown>, nodePath: string, id: string): Record<string, unknown> & { id: string } => {
+		const normalizeInternalNode = (
+			raw: Record<string, unknown>,
+			nodePath: string,
+			id: string,
+		): Record<string, unknown> & { id: string } => {
 			const normalized = this.normalizeNode({ ...raw, id }, nodePath);
 			return normalized;
 		};
-		this.addNode(
-			normalizeInternalNode(workerNode, `${path}.worker`, workerNodeId),
-			`${path}.worker`,
-		);
-		this.addNode(
-			normalizeInternalNode(verifierNode, `${path}.verifier`, verifierNodeId),
-			`${path}.verifier`,
-		);
-		this.addNode(
-			normalizeInternalNode(reducerNode, `${path}.reducer`, reducerNodeId),
-			`${path}.reducer`,
-		);
+		this.addNode(normalizeInternalNode(workerNode, `${path}.worker`, workerNodeId), `${path}.worker`);
+		this.addNode(normalizeInternalNode(verifierNode, `${path}.verifier`, verifierNodeId), `${path}.verifier`);
+		this.addNode(normalizeInternalNode(reducerNode, `${path}.reducer`, reducerNodeId), `${path}.reducer`);
 		const poolNode: Record<string, unknown> = {
 			id: poolId,
 			type: "mapped_pool",
@@ -673,7 +670,6 @@ function expectPositiveInteger(value: unknown, label: string): number {
 	if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
 	throw new WorkflowDslError(`${label} must be a positive integer`);
 }
-
 
 function compareEdges(
 	left: Record<string, unknown>,

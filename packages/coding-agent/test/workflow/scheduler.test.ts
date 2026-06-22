@@ -616,14 +616,7 @@ edges:
 		const schedulerPromise = runWorkflowScheduler(definition, {
 			startNodeId: "pool",
 			initialState: {
-				queue: [
-					{ id: "a" },
-					{ id: "b" },
-					{ id: "c" },
-					{ id: "d" },
-					{ id: "e" },
-					{ id: "f" },
-				],
+				queue: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }, { id: "e" }, { id: "f" }],
 			},
 			executeNode,
 		});
@@ -645,7 +638,12 @@ edges:
 		resolveActivation("pool.worker", "d", "worker");
 		resolveActivation("pool.worker", "e", "worker");
 		await Bun.sleep(0);
-		expect(started.filter(s => s.nodeId === "pool.verifier").map(s => s.itemKey).sort()).toEqual(["a", "b", "c", "d", "e"]);
+		expect(
+			started
+				.filter(s => s.nodeId === "pool.verifier")
+				.map(s => s.itemKey)
+				.sort(),
+		).toEqual(["a", "b", "c", "d", "e"]);
 
 		resolveActivation("pool.verifier", "a", "verifier");
 		await Bun.sleep(0);
@@ -716,7 +714,6 @@ edges:
 		expect(result.activations.filter(a => a.status === "running")).toHaveLength(0);
 	});
 
-
 	it("fails pool activation when itemSource resolves to a non-array", async () => {
 		const definition = parseWorkflowDefinition(mappedPoolWorkflow, { sourcePath: "mapped.yml" });
 		const result = await runWorkflowScheduler(definition, {
@@ -756,7 +753,7 @@ edges:
 		});
 		const poolActivation = result.activations.find(a => a.nodeId === "pool");
 		expect(poolActivation?.status).toBe("failed");
-		expect(poolActivation?.error).toContain("verifier for item \"a\" failed");
+		expect(poolActivation?.error).toContain('verifier for item "a" failed');
 		const reducerActivations = result.activations.filter(a => a.nodeId === "pool.reducer");
 		expect(reducerActivations).toHaveLength(0);
 	});

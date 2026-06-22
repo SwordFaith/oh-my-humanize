@@ -164,7 +164,6 @@ export interface WorkflowActivationAbortedEvent {
 	reason: string;
 }
 
-
 export function startWorkflowRun(
 	host: WorkflowRunStoreHost,
 	definition: WorkflowDefinition,

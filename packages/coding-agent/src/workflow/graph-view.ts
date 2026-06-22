@@ -1592,9 +1592,7 @@ function buildWorkflowGraphNodeActivationCounts(currentAttempt: WorkflowRunAttem
 	return counts;
 }
 
-function buildMappedLanesByNode(
-	currentAttempt: WorkflowRunAttemptSnapshot | undefined,
-): Map<string, string[]> {
+function buildMappedLanesByNode(currentAttempt: WorkflowRunAttemptSnapshot | undefined): Map<string, string[]> {
 	const lanes = new Map<string, string[]>();
 	if (!currentAttempt) return lanes;
 	for (const activation of currentAttempt.activations) {

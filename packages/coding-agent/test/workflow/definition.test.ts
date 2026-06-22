@@ -678,7 +678,6 @@ edges: []
 		);
 	});
 
-
 	it("rejects mapped_pool with missing mappedPool spec", () => {
 		const source = `
 name: mapped-pool-no-spec
@@ -723,8 +722,6 @@ nodes:
     type: script
 edges: []
 `;
-		expect(() => parseWorkflowDefinition(source, { sourcePath: "mapped.yml" })).toThrow(
-			/stopWhen.*nonexistent/,
-		);
+		expect(() => parseWorkflowDefinition(source, { sourcePath: "mapped.yml" })).toThrow(/stopWhen.*nonexistent/);
 	});
 });

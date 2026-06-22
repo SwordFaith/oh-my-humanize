@@ -469,10 +469,7 @@ function promptSourceToRawPrompt(promptSource: WorkflowPromptSource): unknown {
 			template: {
 				file: promptSource.file,
 				bindings: Object.fromEntries(
-					Object.entries(promptSource.bindings).map(([name, binding]) => [
-						name,
-						promptSourceToRawPrompt(binding),
-					]),
+					Object.entries(promptSource.bindings).map(([name, binding]) => [name, promptSourceToRawPrompt(binding)]),
 				),
 			},
 		};

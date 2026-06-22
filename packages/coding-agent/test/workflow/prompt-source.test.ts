@@ -109,11 +109,11 @@ edges:
 			.filter(source => source !== undefined);
 		expect(promptSources).toEqual([
 			{ kind: "state", path: "/assignments/build" },
-		{ kind: "human", path: "/human/question" },
-	]);
-});
+			{ kind: "human", path: "/human/question" },
+		]);
+	});
 
-it("resolves activation prompt bindings from the mapped activation context", async () => {
+	it("resolves activation prompt bindings from the mapped activation context", async () => {
 		const definition = parseWorkflowDefinition(
 			`
 name: activation-binding-demo

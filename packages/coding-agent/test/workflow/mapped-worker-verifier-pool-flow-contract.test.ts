@@ -1,30 +1,17 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
+import { describe, expect, it } from "bun:test";
 import * as path from "node:path";
 import { freezeWorkflowArtifact } from "../../src/workflow/freeze";
-import { loadWorkflowArtifact } from "../../src/workflow/package-loader";
-import { runWorkflow } from "../../src/workflow/runner";
-import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../../src/workflow/run-store";
 import type { WorkflowNodeRuntimeHost } from "../../src/workflow/node-runtime";
+import { loadWorkflowArtifact } from "../../src/workflow/package-loader";
+import { reconstructWorkflowRuns, type WorkflowRunStoreHost } from "../../src/workflow/run-store";
+import { runWorkflow } from "../../src/workflow/runner";
 import type { WorkflowActivation } from "../../src/workflow/scheduler";
 import type { WorkflowStatePatchOperation } from "../../src/workflow/state";
+
 interface CapturedEntry {
 	type: "custom";
 	customType: string;
 	data?: unknown;
-}
-
-const tempDirs: string[] = [];
-
-afterEach(async () => {
-	await Promise.all(tempDirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true })));
-});
-
-async function createTempDir(): Promise<string> {
-	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-mapped-pool-contract-"));
-	tempDirs.push(dir);
-	return dir;
 }
 
 function createHost(): WorkflowRunStoreHost & { entries: CapturedEntry[] } {
