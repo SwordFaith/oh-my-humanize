@@ -1,7 +1,8 @@
 # The list of vouched (or actively denounced) users for this repository.
 #
-# Only vouched users can open PRs here; unvouched/denounced PRs are
-# auto-closed by .github/workflows/vouch-pr.yml (mitchellh/vouch check-pr).
+# PRs from vouched users get the `vouched` label for automated review.
+# Unvouched or denounced PRs stay open but get `needs-vouch` until a maintainer
+# reviews/vouches them.
 # Issues are intentionally NOT gated here — robomp triages those.
 #
 # Write-access collaborators and bots are auto-allowed and need no entry.

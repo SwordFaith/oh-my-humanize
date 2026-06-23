@@ -578,11 +578,10 @@ For architecture and contribution guidelines, see [packages/coding-agent/DEVELOP
 
 ## Contributing
 
-Issues are open to everyone. **Pull requests require a vouch** — PRs from
-unvouched or denounced authors are closed automatically. If you're not yet
-vouched, open a [Discussion](https://github.com/humanfia/oh-my-humanize/discussions)
-and ask a maintainer to `!vouch` you rather than opening a PR (which would be
-closed on sight). See **[CONTRIBUTING.md](CONTRIBUTING.md)** and
+Issues are open to everyone. **Pull requests can be opened by anyone**, but
+automated review starts only after the author is vouched. If you're not yet
+vouched, your PR stays open with a `needs-vouch` label while a maintainer
+reviews or vouches you. See **[CONTRIBUTING.md](CONTRIBUTING.md)** and
 [`.github/VOUCHED.td`](.github/VOUCHED.td) for the full policy.
 
 ---
