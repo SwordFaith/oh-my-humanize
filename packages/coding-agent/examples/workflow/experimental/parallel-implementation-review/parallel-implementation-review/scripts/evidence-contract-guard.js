@@ -811,13 +811,13 @@ function isReviewableLaneEvidenceFile(file) {
 
 function mechanicalSurfaceInventoryClaim(text) {
 	if (!text) return false;
-	const hasMechanicalSignal =
-		/\bparsed\s+(?:go\s+)?(?:test|benchmark|fuzz|entry point|wrapper|file)/iu.test(text) ||
+	const hasStrongMechanicalSignal =
 		/\bcandidate test functions discovered\b/iu.test(text) ||
 		/\bwrapper package (?:argument|expansion)/iu.test(text) ||
 		/\bgate role:\s*stable_matrix_candidate\b/iu.test(text) ||
 		/"(?:candidate_test_count|selected_concrete_surface_count|archived_concrete_entry_points)"\s*:/iu.test(text);
-	if (!hasMechanicalSignal) return false;
+	const hasWeakMechanicalSignal = /\bparsed\s+(?:go\s+)?(?:test|benchmark|fuzz|entry point|wrapper|file)/iu.test(text);
+	if (!hasStrongMechanicalSignal && !hasWeakMechanicalSignal) return false;
 	const claimsSemanticCompletion =
 		/\bconcrete surfaces selected\b/iu.test(text) ||
 		/\barchived concrete\b/iu.test(text) ||
@@ -825,7 +825,11 @@ function mechanicalSurfaceInventoryClaim(text) {
 		/"meets_[^"]*_requirement"\s*:\s*true/iu.test(text) ||
 		/\bverifies (?:unit )?behavior for\b/iu.test(text);
 	const explicitlyIndexOnly = /\bindex[-_ ]only\b/iu.test(text) || /\bnavigation aids?\b/iu.test(text);
-	return claimsSemanticCompletion || !explicitlyIndexOnly;
+	const explicitlyNegated =
+		/\bnot\s+(?:based\s+on\s+)?parsed\s+(?:go\s+)?(?:test|benchmark|fuzz|entry point|wrapper|file)/iu.test(text) ||
+		/\bmechanical[_ -]inventory[_ -]used[_ -]as[_ -]completion[_ -]evidence["']?\s*:\s*false/iu.test(text);
+	if (hasStrongMechanicalSignal) return claimsSemanticCompletion || !explicitlyIndexOnly;
+	return claimsSemanticCompletion && !explicitlyNegated && !explicitlyIndexOnly;
 }
 
 async function fileValidationStatus(file, command, environment) {

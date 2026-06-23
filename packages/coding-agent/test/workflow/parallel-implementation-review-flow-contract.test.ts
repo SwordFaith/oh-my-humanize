@@ -1086,6 +1086,55 @@ describe("parallel-implementation-review flow contract", () => {
 		]);
 	});
 
+	it("allows explicit non-mechanical semantic lane evidence disclaimers", async () => {
+		const cwd = await createTempDir();
+		await writeReadyEvidence(cwd, "P06-T06-test");
+		await Bun.write(
+			path.join(cwd, "workflow-output", "core-lane-P06-T06-test.json"),
+			`${JSON.stringify(
+				{
+					tuple_id: "P06-T06-test",
+					producer_node: "implementCore",
+					status: "complete",
+					semantic_investigation: {
+						evidence_quality_rule_followed: true,
+						mechanical_inventory_used_as_completion_evidence: false,
+						domain_counts_requested_from_scouts: {
+							client_go_minimum: 70,
+							implementation_lane_requested_minimum_total: 310,
+						},
+						summary:
+							"Semantic evidence is based on directly read source and test bodies, not parsed filenames alone.",
+						representative_observed_contracts: [
+							{
+								domain: "client-go",
+								files: [
+									"staging/src/k8s.io/client-go/dynamic/simple.go",
+									"staging/src/k8s.io/client-go/dynamic/client_test.go",
+								],
+								observed_contract:
+									"dynamicResourceClient.Apply rejects objects with existing managedFields before constructing the apply request and names the unstructured extractor helper.",
+							},
+							{
+								domain: "apiserver",
+								files: ["staging/src/k8s.io/apiserver/pkg/endpoints/filters/authentication_test.go"],
+								observed_contract:
+									"WithAuthentication strips credential headers after successful authentication and records latency.",
+							},
+						],
+					},
+				},
+				null,
+				2,
+			)}\n`,
+		);
+
+		const result = await runScript(cwd, "evidence-contract-guard.js", {});
+
+		expect(result.verdict).toBe("READY");
+		expect(result.data?.checked_inputs?.mechanical_surface_inventory_artifacts).toEqual([]);
+	});
+
 	it("requires immutable attempt logs when test-lane validation is rerun", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
