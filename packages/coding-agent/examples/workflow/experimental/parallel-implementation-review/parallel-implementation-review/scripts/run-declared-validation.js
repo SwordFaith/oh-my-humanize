@@ -276,6 +276,9 @@ function validationPathFieldNames(kind) {
 		"latest_exit_code",
 		"canonical_exit_code",
 		"exitCodeArtifact",
+		"exitCodeFile",
+		"exit_code_file",
+		"exitcode_file",
 		"exitcode",
 		"exit_code",
 	];
@@ -312,6 +315,8 @@ async function recordedValidationHashes(data) {
 	const hashes = {};
 	addHashMap(hashes, data?.artifact_hashes);
 	addHashMap(hashes, data?.artifact_hashes_sha256);
+	addHashMap(hashes, data?.file_hashes);
+	addHashMap(hashes, data?.file_hashes_sha256);
 	addHashMap(hashes, data?.checksums);
 	addHashMap(hashes, data?.validation?.evidence_hashes);
 	addHashMap(hashes, data?.declared_validation?.evidence_hashes);

@@ -288,6 +288,83 @@ describe("parallel-implementation-review flow contract", () => {
 		expect(await fileExists(path.join(cwd, "workflow-output", "rerun-marker"))).toBe(false);
 	});
 
+	it("reuses validation evidence with test-lane file hash and exit-code file aliases", async () => {
+		const cwd = await createTempDir();
+		await writeTupleFiles(cwd, "P06-T06-test");
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		const command = "bash -lc 'echo should-not-rerun > workflow-output/rerun-marker; exit 42'";
+		const environment = { GOTMPDIR: "/tmp/omh-parallel-validation-node" };
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			["Validation Command:", command, "Validation Environment:", "GOTMPDIR=/tmp/omh-parallel-validation-node"].join(
+				"\n",
+			),
+		);
+		const stdoutPath = "workflow-output/validation-attempt-1-stdout-P06-T06-test.txt";
+		const stderrPath = "workflow-output/validation-attempt-1-stderr-P06-T06-test.txt";
+		const exitCodePath = "workflow-output/validation-attempt-1-exitcode-P06-T06-test.txt";
+		const coveragePath = "workflow-output/scheduler-runtime-race-cover-P06-T06-test.out";
+		await Bun.write(path.join(cwd, stdoutPath), "scheduler validation passed\n");
+		await Bun.write(path.join(cwd, stderrPath), "");
+		await Bun.write(path.join(cwd, exitCodePath), "0\n");
+		await Bun.write(path.join(cwd, coveragePath), "mode: atomic\n");
+		const fileHashes: Record<string, string> = {};
+		for (const filePath of [stdoutPath, stderrPath, exitCodePath, coveragePath]) {
+			fileHashes[filePath] = await sha256File(path.join(cwd, filePath));
+		}
+		await Bun.write(
+			path.join(cwd, "workflow-output", "tests-lane-P06-T06-test.json"),
+			`${JSON.stringify(
+				{
+					tuple_id: "P06-T06-test",
+					producer_node: "implementTests",
+					status: "complete",
+					validation: {
+						command,
+						environment,
+						result: "pass",
+						exit_code: 0,
+					},
+					validation_attempts: [
+						{
+							attempt: 1,
+							stdout: stdoutPath,
+							stderr: stderrPath,
+							exit_code_file: exitCodePath,
+							exit_code: 0,
+							result: "pass",
+						},
+					],
+					file_hashes_sha256: fileHashes,
+					coverage_profiles: [{ path: coveragePath, sha256: fileHashes[coveragePath] }],
+				},
+				null,
+				2,
+			)}\n`,
+		);
+
+		const result = await runScript(cwd, "run-declared-validation.js", {});
+
+		expect(result.verdict).toBe("PASS");
+		expect(result.data?.validation).toMatchObject({
+			result: "passed",
+			exitCode: 0,
+			stdoutArtifact: stdoutPath,
+			stderrArtifact: stderrPath,
+			exitCodeArtifact: exitCodePath,
+			reusedFromTestLane: "workflow-output/tests-lane-P06-T06-test.json",
+		});
+		expect(result.data?.validation?.reusedArtifactHashes).toMatchObject({
+			[stdoutPath]: fileHashes[stdoutPath],
+			[exitCodePath]: fileHashes[exitCodePath],
+			[coveragePath]: fileHashes[coveragePath],
+		});
+		expect(result.data?.validation?.reusedCoverageProfiles).toEqual([
+			{ path: coveragePath, sha256: fileHashes[coveragePath] },
+		]);
+		expect(await fileExists(path.join(cwd, "workflow-output", "rerun-marker"))).toBe(false);
+	});
+
 	it("reuses validation attempt aliases emitted by the test lane", async () => {
 		const cwd = await createTempDir();
 		await writeTupleFiles(cwd, "P06-T06-test");

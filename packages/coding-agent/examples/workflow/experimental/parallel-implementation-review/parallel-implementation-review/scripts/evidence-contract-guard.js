@@ -703,6 +703,9 @@ async function readJson(file) {
 async function recordedValidationHashes(data) {
 	const hashes = new Map();
 	addHashMap(hashes, data?.artifact_hashes);
+	addHashMap(hashes, data?.artifact_hashes_sha256);
+	addHashMap(hashes, data?.file_hashes);
+	addHashMap(hashes, data?.file_hashes_sha256);
 	addHashMap(hashes, data?.checksums);
 	addHashMap(hashes, data?.validation?.evidence_hashes);
 	addHashMap(hashes, data?.declared_validation?.evidence_hashes);
