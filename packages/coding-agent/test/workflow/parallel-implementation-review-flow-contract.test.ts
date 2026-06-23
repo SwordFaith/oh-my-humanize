@@ -18,6 +18,8 @@ interface ScriptResult {
 		artifact?: string;
 		producer_node?: string;
 		reasons?: string[];
+		validation_command?: string;
+		validation_environment?: Record<string, string>;
 		review_handoff_artifact?: string;
 		review_handoff_bytes?: number;
 		preexisting_final_artifacts?: Array<{
@@ -536,6 +538,121 @@ describe("parallel-implementation-review flow contract", () => {
 				sha256: await sha256File(path.join(cwd, `workflow-output/scheduler-deep-coverage-${tupleId}.out`)),
 			},
 		]);
+	});
+
+	it("accepts markdown-coded declared validation after final validation supersedes failed attempts", async () => {
+		const cwd = await createTempDir();
+		const tupleId = "C92-K8S-PAR-test";
+		const command = "./workflow-output/run-k8s-deep-validation.sh";
+		const environment = {
+			GOTMPDIR: "/tmp/omh-run-tmp/C92-K8S-PAR-test/go-tmp",
+			GOCACHE: "/tmp/omh-cache/go-build",
+			GOMODCACHE: "/tmp/omh-cache/go-mod",
+		};
+		await writeTupleFiles(cwd, tupleId);
+		await fs.mkdir(path.join(cwd, "workflow-output"), { recursive: true });
+		await Bun.write(
+			path.join(cwd, "task.md"),
+			[
+				"## Validation Command",
+				"",
+				"`./workflow-output/run-k8s-deep-validation.sh`",
+				"",
+				"## Validation Environment",
+				"",
+				"- `GOTMPDIR=/tmp/omh-run-tmp/C92-K8S-PAR-test/go-tmp`",
+				"- `GOCACHE=/tmp/omh-cache/go-build`",
+				"- `GOMODCACHE=/tmp/omh-cache/go-mod`",
+			].join("\n"),
+		);
+		await Bun.write(path.join(cwd, "workflow-output", `core-lane-${tupleId}.json`), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", `docs-lane-${tupleId}.json`), "{}\n");
+		await Bun.write(path.join(cwd, "workflow-output", `integration-review-${tupleId}.json`), "{}\n");
+		for (const attempt of [1, 2, 3]) {
+			await Bun.write(
+				path.join(cwd, `workflow-output/validation-attempt-${attempt}-stdout-${tupleId}.txt`),
+				attempt === 3 ? "ok\n" : "FAIL\n",
+			);
+			await Bun.write(path.join(cwd, `workflow-output/validation-attempt-${attempt}-stderr-${tupleId}.txt`), "");
+			await Bun.write(
+				path.join(cwd, `workflow-output/validation-attempt-${attempt}-exitcode-${tupleId}.txt`),
+				attempt === 3 ? "0\n" : "1\n",
+			);
+		}
+		await Bun.write(
+			path.join(cwd, "workflow-output", `tests-lane-${tupleId}.json`),
+			`${JSON.stringify(
+				{
+					tuple_id: tupleId,
+					producer_node: "implementTests",
+					status: "completed",
+					validation: {
+						command,
+						environment,
+						result: "pass",
+						latest_attempt: 3,
+						attempts: [
+							{
+								attempt: 1,
+								result: "not_credited",
+								stdout: `workflow-output/validation-attempt-1-stdout-${tupleId}.txt`,
+								stderr: `workflow-output/validation-attempt-1-stderr-${tupleId}.txt`,
+								exit_code: `workflow-output/validation-attempt-1-exitcode-${tupleId}.txt`,
+							},
+							{
+								attempt: 2,
+								result: "fail",
+								stdout: `workflow-output/validation-attempt-2-stdout-${tupleId}.txt`,
+								stderr: `workflow-output/validation-attempt-2-stderr-${tupleId}.txt`,
+								exit_code: `workflow-output/validation-attempt-2-exitcode-${tupleId}.txt`,
+							},
+							{
+								attempt: 3,
+								result: "pass",
+								stdout: `workflow-output/validation-attempt-3-stdout-${tupleId}.txt`,
+								stderr: `workflow-output/validation-attempt-3-stderr-${tupleId}.txt`,
+								exit_code: `workflow-output/validation-attempt-3-exitcode-${tupleId}.txt`,
+							},
+						],
+					},
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		await Bun.write(
+			path.join(cwd, "workflow-output", `validation-${tupleId}.json`),
+			`${JSON.stringify(
+				{
+					tuple_id: tupleId,
+					artifact: `workflow-output/validation-${tupleId}.json`,
+					producer_node: "runDeclaredValidation",
+					producer_kind: "workflow-script",
+					validation: {
+						command,
+						environment,
+						result: "passed",
+						status: "passed",
+						exitCode: 0,
+						stdoutArtifact: `workflow-output/validation-attempt-3-stdout-${tupleId}.txt`,
+						stderrArtifact: `workflow-output/validation-attempt-3-stderr-${tupleId}.txt`,
+						exitCodeArtifact: `workflow-output/validation-attempt-3-exitcode-${tupleId}.txt`,
+					},
+				},
+				null,
+				2,
+			)}\n`,
+		);
+
+		const guardResult = await runScript(cwd, "evidence-contract-guard.js", {});
+
+		expect(guardResult.verdict).toBe("READY");
+		expect(guardResult.data?.validation_command).toBe(command);
+		expect(guardResult.data?.validation_environment).toEqual(environment);
+		expect(guardResult.data?.checked_inputs?.trusted_final_validation_artifacts).toEqual([
+			`workflow-output/validation-${tupleId}.json`,
+		]);
+		expect(guardResult.data?.checked_inputs?.failed_validation_artifacts).toEqual([]);
 	});
 
 	it("reuses exact failed test-lane validation without rerunning the same command", async () => {
