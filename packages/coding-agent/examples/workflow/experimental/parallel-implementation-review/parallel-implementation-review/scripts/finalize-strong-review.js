@@ -4,6 +4,7 @@ const evidenceContract = objectState("/evidenceContract");
 const evidenceContractVerdict = evidenceContract?.verdict ?? evidenceContract?.status ?? "unknown";
 const requestedVerdict = verdictFromWorkflowState();
 const verdict = evidenceContractVerdict === "READY" ? requestedVerdict : "reject";
+const strongReviewActivation = latestCompletedActivation("strongReview");
 const changedFiles = await changedProjectFiles();
 const evidenceFiles = await workflowEvidenceFiles();
 const finalReviewArtifact = `workflow-output/final-review${tupleId ? `-${tupleId}` : ""}.json`;
@@ -20,6 +21,7 @@ const payload = {
 		verdict,
 		accepted: verdict === "promote",
 		requested_verdict: requestedVerdict,
+		...strongReviewDetails(strongReviewActivation),
 	},
 	evidence_contract: evidenceContract,
 	evidence_contract_verdict: evidenceContractVerdict,
@@ -77,6 +79,69 @@ function objectState(path) {
 	return value && typeof value === "object" ? value : value ?? null;
 }
 
+function latestCompletedActivation(nodeId) {
+	const activations = workflowContext.completedActivations ?? [];
+	for (let index = activations.length - 1; index >= 0; index -= 1) {
+		const activation = activations[index];
+		if (activation?.nodeId === nodeId && activation.status === "completed") return activation;
+	}
+	return null;
+}
+
+function strongReviewDetails(activation) {
+	const verdictState = objectState("/verdict");
+	const summary = summaryFromReviewSources(activation, verdictState);
+	const artifacts = artifactsFromReviewSources(activation, verdictState);
+	const data = objectField(activation?.output, "data") ?? objectField(verdictState, "data");
+	const details = {
+		summary,
+		artifacts,
+		review_activation: activation
+			? {
+					id: activation.id,
+					node_id: activation.nodeId,
+					verdict: activation.output?.verdict ?? verdictState?.verdict ?? verdictState?.status ?? null,
+					artifacts,
+				}
+			: null,
+	};
+	if (data && Object.keys(data).length > 0) details.data = data;
+	return details;
+}
+
+function summaryFromReviewSources(activation, verdictState) {
+	return (
+		stringField(activation?.output, "summary") ||
+		stringField(verdictState, "summary") ||
+		stringField(verdictState, "explanation") ||
+		stringField(verdictState, "reason") ||
+		""
+	);
+}
+
+function artifactsFromReviewSources(activation, verdictState) {
+	return boundedArray(
+		[
+			...arrayField(activation?.output, "artifacts"),
+			...arrayField(verdictState, "artifacts"),
+			...arrayField(verdictState, "artifact_refs"),
+		].filter(value => typeof value === "string"),
+		40,
+	);
+}
+
+function objectField(value, key) {
+	if (!value || typeof value !== "object") return null;
+	const field = value[key];
+	return field && typeof field === "object" && !Array.isArray(field) ? field : null;
+}
+
+function arrayField(value, key) {
+	if (!value || typeof value !== "object") return [];
+	const field = value[key];
+	return Array.isArray(field) ? field : [];
+}
+
 function preexistingFinalArtifactCandidates(evidenceContract, finalizerArtifacts) {
 	const prematureArtifacts = evidenceContract?.checked_inputs?.premature_decision_artifacts;
 	const candidates = Array.isArray(prematureArtifacts) ? prematureArtifacts : [];
@@ -113,6 +178,12 @@ function artifactBasename(filePath) {
 
 function uniqueSorted(values) {
 	return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function boundedArray(values, limit) {
+	const bounded = values.slice(0, limit);
+	if (values.length > limit) bounded.push(`... omitted ${values.length - limit} items`);
+	return bounded;
 }
 
 function stateValueAtPath(state, pointer) {
@@ -221,6 +292,21 @@ function archiveText({ taskText, payload, finalReviewArtifact, finalArchiveArtif
 		"## Evidence Contract",
 		"",
 		`verdict: ${payload.evidence_contract?.verdict ?? payload.evidence_contract?.status ?? "unknown"}`,
+		"",
+		"## Strong Review",
+		"",
+		`requested verdict: ${payload.strong_review.requested_verdict}`,
+		`final verdict: ${payload.strong_review.verdict}`,
+		"",
+		"### Summary",
+		"",
+		payload.strong_review.summary || "(no strong review summary captured)",
+		"",
+		"### Artifacts",
+		"",
+		...(payload.strong_review.artifacts.length > 0
+			? payload.strong_review.artifacts.map(artifact => `- ${artifact}`)
+			: ["- (none)"]),
 		"",
 		"## Changed Files",
 		"",

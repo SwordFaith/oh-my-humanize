@@ -51,6 +51,9 @@
 - Fixed the experimental parallel implementation workflow so final validation
   reuses C92-style test-lane `latest_attempt_*` validation artifacts instead of
   failing after a long declared validation already passed.
+- Fixed the experimental parallel implementation workflow so final review
+  artifacts preserve actionable strong-review rejection summaries and reviewer
+  artifact references.
 - Fixed the experimental parallel implementation workflow so the evidence
   guard normalizes Markdown-coded task validation contracts before accepting
   workflow-owned final validation artifacts.

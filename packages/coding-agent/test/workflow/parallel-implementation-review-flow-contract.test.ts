@@ -1753,6 +1753,58 @@ describe("parallel-implementation-review flow contract", () => {
 		});
 	});
 
+	it("preserves actionable strong-review rejection findings in final artifacts", async () => {
+		const cwd = await createTempDir();
+		await writeReadyEvidence(cwd, "P06-T06-test");
+		const finding = "P1: fallback nominated pods omit scheduling resources and affinity";
+
+		const result = await runScript(cwd, "finalize-strong-review.js", {
+			state: {
+				verdict: { verdict: "reject" },
+				evidenceContract: { verdict: "READY" },
+			},
+			completedActivations: [
+				{
+					id: "activation-strong-review",
+					nodeId: "strongReview",
+					graphRevisionId: "graph",
+					status: "completed",
+					parentActivationIds: [],
+					output: {
+						summary: `${finding}. This can make preemption accounting see a zero-footprint placeholder.`,
+						verdict: "reject",
+						artifacts: ["agent-output://strongReview", "local:///tmp/strong-review.md"],
+					},
+				},
+			],
+		});
+
+		expect(result.verdict).toBe("reject");
+		expect(result.data).toMatchObject({
+			strong_review: {
+				verdict: "reject",
+				accepted: false,
+				review_activation: {
+					id: "activation-strong-review",
+					node_id: "strongReview",
+					verdict: "reject",
+					artifacts: ["agent-output://strongReview", "local:///tmp/strong-review.md"],
+				},
+			},
+		});
+		const finalReview = await Bun.file(path.join(cwd, "workflow-output", "final-review-P06-T06-test.json")).json();
+		expect(finalReview.strong_review.summary).toContain(finding);
+		expect(finalReview.strong_review.artifacts).toEqual([
+			"agent-output://strongReview",
+			"local:///tmp/strong-review.md",
+		]);
+		const archive = await Bun.file(
+			path.join(cwd, "workflow-output", "final-parallel-implementation-review-archive-P06-T06-test.md"),
+		).text();
+		expect(archive).toContain(finding);
+		expect(archive).toContain("agent-output://strongReview");
+	});
+
 	it("finalizer fails closed when evidence contract is not ready", async () => {
 		const cwd = await createTempDir();
 		await writeReadyEvidence(cwd, "P06-T06-test");
