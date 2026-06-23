@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { resetSettingsForTest, Settings } from "../../src/config/settings";
-import * as bashExecutor from "../../src/exec/bash-executor";
 import type { ToolSession } from "../../src/tools";
 import { createShellScriptRunner } from "../../src/workflow/shell-script-runtime";
 
@@ -27,6 +26,17 @@ async function waitForFileText(filePath: string, needle: string): Promise<string
 		await Bun.sleep(10);
 	}
 	throw new Error(`Timed out waiting for ${filePath} to contain ${needle}`);
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function expectMarkerNeverWritten(marker: string, release: string): Promise<void> {
+	await Bun.sleep(25);
+	await Bun.write(release, "");
+	await Bun.sleep(75);
+	expect(await Bun.file(marker).exists()).toBe(false);
 }
 
 function createToolSession(cwd: string): ToolSession {
@@ -119,21 +129,11 @@ describe("workflow shell script runtime adapter", () => {
 		expect(result.language).toBe("sh");
 	});
 
-	it("runs each activation through a one-shot shell so long workflow loops do not accumulate shell sessions", async () => {
+	it("runs workflow shell scripts without the interactive bash executor", async () => {
 		const cwd = await createTempDir();
-		const executeSpy = vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
-			exitCode: 0,
-			output: '{"summary":"ok"}',
-			cancelled: false,
-			truncated: false,
-			totalLines: 1,
-			totalBytes: 16,
-			outputLines: 1,
-			outputBytes: 16,
-		});
 		const runner = createShellScriptRunner(createToolSession(cwd));
 
-		await runner({
+		const result = await runner({
 			activationId: "activation-hold-180",
 			nodeId: "longRunningHold",
 			code: 'printf \'{"summary":"ok"}\\n\'',
@@ -141,39 +141,27 @@ describe("workflow shell script runtime adapter", () => {
 			title: "hold",
 		});
 
-		expect(executeSpy).toHaveBeenCalledTimes(1);
-		expect(executeSpy.mock.calls[0]?.[1]).toMatchObject({
-			sessionKey: "workflow-shell-test:workflow:activation-hold-180",
-			reuseShellSession: false,
-		});
+		expect(result.exitCode).toBe(0);
+		expect(result.output).toBe('{"summary":"ok"}');
 	});
 
-	it("forwards workflow script runtime budgets to bash execution", async () => {
+	it("enforces workflow script runtime budgets", async () => {
 		const cwd = await createTempDir();
-		const executeSpy = vi.spyOn(bashExecutor, "executeBash").mockResolvedValue({
-			exitCode: 0,
-			output: '{"summary":"ok"}',
-			cancelled: false,
-			truncated: false,
-			totalLines: 1,
-			totalBytes: 16,
-			outputLines: 1,
-			outputBytes: 16,
-		});
 		const runner = createShellScriptRunner(createToolSession(cwd));
 
-		await runner({
+		const startedAt = Date.now();
+		const result = await runner({
 			activationId: "activation-timeout",
 			nodeId: "slow-validation",
-			code: 'printf \'{"summary":"ok"}\\n\'',
+			code: 'sleep 2\nprintf \'{"summary":"should not finish"}\\n\'',
 			language: "sh",
 			title: "slow-validation",
-			timeoutMs: 45_000,
+			timeoutMs: 50,
 		});
 
-		expect(executeSpy.mock.calls[0]?.[1]).toMatchObject({
-			timeout: 45_000,
-		});
+		expect(Date.now() - startedAt).toBeLessThan(1_000);
+		expect(result.exitCode).toBe(1);
+		expect(result.error).toContain("timed out");
 	});
 
 	it("returns cancellation promptly when shell workflow scripts are aborted", async () => {
@@ -205,4 +193,45 @@ describe("workflow shell script runtime adapter", () => {
 		expect(result.error).toContain("Command cancelled");
 		expect(result.language).toBe("sh");
 	}, 5_000);
+
+	it.skipIf(process.platform === "win32")(
+		"kills nested foreground shell children when workflow scripts are aborted",
+		async () => {
+			const cwd = await createTempDir();
+			await Settings.init({ inMemory: true, overrides: { shellPath: "/bin/sh" } });
+			const marker = path.join(cwd, "nested-child-survived.txt");
+			const release = path.join(cwd, "nested-child.release");
+			const childStarted = path.join(cwd, "nested-child.started");
+			const runner = createShellScriptRunner(createToolSession(cwd));
+			const controller = new AbortController();
+
+			const run = runner({
+				activationId: "activation-nested-abort",
+				nodeId: "validation",
+				code: [
+					"sh -c " +
+						shellQuote(
+							[
+								`touch ${shellQuote(childStarted)}`,
+								`while [ ! -f ${shellQuote(release)} ]; do sleep 0.01; done`,
+								`echo survived > ${shellQuote(marker)}`,
+							].join("; "),
+						),
+					"printf '%s\\n' '{\"summary\":\"should not finish\"}'",
+				].join("\n"),
+				language: "sh",
+				title: "nested validation",
+				signal: controller.signal,
+			});
+			await waitForFileText(childStarted, "");
+
+			controller.abort("test stop deadline elapsed");
+			const result = await run;
+
+			expect(result.exitCode).toBe(1);
+			expect(result.error).toContain("Command cancelled");
+			await expectMarkerNeverWritten(marker, release);
+		},
+		5_000,
+	);
 });

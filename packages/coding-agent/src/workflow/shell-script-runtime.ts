@@ -1,4 +1,4 @@
-import { executeBash } from "../exec/bash-executor";
+import { ptree } from "@oh-my-pi/pi-utils";
 import type { ToolSession } from "../tools";
 import { workflowScriptEnvironment } from "./script-runtime-env";
 import type {
@@ -11,27 +11,27 @@ const WORKFLOW_SHELL_TIMEOUT_MS = 60 * 60 * 1000;
 
 export function createShellScriptRunner(toolSession: ToolSession): WorkflowShellScriptRunner {
 	return async request => {
-		const result = await executeBash(workflowShellCommand(request.code), {
+		const timeoutMs = request.timeoutMs ?? WORKFLOW_SHELL_TIMEOUT_MS;
+		const result = await ptree.exec(["sh"], {
 			cwd: toolSession.cwd,
-			timeout: request.timeoutMs ?? WORKFLOW_SHELL_TIMEOUT_MS,
+			input: `${request.code}\n`,
+			timeout: timeoutMs,
 			signal: request.signal,
-			sessionKey: workflowShellSessionKey(toolSession, request.activationId),
-			useUserShell: true,
-			reuseShellSession: false,
-			outputMaxColumns: 0,
-			env: workflowShellContextEnv(request),
+			env: workflowShellEnv(request),
+			detached: process.platform !== "win32",
+			allowAbort: true,
+			allowNonZero: true,
+			stderr: "full",
 		});
+		const output = workflowShellOutput(result.stdout, result.stderr);
 		const scriptResult: WorkflowScriptEvalResult = {
 			exitCode: result.exitCode ?? 1,
-			output: result.output.trim(),
+			output,
 			language: request.language,
 		};
-		if (result.artifactId !== undefined) {
-			scriptResult.artifactId = result.artifactId;
-		}
-		if (result.cancelled) {
-			scriptResult.error = result.output.trim() || "shell script cancelled";
-		} else if (result.exitCode === undefined) {
+		if (result.exitError?.aborted) {
+			scriptResult.error = workflowShellAbortError(output, result.exitError, timeoutMs);
+		} else if (result.exitCode === undefined || result.exitCode === null) {
 			scriptResult.error = "shell script missing exit status";
 		} else if (result.exitCode !== 0) {
 			scriptResult.error = `exit code ${result.exitCode}`;
@@ -40,18 +40,33 @@ export function createShellScriptRunner(toolSession: ToolSession): WorkflowShell
 	};
 }
 
-function workflowShellContextEnv(request: WorkflowShellScriptRequest): Record<string, string> | undefined {
-	return workflowScriptEnvironment(request);
+function workflowShellAbortError(output: string, error: ptree.Exception, timeoutMs: number): string {
+	if (error instanceof ptree.TimeoutError) {
+		return output || `Command timed out after ${Math.round(timeoutMs / 1000)} seconds`;
+	}
+	return output || "Command cancelled";
+}
+
+function workflowShellEnv(request: WorkflowShellScriptRequest): Record<string, string> {
+	const env: Record<string, string> = {};
+	for (const [key, value] of Object.entries(Bun.env)) {
+		if (value !== undefined) env[key] = value;
+	}
+	return {
+		...env,
+		...workflowScriptEnvironment(request),
+	};
+}
+
+function workflowShellOutput(stdout: string, stderr: string): string {
+	if (stdout.length === 0) return stderr.trim();
+	if (stderr.length === 0) return stdout.trim();
+	return `${stdout.trimEnd()}\n${stderr.trimStart()}`.trim();
 }
 
 export function workflowShellCommand(code: string): string {
 	const delimiter = workflowShellHeredocDelimiter(code);
 	return `sh <<'${delimiter}'\n${code}\n${delimiter}`;
-}
-
-function workflowShellSessionKey(toolSession: ToolSession, activationId: string): string {
-	const sessionId = toolSession.getSessionId?.() ?? "session";
-	return `${sessionId}:workflow:${activationId}`;
 }
 
 function workflowShellHeredocDelimiter(code: string): string {

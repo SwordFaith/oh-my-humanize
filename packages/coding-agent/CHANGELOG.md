@@ -13,6 +13,9 @@
 
 ### Fixed
 
+- Fixed workflow shell script nodes so workflow stop and node abort signals
+  terminate nested shell child processes instead of leaving validation commands
+  running after checkpoint.
 - Fixed workflow graph views so terminal attempts cannot render stale persisted
   running activations as live work or stale elapsed-time monitors.
 - Fixed the experimental agent build/review loop workflow so terminal
