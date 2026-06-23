@@ -1218,4 +1218,62 @@ edges:
 		expect(failed).toHaveLength(0);
 		expect(result.stopped).toBe(true);
 	});
+	it("settles non-aborted sibling verifiers and aborts the pool when one concurrent verifier aborts", async () => {
+		const definition = parseWorkflowDefinition(mappedPoolWorkflow, { sourcePath: "mapped.yml" });
+		const started: Array<{ activation: WorkflowActivation; nodeId: string }> = [];
+		const aborted: Array<{ activation: WorkflowActivation; reason: string }> = [];
+		const failed: Array<{ activation: WorkflowActivation; error: string }> = [];
+		// Non-aborted sibling verifiers stay in flight until the pool observes the
+		// sibling abort, modeling cancellation reaching concurrent in-flight work.
+		let resolveSiblingGate: () => void = () => {};
+		const siblingGate = new Promise<void>(resolve => {
+			resolveSiblingGate = resolve;
+		});
+
+		const result = await runWorkflowScheduler(definition, {
+			startNodeId: "pool",
+			initialState: { queue: [{ id: "a" }, { id: "b" }, { id: "c" }] },
+			executeNode: async activation => {
+				if (activation.mapped?.phase === "worker") {
+					return { summary: `worker ${activation.mapped.itemKey} done` };
+				}
+				if (activation.mapped?.phase === "verifier") {
+					if (activation.mapped.itemKey === "b") {
+						throw new Error("verifier b aborted");
+					}
+					await siblingGate;
+					return { summary: `verifier ${activation.mapped.itemKey} done` };
+				}
+				throw new Error(`should not run ${activation.nodeId} while pool aborts`);
+			},
+			nodeAbortSignalForActivation: activation =>
+				activation.mapped?.phase === "verifier" && activation.mapped.itemKey === "b"
+					? AbortSignal.abort("test abort")
+					: undefined,
+			onMappedPoolActivationStarted: (activation, node) => started.push({ activation, nodeId: node.id }),
+			onMappedPoolActivationAborted: (activation, reason) => {
+				aborted.push({ activation, reason });
+				resolveSiblingGate();
+			},
+			onMappedPoolActivationFailed: (activation, error) => failed.push({ activation, error }),
+		});
+
+		const poolActivation = result.activations.find(a => a.nodeId === "pool");
+		expect(poolActivation?.status).toBe("aborted");
+		expect(aborted).toHaveLength(1);
+		expect(aborted[0].activation.nodeId).toBe("pool");
+		expect(failed).toHaveLength(0);
+		expect(result.stopped).toBe(true);
+
+		const verifierStatus = (itemKey: string): string | undefined =>
+			result.activations.find(a => a.nodeId === "pool.verifier" && a.mapped?.itemKey === itemKey)?.status;
+		expect(verifierStatus("b")).toBe("aborted");
+		// Siblings settle to completed via settleMappedActivationAfterPoolStopped.
+		expect(verifierStatus("a")).toBe("completed");
+		expect(verifierStatus("c")).toBe("completed");
+		// No reducer runs: the pool aborts before any sibling verifier completes.
+		expect(result.activations.filter(a => a.nodeId === "pool.reducer")).toHaveLength(0);
+		// Worker phase was recorded for every item before the abort.
+		expect(result.activations.filter(a => a.nodeId === "pool.worker" && a.status === "completed")).toHaveLength(3);
+	});
 });

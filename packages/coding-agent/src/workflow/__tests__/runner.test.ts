@@ -351,6 +351,148 @@ describe("runWorkflow lifecycle", () => {
 		);
 		expect(newMappedActivations).toHaveLength(0);
 	});
+	it("aborts an in-flight mapped pool child, checkpoints the stopped attempt, and resumes from the correct phase", async () => {
+		const host = new MemoryWorkflowHost();
+		const definition = mappedPoolAbortResumeDefinition();
+		const freeze = freezeForDefinition(definition);
+
+		// Gate worker "a" so worker "b" completes first and starts verifier "b".
+		// Verifier "b" aborts via nodeAbortSignalForActivation, stopping the pool.
+		// Worker "a" is released in a macrotask (setTimeout 0) — after the
+		// microtask-driven abort chain has marked the pool aborted — so it
+		// settles to completed worker-phase-only via
+		// settleMappedActivationAfterPoolStopped.  On restart that item must
+		// resume at the verifier without re-running the worker.
+		let resolveWorkerAGate: () => void = () => {};
+		const workerAGate = new Promise<void>(resolve => {
+			resolveWorkerAGate = resolve;
+		});
+		let abortVerifierB = true;
+		let workerRunCount = 0;
+		let verifierRunCount = 0;
+		let reducerRunCount = 0;
+
+		const runtimeHost: WorkflowNodeRuntimeHost = {
+			runAgentNode: async input => {
+				workerRunCount++;
+				const itemKey = input.activation.mapped?.itemKey;
+				if (itemKey === "a") {
+					await workerAGate;
+				}
+				return { summary: `worker ${itemKey} done` };
+			},
+			runReviewNode: async input => {
+				verifierRunCount++;
+				const itemKey = input.activation.mapped?.itemKey;
+				if (abortVerifierB && itemKey === "b") {
+					setTimeout(() => resolveWorkerAGate(), 0);
+					throw new Error("verifier b aborted");
+				}
+				return { summary: `verifier ${itemKey} done`, verdict: "continue" };
+			},
+			runScriptNode: async input => {
+				if (input.node.id === "pool.reducer") {
+					reducerRunCount++;
+				}
+				return { summary: "reducer done" };
+			},
+		};
+
+		const firstRun = await runWorkflow({
+			host,
+			definition,
+			runId: "run-1",
+			graphRevisionId: "graph-1",
+			startNodeId: "pool",
+			initialState: { queue: [{ id: "a" }, { id: "b" }] },
+			runtimeHost,
+			modelResolution: testModelResolution(),
+			nodeAbortSignalForActivation: activation =>
+				abortVerifierB && activation.mapped?.phase === "verifier" && activation.mapped?.itemKey === "b"
+					? AbortSignal.abort("test abort")
+					: undefined,
+			lifecycle: {
+				familyId: "family-1",
+				attemptId: "attempt-1",
+				freeze,
+				runtimeBindingSnapshot: bindingSnapshot("attempt-1:binding-1"),
+			},
+		});
+
+		// §2.3 — attempt status is "stopped" (not "failed").
+		const family = reconstructWorkflowFamilies(host.getBranch())[0]!;
+		const stoppedAttempt = family.attempts[0]!;
+		expect(stoppedAttempt.status).toBe("stopped");
+		expect(family.checkpoints).toHaveLength(1);
+		const checkpoint = family.checkpoints[0]!;
+
+		// §2.4 — checkpoint abortedActivationIds includes the pool activation.
+		const poolActivation = firstRun.scheduler.activations.find(activation => activation.nodeId === "pool")!;
+		expect(poolActivation.status).toBe("aborted");
+		expect(checkpoint.abortedActivationIds).toContain(poolActivation.id);
+
+		// The aborted child verifier is also recorded as aborted.
+		const abortedVerifier = firstRun.scheduler.activations.find(
+			activation => activation.nodeId === "pool.verifier" && activation.mapped?.itemKey === "b",
+		)!;
+		expect(abortedVerifier.status).toBe("aborted");
+		expect(checkpoint.abortedActivationIds).toContain(abortedVerifier.id);
+
+		// Worker "a" settled to completed worker-phase-only — no verifier "a"
+		// was started, so it must resume at verifier on restart.
+		const workerA = firstRun.scheduler.activations.find(
+			activation => activation.nodeId === "pool.worker" && activation.mapped?.itemKey === "a",
+		)!;
+		expect(workerA.status).toBe("completed");
+		expect(
+			firstRun.scheduler.activations.some(
+				activation => activation.nodeId === "pool.verifier" && activation.mapped?.itemKey === "a",
+			),
+		).toBe(false);
+
+		// §2.5–6 — restart from the checkpoint.
+		abortVerifierB = false;
+		workerRunCount = 0;
+		verifierRunCount = 0;
+		reducerRunCount = 0;
+
+		const completedActivations = firstRun.scheduler.activations.filter(
+			(activation): activation is WorkflowActivation => activation.status === "completed",
+		);
+
+		const secondRun = await runWorkflow({
+			host,
+			definition,
+			runId: "run-2",
+			graphRevisionId: "graph-2",
+			startNodeId: "pool",
+			startParentActivationIds: checkpoint.completedActivationIds,
+			initialState: checkpoint.state,
+			completedActivations,
+			runtimeHost,
+			modelResolution: testModelResolution(),
+			lifecycle: {
+				familyId: "family-1",
+				attemptId: "attempt-2",
+				checkpointId: checkpoint.id,
+				freeze,
+				runtimeBindingSnapshot: bindingSnapshot("attempt-2:binding-1"),
+				recordFamily: false,
+				recordFreeze: false,
+			},
+		});
+
+		// §2.6 — pool resumes in-flight items from their correct phase without
+		// re-running completed work: workers are NOT re-run, verifiers and
+		// reducers run for both items.
+		const restartPool = secondRun.scheduler.activations.find(
+			activation => activation.nodeId === "pool" && activation.status === "completed",
+		);
+		expect(restartPool).toBeDefined();
+		expect(workerRunCount).toBe(0);
+		expect(verifierRunCount).toBe(2);
+		expect(reducerRunCount).toBe(2);
+	});
 });
 
 class MemoryWorkflowHost {
@@ -478,6 +620,44 @@ function mappedPoolWithFinishDefinition(): WorkflowDefinition {
 			},
 		],
 		edges: [{ from: "pool", to: "finish" }],
+	};
+}
+
+function mappedPoolAbortResumeDefinition(): WorkflowDefinition {
+	return {
+		name: "mapped-pool-abort-resume",
+		version: 1,
+		models: { roles: {}, defaults: {} },
+		nodes: [
+			{
+				id: "pool",
+				type: "mapped_pool",
+				mappedPool: {
+					itemSource: "/queue",
+					itemKey: "/id",
+					maxConcurrency: 2,
+					maxItems: 2,
+					workerNodeId: "pool.worker",
+					verifierNodeId: "pool.verifier",
+					reducerNodeId: "pool.reducer",
+				},
+			},
+			{
+				id: "pool.worker",
+				type: "agent",
+				agent: "task",
+			},
+			{
+				id: "pool.verifier",
+				type: "review",
+			},
+			{
+				id: "pool.reducer",
+				type: "script",
+				script: { language: "sh", code: "reducer" },
+			},
+		],
+		edges: [],
 	};
 }
 
